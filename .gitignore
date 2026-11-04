@@ -15,11 +15,16 @@
 /.env.*
 
 # ── 根目录二进制（裸 "login"/"credit" 会误伤 cmd/login/、cmd/credit/）──
+# 与 Dockerfile 的构建清单一一对应；目标平台只有 Linux，不再有 .exe。
 /login
 /credit
 /wb2api
 /signin_bin
 /wbctl
+/trial_bin
+/activity_bin
+/task_runner
+/school_bin
 /*.exe
 
 # ── 含密钥的配置（模板见 config.example.json）─────────────────

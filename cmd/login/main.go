@@ -205,6 +205,22 @@ func validateRealmMatch(stateRealm, cliRealm string) error {
 	return nil
 }
 
+// parseRegionFlag 解析 `save` 之后的 `--region=XX` / `--region XX`（国际版直选地区）。
+// 写在子命令后面而不是全局 flag 里：`--realm` 是解析 OAuth 域，`--region` 是解析
+// 账号注册地区，两者语义不同，混在一个 flag 集里容易误用。
+func parseRegionFlag(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--region" && i+1 < len(args) {
+			return strings.TrimSpace(args[i+1])
+		}
+		if strings.HasPrefix(a, "--region=") {
+			return strings.TrimSpace(strings.TrimPrefix(a, "--region="))
+		}
+	}
+	return ""
+}
+
 // runURL 执行 url 子命令：向 upstreamBase 的 state 端点 POST 取授权 URL，
 // state 落盘（带 realm），stdout 打印 authURL。out 接 stdout；stateFile 为落盘路径
 // （可注入临时文件便于测试）。空 realm 视为缺省（调用方已归一）。
@@ -327,6 +343,19 @@ func main() {
 	case "poll":
 		runPoll(base, origin, realm, stateFile, client, os.Stdout)
 
+	case "save":
+		// 落盘 + 首次签到 + 国际版地区/trial：原 login.sh 里的内嵌 Python 段。
+		// 可选 `--region=SG` 直选注册地区（缺省则交互菜单）。
+		runSave(realm, parseRegionFlag(rest[1:]))
+
+	case "accounts":
+		// 重启容器后的收尾检查：打印当前账号数（读 config.json 的 api_key 打 /status）。
+		runAccounts()
+
+	case "key":
+		// 打印 config.json 里的 api_key（运维脚本取值用；原脚本调 python3 读 JSON）。
+		runKey()
+
 	case "realm":
 		// 交互式选域（login.sh 无 --realm 传参且 stdin 为 tty 时调用）。
 		// 提示打到 stderr，stdout 只输出归一化 realm，供 $( ) 捕获。
@@ -334,6 +363,6 @@ func main() {
 		fmt.Println(realm)
 
 	default:
-		fatal("unknown subcommand %q (want url|poll|realm)", rest[0])
+		fatal("unknown subcommand %q (want url|poll|save|accounts|realm)", rest[0])
 	}
 }

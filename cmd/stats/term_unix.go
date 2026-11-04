@@ -1,7 +1,7 @@
 //go:build unix && !solaris && !aix
 
-// term_unix.go 非 Windows 的 Unix 平台：终端原生支持 ANSI/VT，无需启用动作；
-// 窗口尺寸经 TIOCGWINSZ ioctl 取得。
+// term_unix.go Unix 平台（Linux/macOS，本项目的目标平台）：终端原生支持 ANSI/VT，
+// 无需启用动作；窗口尺寸经 TIOCGWINSZ ioctl 取得。
 //
 // 为什么需要尺寸：watch 靠"光标上移 N 行"回到帧首。帧若比窗口宽，终端会把一行
 // 折成两行，实际占用行数多于逻辑行数，上移量随之失准 —— 于是每帧都在旧内容
@@ -9,7 +9,7 @@
 //
 // 只依赖标准库：不引入 golang.org/x/term（本工具刻意保持零额外依赖）。
 // solaris/aix 的 stdlib 未导出 SYS_IOCTL（其 ioctl 需经 libc），故排除在外、
-// 由 term_other.go 按"尺寸未知"处理；非 Unix 由 term_windows.go / term_other.go 提供。
+// 由 term_other.go 按"尺寸未知"处理；非 Unix 平台同样由 term_other.go 兜底。
 package main
 
 import (

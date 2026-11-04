@@ -5,10 +5,19 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 BIN=./wb2api
+LOGIN_BIN=./login
 LOG=./server.log
 PIDFILE=./.server.pid
 
 alive() { [[ -f $PIDFILE ]] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; }
+
+# ensure_login 构建 login 工具（它同时承担 config 读取与账号数查询：原脚本用
+# python3 做这两件事，镜像已不装 python3，运维侧也不该依赖它）。
+ensure_login() {
+  if [[ ! -x $LOGIN_BIN ]] || find . \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -newer "$LOGIN_BIN" -print -quit | grep -q .; then
+    CGO_ENABLED=0 go build -o "$LOGIN_BIN" ./cmd/login || return 1
+  fi
+}
 
 case "${1:-status}" in
   start)
@@ -42,15 +51,15 @@ case "${1:-status}" in
     ;;
   status)
     if alive; then
-      KEY=$(python3 -c "import json;print(json.load(open('config.json'))['api_key'])" 2>/dev/null)
       echo "运行中 (PID $(cat $PIDFILE))"
       curl -s http://127.0.0.1:7863/healthz -w "\n" 2>/dev/null
-      echo "账号数: $(curl -s http://127.0.0.1:7863/status -H "Authorization: Bearer $KEY" 2>/dev/null | python3 -c 'import json,sys;print(len(json.load(sys.stdin).get("accounts",[])))' 2>/dev/null || echo '?')"
+      ensure_login >/dev/null 2>&1 || true
+      echo "账号数: $("$LOGIN_BIN" accounts 2>/dev/null || echo '?')"
     else
       echo "未运行"
     fi
     ;;
   logs)    tail -f "$LOG" ;;
-  key)     python3 -c "import json;print(json.load(open('config.json'))['api_key'])" ;;
+  key)     ensure_login && "$LOGIN_BIN" key ;;
   *)       echo "用法: $0 {start|stop|restart|status|logs|key}"; exit 1 ;;
 esac

@@ -49,22 +49,26 @@ func TestScheduledCheckinAccountWaitCanBeCancelled(t *testing.T) {
 }
 
 func TestScheduledScriptsReceiveAccountRangeOnlyOnAutomaticEntry(t *testing.T) {
+	// 任务二进制必须先存在：Go 化之后 runSchool/runCat 找不到二进制会直接 WARN 返回，
+	// 不会构造任何命令。
+	installTaskBins(t, TaskBinSchool, TaskBinRunner)
 	f := installFakeExec(t)
 	s := New(Config{AccountDelayMinSeconds: 30, AccountDelayMaxSeconds: 120})
 	s.RunSchoolNow()
-	if len(f.lastArgs) != 4 {
+	// 手工入口：ALL --run --yes —— 二进制路径是 Program 参数，不在 args 里。
+	if len(f.lastArgs) != 3 {
 		t.Fatalf("manual school flags changed: %v", f.lastArgs)
 	}
 	s.dispatch(context.Background(), taskSchool)
-	if len(f.lastArgs) != 8 || f.lastArgs[4] != "--account-delay-min" || f.lastArgs[5] != "30" || f.lastArgs[7] != "120" {
+	if len(f.lastArgs) != 7 || f.lastArgs[3] != "--account-delay-min" || f.lastArgs[4] != "30" || f.lastArgs[6] != "120" {
 		t.Fatalf("scheduled school flags missing: %v", f.lastArgs)
 	}
 	s.RunCatNow()
-	if len(f.lastArgs) != 5 {
+	if len(f.lastArgs) != 4 {
 		t.Fatalf("manual cat flags changed: %v", f.lastArgs)
 	}
 	s.dispatch(context.Background(), taskCat)
-	if len(f.lastArgs) != 9 || f.lastArgs[5] != "--account-delay-min" {
+	if len(f.lastArgs) != 8 || f.lastArgs[4] != "--account-delay-min" {
 		t.Fatalf("scheduled cat flags missing: %v", f.lastArgs)
 	}
 }
@@ -86,6 +90,7 @@ func (c *spacingBatchCommand) Run() error {
 }
 
 func TestStaggeredCoincidentTaskTypesDoNotOverlap(t *testing.T) {
+	installTaskBins(t, TaskBinSchool, TaskBinRunner)
 	var active, maximum, calls atomic.Int32
 	old := newScriptCmd
 	newScriptCmd = func(string, ...string) scriptRunner { return &spacingBatchCommand{&active, &maximum, &calls} }

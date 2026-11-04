@@ -1,6 +1,7 @@
-//go:build !windows && !unix
+//go:build !unix
 
-// term_other.go 其余平台（js/wasm、plan9 等）：既无 ANSI 控制台语义，也无
+// term_other.go 非 Unix 平台（本项目的目标平台是 Linux/Docker；Windows 已不再
+// 作为支持目标，能编译但 TUI 退化为单次输出）：既无 ANSI 控制台语义，也无
 // 统一的窗口尺寸查询手段，故恒返回"未知"。
 //
 // 不知尺寸时渲染方按 -width 显式值或默认值排版，watch 也会因尺寸不可知而

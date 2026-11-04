@@ -231,12 +231,12 @@ func main() {
 	if !cfg.Schedule.SchoolEnabled {
 		log.Printf("开学季任务已禁用（schedule.school_enabled=false）")
 	} else {
-		log.Printf("开学季任务已启用：%v 点（school_open_day_2026.py ALL --run --yes）", cfg.Schedule.SchoolHours)
+		log.Printf("开学季任务已启用：%v 点（school_bin ALL --run --yes）", cfg.Schedule.SchoolHours)
 	}
 	if !cfg.Schedule.CatEnabled {
 		log.Printf("夜猫子任务已禁用（schedule.cat_enabled=false）")
 	} else {
-		log.Printf("夜猫子任务已启用：%v 点（task_runner.py ALL --yes --only black_cat）", cfg.Schedule.CatHours)
+		log.Printf("夜猫子任务已启用：%v 点（task_runner ALL --yes --only black_cat）", cfg.Schedule.CatHours)
 	}
 
 	h := server.NewHandler(server.Config{

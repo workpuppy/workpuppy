@@ -108,8 +108,13 @@ WorkBuddy2API 是一个自托管的 **OpenAI 兼容上游网关**，将 ```CodeB
 - 积分日报：`./credit.sh`（美化 / `-json`，realm 感知双域）
 - 手动签到：`./signin.sh`（批量、幂等不重复计）
 - 账号停用 / 恢复：`./acct.sh list | disable <uid> [原因] | enable <uid> | revive <uid>`（需 `admin.enabled`，走网关管理端点）
-- 领养联动 / 任务查询：`scripts/task_runner.py`（成长任务一体机，默认 dry-run）
+- 成长任务一体机：`./task_runner`（默认 dry-run；`--yes` 才真跑，`--only <kind>` 可只跑一类）
+- 开学季 / 夜猫子补跑：`./school_bin`、或 `scripts/school_open_day_cron.sh {school|cat}`
+- 账号管理面：`./wbctl accounts | checkin [uid] | login | models | chat --model <m> "…"`
 - 个性化提示词：`prompt.file` 指向自定义提示词文件即整体替换内置默认（`custom`/`append` 模式生效）
+
+> 上述工具已全部是 Go 二进制（`internal/growth`、`internal/region` 等实现），镜像里
+> **不再需要 python3**。原 `scripts/*.py` 已删除，对应实现见 `internal/growth/`。
 
 ## 架构总览
 
@@ -188,43 +193,25 @@ go test ./...      # 完整测试套件
 go run ./cmd/server -config config.json
 ```
 
-构建二进制：
+构建二进制（与 Dockerfile 完全一致的清单）：
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o wb2api ./cmd/server
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o signin_bin ./cmd/signin
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o login ./cmd/login
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o credit ./cmd/credit
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o wb2api       ./cmd/server
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o signin_bin   ./cmd/signin
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o login        ./cmd/login
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o credit       ./cmd/credit
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o trial_bin    ./cmd/trial
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o activity_bin ./cmd/activity
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o task_runner  ./cmd/taskrunner
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o school_bin   ./cmd/school
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o wbctl        ./cmd/wbctl
 ```
 
-#### Windows 原生运行（无需 Docker）
+#### 平台支持
 
-Windows 10/11 自带的 PowerShell 与 `curl.exe` 即可管理后台进程。先准备配置并构建：
-
-```powershell
-Copy-Item config.example.json config.json
-# 编辑 config.json；建议把 listen 设为 127.0.0.1:7863，且务必设置 api_key
-
-go build -trimpath -ldflags="-s -w" -o wb2api.exe ./cmd/server
-go build -trimpath -ldflags="-s -w" -o login.exe ./cmd/login
-go build -trimpath -ldflags="-s -w" -o signin_bin.exe ./cmd/signin
-go build -trimpath -ldflags="-s -w" -o credit.exe ./cmd/credit
-```
-
-使用仓库自带脚本在后台启停并查看状态：
-
-```powershell
-.\start-workbuddy2api.cmd
-.\status-workbuddy2api.cmd
-.\stop-workbuddy2api.cmd
-```
-
-PID 写入 `wb2api.pid`，标准输出与错误日志分别写入 `data/server.out.log`、
-`data/server.err.log`。停止脚本会先验证 PID 对应的可执行文件确为当前目录下的
-`wb2api.exe`，不会因陈旧 PID 误杀其他进程。
-
-添加账号可使用配套管理面板，或在 Git Bash 中运行现有 `login.sh`（它还负责 CN
-首次签到以及 Global 注册地区/trial 流程；不建议只手工调用 `login.exe` 后跳过这些步骤）。
+本项目**只面向 Linux + Docker 部署**（amd64 / arm64）。Windows 原生运行、`.cmd`
+启停脚本与 Windows 安装器均已移除；非 Unix 平台虽仍能编译，但进程没做过验证，
+TUI（`cmd/stats`）也会退化为单次输出。
 
 ### 验证
 
