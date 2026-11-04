@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"workbuddy2api/internal/auth"
+	"workbuddy2api/internal/loginsvc"
 	"workbuddy2api/internal/pool"
 	"workbuddy2api/internal/redisstore"
 	"workbuddy2api/internal/scheduler"
@@ -257,6 +258,11 @@ func main() {
 		GlobalEnabled: cfg.Global.Enabled,
 		// 运维管理端点开关（config admin.enabled，默认 false）。
 		AdminEnabled: cfg.Admin.Enabled,
+		// 管理面（REST）接线：调度器（立即签到复用其单飞锁与账号间隔）、
+		// 账号目录（扫码加号落盘位置）、登录服务（二维码 state 的内存管理器）。
+		Scheduler: sch,
+		AuthDir:   cfg.AuthDir,
+		Login:     loginsvc.New(),
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

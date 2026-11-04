@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -271,6 +272,11 @@ func Load(path string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read config: %w", err)
 		}
+		// 容忍 UTF-8 BOM：Windows 记事本 / PowerShell 5.1 的 `Set-Content -Encoding utf8`
+		// 默认会写 BOM，而 encoding/json 遇到 \ufeff 会直接报
+		// 「invalid character 'ï' looking for beginning of value」——
+		// 用户看到的是一句和配置文件内容毫不相干的解析错误。
+		raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
 		if err := json.Unmarshal(raw, c); err != nil {
 			return nil, fmt.Errorf("parse config: %w", err)
 		}

@@ -17,8 +17,10 @@ import (
 
 	"workbuddy2api/internal/auth"
 	"workbuddy2api/internal/logfmt"
+	"workbuddy2api/internal/loginsvc"
 	"workbuddy2api/internal/pool"
 	"workbuddy2api/internal/prompt"
+	"workbuddy2api/internal/scheduler"
 	"workbuddy2api/internal/session"
 	"workbuddy2api/internal/upstream"
 )
@@ -67,6 +69,15 @@ type Config struct {
 	// AdminEnabled 运维管理端点开关（config admin.enabled，默认 false）。
 	// 关闭时 /admin/* 一律 404（而非 403——不向外暴露"这里存在管理面"）。
 	AdminEnabled bool
+
+	// Scheduler 后台调度器（签到/旅行/活跃/保活）。管理面的「立即签到」复用它，
+	// 从而共享它的单飞锁与「相邻账号间隔」节流——并发签到正是风控最敏感的特征。
+	// nil = 未接线（单账号签到仍可用，批量签到回 501）。
+	Scheduler *scheduler.Scheduler
+	// AuthDir auths 目录。扫码加号成功后账号文件落在这里（空 = 管理面不允许加号）。
+	AuthDir string
+	// Login 扫码登录服务（/admin/auth/start、/admin/auth/poll）。nil = 未接线。
+	Login *loginsvc.Manager
 }
 
 // notFoundCooldown 上游 404 的固定短冷却时长。
@@ -87,6 +98,11 @@ const wafCooldownBase = 60 * time.Second
 // 这类限制可申诉、会自行解除（现场观测同一账号数小时后恢复 200），
 // 而凭证本身有效 —— 因此只把它移出轮换，不 Disable、不清凭证。
 const upstreamRestrictionCooldown = 45 * time.Minute
+
+// forceAccountHeader 内部头：管理面测试台（/admin/playground/chat?uid=）用它指定账号。
+// 用头而不是 query 参数，是为了让「指定账号」这件事只发生在一处（选号前的统一入口），
+// 且不会顺着 body 传到上游。
+const forceAccountHeader = "X-Wb2a-Force-Account"
 
 // ServiceName 网关身份标识。经 /healthz 响应体 service 字段与 X-Service 头同时透出：
 // 宿主（如 workbuddy-switch 托管网关子进程）探测同端口的旧服务/其他服务时，对方即使
@@ -218,6 +234,16 @@ func NewHandler(cfg Config) *Handler {
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/clear", h.withAuth(h.adminClearRefreshRisk))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/success", h.withAuth(h.adminRefreshRiskSuccess))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/models/{model}/available", h.withAuth(h.adminModelAvailable))
+		// 管理面（REST）第一批：账号清单/详情、签到、扫码加号、模型中心、聊天测试台。
+		// 全部与上面同源鉴权（同一把 api_key），同受 admin.enabled 闸门。
+		h.mux.HandleFunc("GET /admin/accounts", h.withAuth(h.adminAccounts))
+		h.mux.HandleFunc("GET /admin/accounts/{uid}", h.withAuth(h.adminAccountDetail))
+		h.mux.HandleFunc("POST /admin/accounts/checkin", h.withAuth(h.adminCheckinAll))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/checkin", h.withAuth(h.adminCheckinOne))
+		h.mux.HandleFunc("POST /admin/auth/start", h.withAuth(h.adminAuthStart))
+		h.mux.HandleFunc("GET /admin/auth/poll", h.withAuth(h.adminAuthPoll))
+		h.mux.HandleFunc("GET /admin/models", h.withAuth(h.adminModels))
+		h.mux.HandleFunc("POST /admin/playground/chat", h.withAuth(h.adminPlaygroundChat))
 	}
 	h.mux.HandleFunc("GET /healthz", h.healthz)
 	return h
@@ -801,10 +827,19 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelBlocksCleared := false
+	// 测试台定点验证：管理面 /admin/playground/chat?uid= 通过内部头指定账号。
+	// 只影响**首选**，不改变可用性判定——该号冷却/该模型限额时照常轮转或 503。
+	forcedUID := strings.TrimSpace(r.Header.Get(forceAccountHeader))
 	for i := 0; i < h.cfg.MaxRotate; i++ {
 		// 选号：粘性号优先（PickByUIDForModel 已校验该模型可用性 + 在途未满），否则普通轮换。
 		var acct *auth.Auth
-		if stickyUID != "" && !(budgetMode && hotAccounts[stickyUID]) {
+		if forcedUID != "" && !tried[forcedUID] {
+			if cand := h.cfg.Pool.PickByUIDForModel(forcedUID, bareModel); cand != nil &&
+				(realm == "" || cand.Realm() == realm) {
+				acct = cand
+			}
+		}
+		if acct == nil && stickyUID != "" && !(budgetMode && hotAccounts[stickyUID]) {
 			acct = h.cfg.Pool.PickByUIDForModel(stickyUID, bareModel)
 			if acct == nil || (realm != "" && acct.Realm() != realm) {
 				// 粘性号在当前模型不可用（冷却/占满/该模型被 6004 限额）或 realm 不符 → 解绑。

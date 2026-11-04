@@ -402,6 +402,25 @@ func (a *Auth) SaveAtomic() error {
 	return os.Rename(tmp, a.FilePath)
 }
 
+// NewFromLogin 由扫码登录结果构造一份**待落盘**的账号凭证。
+//
+// 为什么构造器必须留在包内：realm 字段未导出（跨包只走 Realm() 读），而登录落盘
+// 必须把 realm 键写进文件 —— 否则双域部署下这条新账号会被 Realm() 按 domain 猜测，
+// 国际版账号有可能被判成 cn 而路由到国内端点。管理面（REST/CLI）与 cmd/login
+// 共用这一条构造路径，保证两种加号方式产出**字节形态一致**的 auth 文件。
+func NewFromLogin(uid, enterpriseID, nickname, accessToken, refreshToken, domain, realm string, expiresAt int64) *Auth {
+	return &Auth{
+		UID:          strings.TrimSpace(uid),
+		EnterpriseID: strings.TrimSpace(enterpriseID),
+		Nickname:     strings.TrimSpace(nickname),
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		Domain:       strings.TrimSpace(domain),
+		ExpiresAt:    expiresAt,
+		realm:        ResolveRealm(realm, domain),
+	}
+}
+
 // AuthFileGlob auth 文件的统一 glob 模式（宽侧：workbuddy*.json）。
 // 网关 LoadDir 与 cmd 运维工具（signin/credit/trial）共用此单一来源——
 // 此前 cmd 侧私用 workbuddy-*.json 窄模式，不带连字符的文件（如
