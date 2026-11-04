@@ -242,6 +242,27 @@ curl -s http://localhost:7863/v1/chat/completions \
   -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"stream":false}'
 ```
 
+## 开发与提交约定
+
+本仓库的日常协作遵循几条硬约定（目的是让修订记录可追溯、代码状态始终可构建）：
+
+1. **每完成一件事就提交并推送**：不攒工作区；`origin/main` 永远等于「最后一次验证通过的
+   状态」。任务结束时的顺序固定是 *改 → 自检 → 提交 → 推送*。
+2. **需要澄清的地方先问、改完自动推送**：澄清不阻塞已完成的改动；确认后的修改同样走
+   提交 + 推送，不留在本地。
+3. **一次提交只表达一件事**：重构、功能、文档、依赖各占一次提交；提交信息写清
+   「改了什么 / 为什么 / 怎么验证的」，便于以后 `git log` 追查。
+4. **提交前必须自检**，且结果写进提交信息：
+   ```bash
+   go build ./... && go vet ./... && go test ./...
+   # 改到部署相关时再验：
+   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...
+   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...
+   ```
+5. **不把归档目录与运行期数据入库**：`old/`（旧 Python/Next 面板）、`auths/`、`data/`、
+   真实 `config.json` 一律由 `.gitignore` / `.dockerignore` 排除；凭据永远不进 git。
+6. **不重写已发布的历史**：只有尚未推送的提交才允许 `reset`/重排；推送过的历史只追加。
+
 ## 管理面（REST + CLI）
 
 > 本仓库以**上游源码快照为基线**做二次开发（原 Python/Next 可视化面板已归档到 `old/`，
