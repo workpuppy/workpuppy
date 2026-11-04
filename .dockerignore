@@ -1,17 +1,30 @@
+# 构建上下文排除项（与 .gitignore 对齐；目标是让 docker build 只看到源码）
 auths/
 data/
 *.tmp
 .git/
 .gitignore
+.gitattributes
 docs/
-scripts/__pycache__/
-# 根目录已提交/未提交的二进制产物不进构建上下文（与 .gitignore 对齐）
+
+# 归档的旧版面板（本地保留、不入库），不进构建上下文——否则 COPY . . 会带上
+# 上千个与镜像无关的文件，构建变慢且容易被误打包。
+old/
+
+# 根目录二进制产物（构建阶段自己编译，不需要带进去）
 /login
 /credit
 /wb2api
 /signin_bin
+/wbctl
+/trial_bin
+/activity_bin
+/task_runner
+/school_bin
+
 # 真实配置不进镜像（镜像默认用 config.example.json，生产以挂载卷覆盖）
 config.json
+
 PLAN.md
 SPEC.md
 LOOP.md
