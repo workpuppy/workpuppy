@@ -1,0 +1,246 @@
+# docker.yml —— 镜像构建流水线（每次提交都打包，也支持手动触发）
+#
+# 设计要点：
+#   1. **每次 push 都跑**：所有分支 + `v*` tag；同时保留 `workflow_dispatch` 手动入口。
+#      「每次都打包」的代价用 GHA 层缓存压住（cache-from/to: type=gha），镜像层基本复用。
+#   2. **先测再打包**：test job 跑 go build / vet / test，镜像 job 依赖它 ——
+#      不让「测试红的提交」产出可部署镜像。这与仓库 README 的「改 → 自检 → 提交 → 推送」一致。
+#   3. **打包后真跑一次容器**（smoke）：/healthz 应答、/status 无 key 必须 401、
+#      镜像里**不允许有 python3**（Go 化后的硬约束，回归即失败）。验证的是加载到本地的
+#      amd64 镜像，随后多架构构建直接复用同一份层缓存。
+#   4. **推送策略**：默认分支/git tag 才打 `latest`；任何构建都带不可变的 `sha-<7位>`，
+#      分支带分支名 —— 这样「某次提交对应哪个镜像」永远可追。
+#   5. **架构**：分支提交只打 amd64（快）；tag 与手动触发默认 amd64+arm64（QEMU）。
+#      要改就在 workflow_dispatch 的 platforms 输入里写。
+#   6. 权限最小化：contents:read + packages:write（推 GHCR 需要后者）。
+name: docker
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: '构建平台（逗号分隔）'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+      push_image:
+        description: '构建后推送镜像到 GHCR'
+        required: false
+        type: boolean
+        default: true
+
+# 同一 ref 的旧构建直接取消：每次提交都触发，堆叠没意义。
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    name: go build / vet / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # 与 Dockerfile 的构建镜像（golang:1.26-alpine）保持同一大版本，
+          # 避免「CI 里能编、镜像里编不过」这类只在发布时暴露的分歧。
+          go-version: '1.26'
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  image:
+    name: docker build / smoke / push
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析构建参数
+        id: plan
+        env:
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+          INPUT_PUSH: ${{ inputs.push_image }}
+        run: |
+          set -euo pipefail
+          # 平台：手动触发用输入值；tag 推送做双架构；分支提交只做 amd64（QEMU 太慢）。
+          if [ -n "${INPUT_PLATFORMS:-}" ]; then
+            platforms="$INPUT_PLATFORMS"
+          elif [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            platforms="linux/amd64,linux/arm64"
+          else
+            platforms="linux/amd64"
+          fi
+          # 是否推送：手动触发听从输入（默认推）；自动触发一律推。
+          if [ -n "${INPUT_PUSH:-}" ]; then
+            push="$INPUT_PUSH"
+          else
+            push="true"
+          fi
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+          echo "push=$push" >> "$GITHUB_OUTPUT"
+          # 只有确实需要 arm64 时才装 QEMU（省一轮 setup）。
+          if [[ "$platforms" == *"arm64"* ]]; then
+            echo "qemu=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "qemu=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "构建平台: $platforms  推送: $push"
+
+      - uses: docker/setup-qemu-action@v3
+        if: steps.plan.outputs.qemu == 'true'
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        if: steps.plan.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 第一遍：构建并**加载到本地**（amd64），供下面的容器冒烟测试用。
+      # 多架构构建会复用同一份缓存，因此这一步不是额外开销。
+      - name: 构建（本地加载，用于冒烟）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: wb2api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 冒烟：起容器验证 /healthz、鉴权默认开启、镜像内无 python3
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          mkdir -p "$work/auths" "$work/data"
+          chmod -R 0777 "$work"
+          # 最小配置：固定 api_key（验证「默认就要鉴权」）、关掉全部定时任务
+          # （冒烟只验证进程与鉴权，不打上游）。
+          cat > "$work/config.json" <<'JSON'
+          {
+            "listen": ":7863",
+            "api_key": "ci-smoke-key",
+            "auth_dir": "/app/auths",
+            "state_file": "/app/data/state.json",
+            "admin": { "enabled": true },
+            "schedule": {
+              "checkin_enabled": false, "travel_enabled": false,
+              "activity_enabled": false, "keepalive_enabled": false,
+              "school_enabled": false, "cat_enabled": false
+            }
+          }
+          JSON
+          chmod 0644 "$work/config.json"
+
+          docker run -d --name wb-smoke -p 17863:7863 \
+            -v "$work/config.json:/app/config.json:ro" \
+            -v "$work/auths:/app/auths" \
+            -v "$work/data:/app/data" \
+            wb2api:ci
+
+          ok=""
+          for _ in $(seq 1 30); do
+            if body="$(curl -sS --max-time 2 http://127.0.0.1:17863/healthz 2>/dev/null)"; then
+              case "$body" in
+                *'"service":"workbuddy2api"'*) ok="$body"; break ;;
+              esac
+            fi
+            sleep 1
+          done
+          echo "healthz: ${ok:-<无响应>}"
+          if [ -z "$ok" ]; then
+            echo "::error::容器未在 30s 内应答 /healthz"
+            docker logs wb-smoke || true
+            docker rm -f wb-smoke || true
+            exit 1
+          fi
+          # 注意：无健康账号时 /healthz 会回 503（语义是"活着但不可服务"），
+          # 所以这里只断言**响应体带 service 标识**，不要求 200。
+
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17863/status || true)"
+          if [ "$code" != "401" ]; then
+            echo "::error::镜像默认应开启鉴权：无 key 访问 /status 期望 401，实际 $code"
+            docker rm -f wb-smoke || true
+            exit 1
+          fi
+          echo "status(no key) = $code（符合预期）"
+
+          if docker exec wb-smoke sh -c 'command -v python3 >/dev/null 2>&1'; then
+            echo "::error::镜像里不应存在 python3（Python 已全部 Go 化）"
+            docker rm -f wb-smoke || true
+            exit 1
+          fi
+          echo "镜像内无 python3（符合预期）"
+
+          docker logs wb-smoke | tail -n 20
+          docker rm -f wb-smoke
+
+      - name: 镜像元信息（标签 / OCI 标签）
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=workbuddy2api
+            org.opencontainers.image.description=CodeBuddy 多账号池 + OpenAI 兼容网关（Go 单栈）
+
+      - name: 构建（多架构）并推送
+        id: build
+        if: steps.plan.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ steps.plan.outputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          provenance: true
+
+      - name: 写入构建摘要
+        if: always()
+        run: |
+          {
+            echo "### docker 构建"
+            echo ""
+            echo "- 触发：\`${GITHUB_EVENT_NAME}\` @ \`${GITHUB_REF}\`（sha \`${GITHUB_SHA::7}\`）"
+            echo "- 平台：\`${{ steps.plan.outputs.platforms }}\`"
+            echo "- 推送：\`${{ steps.plan.outputs.push }}\`"
+            if [ -n "${{ steps.build.outputs.digest }}" ]; then
+              echo "- 摘要：\`${{ steps.build.outputs.digest }}\`"
+            fi
+            echo ""
+            echo "拉取并运行："
+            echo '```bash'
+            echo "docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \\"
+            echo "  -v \"\$PWD/auths:/app/auths\" -v \"\$PWD/data:/app/data\" \\"
+            echo "  -v \"\$PWD/config.json:/app/config.json:ro\" \\"
+            echo "  ${REGISTRY}/${IMAGE_NAME}:sha-${GITHUB_SHA::7}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

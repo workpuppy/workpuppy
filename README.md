@@ -263,6 +263,35 @@ curl -s http://localhost:7863/v1/chat/completions \
    真实 `config.json` 一律由 `.gitignore` / `.dockerignore` 排除；凭据永远不进 git。
 6. **不重写已发布的历史**：只有尚未推送的提交才允许 `reset`/重排；推送过的历史只追加。
 
+## CI：镜像构建（GitHub Actions）
+
+流水线文件：`.github/workflows/docker.yml`。**每次提交都自动打包镜像**，也可手动触发。
+
+| 触发 | 平台 | 推送的标签 |
+|---|---|---|
+| push 到任意分支 | `linux/amd64` | `sha-<7位>`、`<分支名>`；默认分支额外 `latest` |
+| push `v*` tag | `linux/amd64,linux/arm64` | `sha-<7位>`、`<tag>`、`latest` |
+| 手动（Actions → docker → Run workflow） | 输入决定（默认 amd64+arm64） | 同上（可关掉推送只验证） |
+
+流水线分两段：
+
+1. **`test`**：`go build` / `go vet` / `go test ./...` —— 测试红了不产出镜像。
+2. **`image`**：buildx 构建（GHA 层缓存）→ **真跑一次容器冒烟**（`/healthz` 有应答、
+   无 key 访问 `/status` 必须 401、容器内**不允许存在 python3**）→ 推送到 GHCR。
+
+```bash
+# 构建产物可以直接拉来跑（<sha> 换成提交短号或 latest）
+docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \
+  -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
+  -v "$PWD/config.json:/app/config.json:ro" \
+  ghcr.io/workpuppy/workpuppy:sha-<7位>
+```
+
+> **首次启用需要一次仓库设置**：`Settings → Actions → General → Workflow permissions`
+> 选 **Read and write**（或至少允许 `packages: write`），否则推 GHCR 会 403；
+> 推上去的包默认是 **private**，要在别处拉取时到 `Packages` 里把可见性改成 public
+> 或用带 `read:packages` 的 PAT 登录。
+
 ## 管理面（REST + CLI）
 
 > 本仓库以**上游源码快照为基线**做二次开发（原 Python/Next 可视化面板已归档到 `old/`，
