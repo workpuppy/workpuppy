@@ -20,10 +20,17 @@ import (
 
 // TestMain 统一关掉签到账号间隔与退避等待：默认值面向生产（3s / 5s+15s+60s），
 // 直接带进测试会让 500 响应类用例白等几十秒。需要验证节奏/重试的用例自行临时改回。
+//
+// 同时把「随机摊开」（spread.go）默认设为关闭：摊开会把定时批量摊到 15 分钟窗口里，
+// 开着它跑测试要么等十几分钟、要么被 ctx 取消。验证摊开行为的用例自己
+// t.Setenv("WB2A_TASK_SPREAD", "10m") 显式打开。
 func TestMain(m *testing.M) {
 	checkinAccountDelay = 0
 	checkinRetryDelays = nil
-	os.Exit(m.Run())
+	os.Setenv("WB2A_TASK_SPREAD", "0")
+	code := m.Run()
+	os.Unsetenv("WB2A_TASK_SPREAD")
+	os.Exit(code)
 }
 
 func TestNextFire(t *testing.T) {

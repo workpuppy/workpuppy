@@ -494,31 +494,47 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 	statuses := s.cfg.Pool.List()
 	out := make([]CheckinOutcome, 0, len(statuses))
 	var okN, alreadyN, failCheckinN, failResourceN, skipN int
-	first := true
-	// pace 相邻账号之间的间隔：签到与只读余额查询都会打上游，global 账号也要限速。
-	// 返回 false 表示 ctx 已取消。
-	pace := func() bool {
-		if first {
-			first = false
-			return true
-		}
-		return sleepCtx(ctx, s.accountGap(ctx, checkinAccountDelay))
+
+	// 先筛出**真正要跑**的账号（跳过项直接落 out），再按它们做节奏规划：
+	// 计划里混进不会执行的账号会把窗口稀释，摊开就名不副实了。
+	type target struct {
+		st pool.Status
+		a  *auth.Auth
 	}
+	targets := make([]target, 0, len(statuses))
 	for _, st := range statuses {
-		oc := CheckinOutcome{UID: st.UID, Nickname: st.Nickname}
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
-			oc.Status, oc.Detail = CheckinSkipped, "disabled"
+			out = append(out, CheckinOutcome{UID: st.UID, Nickname: st.Nickname, Status: CheckinSkipped, Detail: "disabled"})
 			skipN++
-			out = append(out, oc)
 			continue
 		}
 		a := s.cfg.Pool.AuthByUID(st.UID)
 		if a == nil || a.RefreshTokenValue() == "" {
-			oc.Status, oc.Detail = CheckinSkipped, "no credentials"
+			out = append(out, CheckinOutcome{UID: st.UID, Nickname: st.Nickname, Status: CheckinSkipped, Detail: "no credentials"})
 			skipN++
-			out = append(out, oc)
 			continue
 		}
+		targets = append(targets, target{st: st, a: a})
+	}
+
+	// 定时触发时把整批摊在 15 分钟窗口内（分层随机 + 随机顺序，见 spread.go）；
+	// 手动触发保持原样（用户正在等结果）。
+	pacer := s.newAccountPacer(ctx, taskCheckin, len(targets), checkinAccountDelay)
+	if pacer.Active() {
+		log.Printf("checkin spread: %d account(s) within %s", len(targets), pacer.Window().Round(time.Second))
+	}
+	// 同一账号内的连续请求（global 号签到跳过、只查余额）仍需要一点间隔，
+	// 与"账号之间摊开"是两件事。
+	intraAccountGap := func() bool {
+		return sleepCtx(ctx, s.accountGap(ctx, checkinAccountDelay))
+	}
+
+	for k, idx := range pacer.Order() {
+		if !pacer.Wait(k) {
+			return out, ctx.Err()
+		}
+		st, a := targets[idx].st, targets[idx].a
+		oc := CheckinOutcome{UID: st.UID, Nickname: st.Nickname}
 		// D4 门控：realm=global 账号无签到体系/任务中心，直接跳过（不发起任何上游调用，避免风控）。
 		// 经 auth.Realm() 统一判定：逃生门（global.enabled=false）下 global 账号被降级为 cn、
 		// 按 CN 处理——这是 D5 逃生门的刻意语义（纯 CN 部署锁死一切 global），与引用处一致。
@@ -530,7 +546,7 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 			// 因子对 global 完全失效，选号退化成纯轮询（issue #228）。
 			// UserResourceDetailed 只调 billing/meter 只读接口，不碰签到，
 			// 风控语义与 D4 门控一致。
-			if !pace() {
+			if !intraAccountGap() {
 				return out, ctx.Err()
 			}
 			if remain, buckets, err := s.cfg.Upstream.UserResourceDetailed(a, s.cfg.ExpiringSoonWindow); err != nil {
@@ -542,9 +558,6 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 			}
 			out = append(out, oc)
 			continue
-		}
-		if !pace() {
-			return out, ctx.Err()
 		}
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -655,7 +668,8 @@ func (s *Scheduler) RunActivityNow() {
 // runActivity 活跃上报遍历，随 ctx 取消立即退出。
 func (s *Scheduler) runActivity(ctx context.Context) {
 	count := s.cfg.ActivityReportCount
-	first := true
+	// 先筛出真正要跑的账号（禁用/风险暂停/无 accessToken 的跳过），再规划节奏。
+	targets := make([]*auth.Auth, 0, 8)
 	for _, st := range s.cfg.Pool.List() {
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
 			continue
@@ -664,15 +678,20 @@ func (s *Scheduler) runActivity(ctx context.Context) {
 		if a == nil || a.AccessTokenValue() == "" {
 			continue
 		}
+		targets = append(targets, a)
+	}
+	pacer := s.newAccountPacer(ctx, taskActivity, len(targets), activityAccountDelay)
+	if pacer.Active() {
+		log.Printf("activity spread: %d account(s) within %s", len(targets), pacer.Window().Round(time.Second))
+	}
+	for k, idx := range pacer.Order() {
+		if !pacer.Wait(k) {
+			return // 优雅停机：剩余账号下轮再报
+		}
+		a := targets[idx]
 		// global 账号同样上报（PR #45 实测国际版 /v2/report 在 workbuddy.ai 上 code=0 OK，
 		// 点亮连登）；realmBase 路由/头由 upstream.billingJSON/BillingHeaders 按 realm 切。
 		// 单账号失败只记 WARN 不影响遍历（下方 report err → break 该号 → continue 下号）。
-		if !first {
-			if !sleepCtx(ctx, s.accountGap(ctx, activityAccountDelay)) {
-				return // 优雅停机：不等限速睡满，剩余账号下轮再报
-			}
-		}
-		first = false
 		// N 条共用同一 conversationId（同会话），requestId 各自独立（每条一个）。
 		cid := fmt.Sprintf("wb2api-%d", time.Now().UnixMilli())
 		ok := 0
@@ -899,7 +918,9 @@ func (s *Scheduler) runKeepalive(ctx context.Context) {
 	defer func() {
 		log.Printf("keepalive done: checked=%d ok=%d failed=%d skipped=%d", checked, okN, failed, skipped)
 	}()
-	first := true
+	// 先筛出真正要刷新的账号（跳过的计入 skipped），再规划节奏：
+	// 定时触发摊在窗口内（spread.go），手动/关闭时退回固定间隔。
+	targets := make([]*auth.Auth, 0, 8)
 	for _, st := range s.cfg.Pool.List() {
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
 			skipped++
@@ -910,31 +931,38 @@ func (s *Scheduler) runKeepalive(ctx context.Context) {
 			skipped++
 			continue
 		}
-		if !first && !sleepCtx(ctx, s.accountGap(ctx, 0)) {
+		targets = append(targets, a)
+	}
+	pacer := s.newAccountPacer(ctx, taskKeepalive, len(targets), 0)
+	if pacer.Active() {
+		log.Printf("keepalive spread: %d account(s) within %s", len(targets), pacer.Window().Round(time.Second))
+	}
+	for k, idx := range pacer.Order() {
+		if !pacer.Wait(k) {
 			return
 		}
 		if ctx.Err() != nil {
 			return
 		}
-		first = false
+		a := targets[idx]
 		checked++
 		if err := s.cfg.Upstream.RefreshToken(a); err != nil {
 			failed++
-			log.Printf("keepalive %s: %v", logfmt.Label(st.UID, st.Nickname), err)
+			log.Printf("keepalive %s: %v", logfmt.Label(a.UID, a.Nickname), err)
 			var ue *upstream.Error
 			if errors.As(err, &ue) && ue.Kind == upstream.ErrSessionDead {
-				if s.cfg.Pool.NoteSessionDead(st.UID) {
-					log.Printf("WARN: keepalive %s: 连续 %d 次 12153 session dead — 禁用", logfmt.Label(st.UID, st.Nickname), pool.SessionDeadThreshold())
+				if s.cfg.Pool.NoteSessionDead(a.UID) {
+					log.Printf("WARN: keepalive %s: 连续 %d 次 12153 session dead — 禁用", logfmt.Label(a.UID, a.Nickname), pool.SessionDeadThreshold())
 				}
 			}
 			continue
 		}
 		okN++
-		log.Printf("keepalive %s: ok", logfmt.Label(st.UID, st.Nickname))
-		s.cfg.Pool.ClearSessionDead(st.UID) // 刷新成功清误判计数，失败不该累计
-		a.BackfillRealm()                   // 老 auth 空 realm → 落盘前补标识（幂等：已有不动）
+		log.Printf("keepalive %s: ok", logfmt.Label(a.UID, a.Nickname))
+		s.cfg.Pool.ClearSessionDead(a.UID) // 刷新成功清误判计数，失败不该累计
+		a.BackfillRealm()                  // 老 auth 空 realm → 落盘前补标识（幂等：已有不动）
 		if err := a.SaveAtomic(); err != nil {
-			log.Printf("keepalive %s save: %v", logfmt.Label(st.UID, st.Nickname), err)
+			log.Printf("keepalive %s save: %v", logfmt.Label(a.UID, a.Nickname), err)
 		}
 	}
 }

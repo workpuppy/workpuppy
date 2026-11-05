@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // TaskBinNames 脚本类任务的可执行文件名（与 cmd/ 目录一一对应）。
@@ -145,9 +146,7 @@ func (s *Scheduler) runSchool(ctx context.Context) {
 		log.Printf("WARN: 开学季任务跳过：找不到 %s（应与 wb2api 同目录，或用 WB2A_TASK_BIN_DIR 指定）", TaskBinSchool)
 		return
 	}
-	runScriptContext(ctx, "school", workDir(), [][]string{
-		s.accountScriptArgs(ctx, []string{bin, "ALL", "--run", "--yes"}),
-	})
+	s.runScriptTask(ctx, "school", bin, []string{"--run", "--yes"}, taskSchool)
 }
 
 // RunCatNow 立即执行夜猫子任务：task_runner ALL --yes --only black_cat。
@@ -164,9 +163,55 @@ func (s *Scheduler) runCat(ctx context.Context) {
 		log.Printf("WARN: 夜猫子任务跳过：找不到 %s（应与 wb2api 同目录，或用 WB2A_TASK_BIN_DIR 指定）", TaskBinRunner)
 		return
 	}
-	runScriptContext(ctx, "cat", workDir(), [][]string{
-		s.accountScriptArgs(ctx, []string{bin, "ALL", "--yes", "--only", "black_cat"}),
-	})
+	s.runScriptTask(ctx, "cat", bin, []string{"--yes", "--only", "black_cat"}, taskCat)
+}
+
+// runScriptTask 跑脚本类任务，并按需把账号摊开。
+//
+// 两种形态：
+//   - 手动触发 / 摊开关闭：一次 `ALL` 跑完整池（行为与改造前一致，方便对照排障）；
+//   - 定时触发：**每个账号一次子进程**，各自落在自己的随机时刻上（spread.go）。
+//     拆成多进程而不是进程内串行，是因为脚本自己会遍历账号并以固定节奏发请求——
+//     只有把"什么时候启一个账号"移到调度器，才谈得上按账号摊开。
+func (s *Scheduler) runScriptTask(ctx context.Context, name, bin string, args []string, kind taskKind) {
+	dir := workDir()
+
+	// 与脚本内部同一口径筛账号（禁用/风险暂停/无凭证/global 不参与 CN 任务），
+	// 这样摊开计划只覆盖真正会发请求的账号，窗口才不被稀释。
+	// Pool 为 nil（纯调度器测试 / 极端降级）时无从筛账号，直接走一次性 ALL。
+	var uids []string
+	if s.cfg.Pool != nil {
+		for _, st := range s.cfg.Pool.List() {
+			if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
+				continue
+			}
+			a := s.cfg.Pool.AuthByUID(st.UID)
+			if a == nil || a.RefreshTokenValue() == "" || a.IsGlobal() {
+				continue
+			}
+			uids = append(uids, a.UID)
+		}
+	}
+
+	pacer := s.newAccountPacer(ctx, kind, len(uids), 0)
+	if !pacer.Active() || len(uids) == 0 {
+		argv := make([]string, 0, len(args)+2)
+		argv = append(argv, bin, "ALL")
+		argv = append(argv, args...)
+		runScriptContext(ctx, name, dir, [][]string{s.accountScriptArgs(ctx, argv)})
+		return
+	}
+
+	log.Printf("%s spread: %d account(s) within %s", name, len(uids), pacer.Window().Round(time.Second))
+	for k, idx := range pacer.Order() {
+		if !pacer.Wait(k) {
+			return
+		}
+		argv := make([]string, 0, len(args)+2)
+		argv = append(argv, bin, uids[idx])
+		argv = append(argv, args...)
+		runScriptContext(ctx, name+" "+uids[idx], dir, [][]string{argv})
+	}
 }
 
 // workDir 子进程的工作目录：用当前进程的 cwd。

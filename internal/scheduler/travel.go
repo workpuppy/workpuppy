@@ -68,9 +68,11 @@ func (s *Scheduler) RunTravelNow() {
 
 // runTravel 旅行巡检遍历，随 ctx 取消立即退出。
 // 禁用账号跳过；401/查询失败只跳过该账号本轮（不强刷 token，交 22:00 keepalive）；
-// 账号间限速 travelAccountDelay（sleepCtx：取消时立即放弃后续账号）。
+// 定时触发时整批摊在 15 分钟窗口内（spread.go），手动/关闭时退回固定间隔
+// travelAccountDelay。
 func (s *Scheduler) runTravel(ctx context.Context) {
-	first := true
+	// 先筛出真正要跑的账号，再做节奏规划（跳过的账号不该稀释摊开窗口）。
+	targets := make([]*auth.Auth, 0, 8)
 	for _, st := range s.cfg.Pool.List() {
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
 			continue
@@ -82,13 +84,17 @@ func (s *Scheduler) runTravel(ctx context.Context) {
 		if a.IsGlobal() {
 			continue // D4 门控：global 无猫猫旅行体系，不发起任何上游调用
 		}
-		if !first {
-			if !sleepCtx(ctx, s.accountGap(ctx, travelAccountDelay)) {
-				return // 优雅停机：不等限速睡满，剩余账号下轮再巡
-			}
+		targets = append(targets, a)
+	}
+	pacer := s.newAccountPacer(ctx, taskTravel, len(targets), travelAccountDelay)
+	if pacer.Active() {
+		log.Printf("travel spread: %d account(s) within %s", len(targets), pacer.Window().Round(time.Second))
+	}
+	for k, idx := range pacer.Order() {
+		if !pacer.Wait(k) {
+			return // 优雅停机：剩余账号下轮再巡
 		}
-		first = false
-		s.travelOne(a)
+		s.travelOne(targets[idx])
 	}
 }
 
