@@ -288,9 +288,36 @@ docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \
 ```
 
 > **首次启用需要一次仓库设置**：`Settings → Actions → General → Workflow permissions`
-> 选 **Read and write**（或至少允许 `packages: write`），否则推 GHCR 会 403；
-> 推上去的包默认是 **private**，要在别处拉取时到 `Packages` 里把可见性改成 public
-> 或用带 `read:packages` 的 PAT 登录。
+> 选 **Read and write**（或至少允许 `packages: write`），否则推 GHCR 会 403。
+
+### 关于 GHCR 包的可见性（重要）
+
+仓库 public **不等于** 镜像 public：用 `GITHUB_TOKEN` 发布的包默认是 **private**，
+且**不在仓库设置里**，而在组织级的包页面：
+
+```
+https://github.com/orgs/<org>/packages/container/<repo>          # 包页
+https://github.com/orgs/<org>/packages/container/<repo>/settings # 包设置
+→ Danger Zone → Change visibility → Public
+```
+
+若该页显示 **“Setting is disabled by organization administrators”**，说明包可见性
+被组织（或企业）策略锁住了，需要依次检查（都要组织/企业 owner 权限）：
+
+| 位置 | 要找的开关 |
+|---|---|
+| `https://github.com/organizations/<org>/settings/packages` | 包可见性 / 允许成员创建 public 包 |
+| `https://github.com/organizations/<org>/settings/member_privileges` | 与包创建/可见性相关的成员权限 |
+| `https://github.com/enterprises/<企业>/settings/policies` → Policies → Packages | 企业级策略（锁在更上层时，组织 owner 也改不了） |
+
+放不开时的两条**不依赖组织策略**的公开分发路线：
+
+1. **Docker Hub**（推荐）：在仓库 `Settings → Secrets and variables → Actions` 里加
+   `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN`（token 需 Read & Write 权限），流水线
+   会自动并行推一份到 `docker.io/<用户名>/workbuddy2api`；Docker Hub 仓库天生可公开拉取。
+   **没配这两个 secret 时该步骤整体跳过**，不影响 GHCR 那条路。
+2. **私有 GHCR + PAT**：目标机器 `echo "$PAT" | docker login ghcr.io -u <用户名> --password-stdin`
+   （PAT 勾 `read:packages`）。
 
 ## 管理面（REST + CLI）
 

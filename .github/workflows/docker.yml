@@ -70,6 +70,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # Docker Hub 是**可选**发布目标：配置了 DOCKERHUB_USERNAME/TOKEN 两个 secret
+    # 才启用，缺省自动跳过（GHCR 那条路不受影响）。
+    # 为什么要它：GHCR 的包默认 private，而「包改 public」受组织/企业策略约束
+    # （组织管理员也可能看到 Setting is disabled by organization administrators）。
+    # Docker Hub 仓库天生可公开拉取，是不依赖组织策略的逃生路线。
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -210,7 +218,7 @@ jobs:
             org.opencontainers.image.title=workbuddy2api
             org.opencontainers.image.description=CodeBuddy 多账号池 + OpenAI 兼容网关（Go 单栈）
 
-      - name: 构建（多架构）并推送
+      - name: 构建（多架构）并推送 GHCR
         id: build
         if: steps.plan.outputs.push == 'true'
         uses: docker/build-push-action@v6
@@ -220,6 +228,46 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          provenance: true
+
+      # ── 可选：Docker Hub 并行发布（未配 secret 时整段跳过）──────────────────
+      # GHCR 包默认 private，改成 public 受组织策略限制时，这里是**不需要组织权限**
+      # 的公开分发路径（Docker Hub 仓库天生可公开拉取）。
+      - name: 登录 Docker Hub（可选）
+        if: steps.plan.outputs.push == 'true' && env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: 镜像元信息（Docker Hub 标签）
+        id: meta_hub
+        if: steps.plan.outputs.push == 'true' && env.DOCKERHUB_USERNAME != ''
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/${{ env.DOCKERHUB_USERNAME }}/workbuddy2api
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=workbuddy2api
+            org.opencontainers.image.description=CodeBuddy 多账号池 + OpenAI 兼容网关（Go 单栈）
+
+      - name: 构建（多架构）并推送 Docker Hub（可选）
+        id: build_hub
+        if: steps.plan.outputs.push == 'true' && env.DOCKERHUB_USERNAME != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ steps.plan.outputs.platforms }}
+          push: true
+          tags: ${{ steps.meta_hub.outputs.tags }}
+          labels: ${{ steps.meta_hub.outputs.labels }}
+          # 与 GHCR 那步共用 GHA 缓存：层一样，第二次基本零成本。
           cache-from: type=gha
           provenance: true
 
@@ -233,8 +281,16 @@ jobs:
             echo "- 平台：\`${{ steps.plan.outputs.platforms }}\`"
             echo "- 推送：\`${{ steps.plan.outputs.push }}\`"
             if [ -n "${{ steps.build.outputs.digest }}" ]; then
-              echo "- 摘要：\`${{ steps.build.outputs.digest }}\`"
+              echo "- GHCR 摘要：\`${{ steps.build.outputs.digest }}\`"
             fi
+            if [ -n "${{ steps.build_hub.outputs.digest }}" ]; then
+              echo "- Docker Hub 摘要：\`${{ steps.build_hub.outputs.digest }}\`"
+            fi
+            echo ""
+            echo "**GHCR 包页**（可见性在此页的 Package settings → Danger Zone 修改；"
+            echo "若提示 *Setting is disabled by organization administrators*，说明被组织/企业策略锁住）："
+            echo ""
+            echo "https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${IMAGE_NAME##*/}"
             echo ""
             echo "拉取并运行："
             echo '```bash'
@@ -242,5 +298,10 @@ jobs:
             echo "  -v \"\$PWD/auths:/app/auths\" -v \"\$PWD/data:/app/data\" \\"
             echo "  -v \"\$PWD/config.json:/app/config.json:ro\" \\"
             echo "  ${REGISTRY}/${IMAGE_NAME}:sha-${GITHUB_SHA::7}"
+            if [ -n "${DOCKERHUB_USERNAME:-}" ]; then
+              echo ""
+              echo "# 或（公开可拉，无需登录）："
+              echo "docker pull docker.io/${DOCKERHUB_USERNAME}/workbuddy2api:sha-${GITHUB_SHA::7}"
+            fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
