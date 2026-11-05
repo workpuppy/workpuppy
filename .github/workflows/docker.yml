@@ -186,6 +186,21 @@ jobs:
           fi
           echo "status(no key) = $code（符合预期）"
 
+          # 管理后台：/ 必须是页面（同源由本进程托管，镜像里没有 nginx），
+          # /assets 里的 Bootstrap 也必须能取到 —— 二者缺一，后台就是白屏。
+          if ! curl -fsS http://127.0.0.1:17863/ | grep -q 'WorkBuddy2API'; then
+            echo "::error::GET / 未返回管理后台页面"
+            docker rm -f wb-smoke || true
+            exit 1
+          fi
+          css_len="$(curl -s -o /dev/null -w '%{size_download}' http://127.0.0.1:17863/assets/bootstrap.min.css || echo 0)"
+          if [ "${css_len:-0}" -lt 100000 ]; then
+            echo "::error::内嵌 Bootstrap 资源异常：expected >100KB, got ${css_len}B"
+            docker rm -f wb-smoke || true
+            exit 1
+          fi
+          echo "管理后台：/ 可访问，bootstrap.min.css = ${css_len}B（符合预期）"
+
           if docker exec wb-smoke sh -c 'command -v python3 >/dev/null 2>&1'; then
             echo "::error::镜像里不应存在 python3（Python 已全部 Go 化）"
             docker rm -f wb-smoke || true
