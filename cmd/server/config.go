@@ -209,6 +209,9 @@ type Config struct {
 	ExpiringSoonDur             time.Duration `json:"-"`
 	// CostExploreIntervalDur 解析后的 costTier 探索窗口（issue #136）；0 = 关停。
 	CostExploreIntervalDur time.Duration `json:"-"`
+	// SpreadWindowDur 定时任务账号随机分布窗口（schedule.spread_window 解析结果）。
+	// 0 = 关闭（回到"到点立刻 + 固定间隔"）。默认 15m。
+	SpreadWindowDur time.Duration `json:"-"`
 }
 
 // Default 默认配置。
@@ -503,6 +506,17 @@ func (c *Config) normalize() error {
 	}
 	if c.Pool.IdleWeightMax <= 0 {
 		c.Pool.IdleWeightMax = 5.0
+	}
+	// 定时任务账号随机分布窗口（schedule.spread_window）：
+	// 空值回落默认 15m；"0" 是合法值（关闭，回到固定间隔）；负值钳 0。
+	if c.Schedule.SpreadWindow == "" {
+		c.Schedule.SpreadWindow = "15m"
+	}
+	if c.SpreadWindowDur, err = time.ParseDuration(c.Schedule.SpreadWindow); err != nil {
+		return fmt.Errorf("schedule.spread_window: %w", err)
+	}
+	if c.SpreadWindowDur < 0 {
+		c.SpreadWindowDur = 0
 	}
 	// 快过期窗口：空值回落默认 168h（Default 已置；此兜底覆盖显式 ""）；显式 "0"/负值 = 禁用分桶。
 	if c.Pool.ExpiringSoon == "" {

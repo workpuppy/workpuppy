@@ -94,25 +94,40 @@ func (s *Scheduler) runTravel(ctx context.Context) {
 		if !pacer.Wait(k) {
 			return // 优雅停机：剩余账号下轮再巡
 		}
-		s.travelOne(targets[idx])
+		if !s.travelOne(ctx, targets[idx]) {
+			return // ctx 取消：本号已打完在途请求，剩余账号下轮再巡
+		}
 	}
 }
 
 // travelOne 单账号单趟状态机：查有无猫 + 查状态 + 最多一个动作，不轮询不等待。
-func (s *Scheduler) travelOne(a *auth.Auth) {
+//
+// 账号内的三次请求（buddy-info → travel/status → 派出/领奖）之间隔一个 0.5~3s 的随机
+// 间隔（s.intraJitter）：同一账号同一秒连打三个请求本身就是机器特征。
+// 返回 false 表示 ctx 取消，调用方应停止本轮遍历。
+func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 	buddy, err := s.cfg.Upstream.BuddyInfo(a)
 	if err != nil {
 		log.Printf("travel %s: buddy-info: %v", logfmt.Label(a.UID, a.Nickname), err)
-		return
+		return true
 	}
 	if buddy == nil {
+		if !s.intraJitter(ctx) {
+			return false
+		}
 		s.travelAdopt(a)
-		return
+		return true
+	}
+	if !s.intraJitter(ctx) {
+		return false
 	}
 	ts, err := s.cfg.Upstream.TravelStatus(a)
 	if err != nil {
 		log.Printf("travel %s: status: %v", logfmt.Label(a.UID, a.Nickname), err)
-		return
+		return true
+	}
+	if !s.intraJitter(ctx) {
+		return false
 	}
 	switch ts.State {
 	case travelStateArrived:
@@ -124,6 +139,7 @@ func (s *Scheduler) travelOne(a *auth.Auth) {
 	default:
 		log.Printf("travel %s: skip (unknown state %q)", logfmt.Label(a.UID, a.Nickname), ts.State)
 	}
+	return true
 }
 
 // travelDepart 空闲且未达当日上限时派出（每日 1 次，自然日 00:00 CST 重置）。

@@ -201,6 +201,7 @@ func main() {
 		CatHours:               cfg.Schedule.CatHours,
 		ActivityReportCount:    cfg.Schedule.ActivityReportCount,
 		ExpiringSoonWindow:     cfg.ExpiringSoonDur, // 快过期积分优先消耗（issue:积分过期）
+		SpreadWindow:           cfg.SpreadWindowDur, // 定时任务账号随机分布窗口（schedule.spread_window）
 		CheckinDisabled:        !cfg.Schedule.CheckinEnabled,
 		TravelDisabled:         !cfg.Schedule.TravelEnabled,
 		ActivityDisabled:       !cfg.Schedule.ActivityEnabled,
@@ -240,6 +241,13 @@ func main() {
 		log.Printf("夜猫子任务已禁用（schedule.cat_enabled=false）")
 	} else {
 		log.Printf("夜猫子任务已启用：%v 点（task_runner ALL --yes --only black_cat）", cfg.Schedule.CatHours)
+	}
+	// 账号随机分布窗口：让"到点后整池账号同一秒打上游"不再发生（见 internal/scheduler/spread.go）。
+	if cfg.SpreadWindowDur > 0 {
+		log.Printf("定时任务随机分布：每个账号执行时刻 = 整点 + 0~%v 内的随机延迟（schedule.spread_window）",
+			cfg.SpreadWindowDur)
+	} else {
+		log.Printf("定时任务随机分布已关闭（schedule.spread_window=0）：到点后按固定间隔顺序执行")
 	}
 
 	// 管理面凭据：每次启动随机生成（只存内存），启动完成后打印到终端。

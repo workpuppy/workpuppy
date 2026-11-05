@@ -8,6 +8,7 @@
     "soft_rate_max": "2h"
   },
   "schedule": {
+    "spread_window": "15m",
     "checkin_hours": [
       9,
       21

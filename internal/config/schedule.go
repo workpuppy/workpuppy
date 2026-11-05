@@ -18,8 +18,14 @@ type Schedule struct {
 	AccountDelayMaxSeconds int `json:"account_delay_max_seconds"`
 	// RandomDelayMinutes spreads each enabled daily slot within its scheduled
 	// hour. Zero preserves the exact-hour schedule; the supported maximum is 60.
-	RandomDelayMinutes int   `json:"random_delay_minutes"`
-	CheckinHours       []int `json:"checkin_hours"`   // [9,21]
+	RandomDelayMinutes int `json:"random_delay_minutes"`
+	// SpreadWindow 账号之间的随机分布窗口（时长字符串，如 "15m"）：
+	// 定时任务到点后，每个账号的执行时刻 = 整点 + uniform(0, SpreadWindow)，
+	// 避免整池账号在同一秒打上游。空 = 默认 15m；"0" = 关闭（回到固定间隔顺序执行）。
+	// 与上面的 RandomDelayMinutes 分工：那个抖的是**整批起点**在小时内的小偏移，
+	// 这个摊的是**账号之间**的分布。
+	SpreadWindow     string `json:"spread_window"`
+	CheckinHours     []int  `json:"checkin_hours"`   // [9,21]
 	TravelHours        []int `json:"travel_hours"`    // [9,21]
 	ActivityHours      []int `json:"activity_hours"`  // [10]
 	KeepaliveHours     []int `json:"keepalive_hours"` // [22]

@@ -43,6 +43,13 @@ type Config struct {
 	// <=0 时禁用分桶（全部归长期，行为与引入前一致）。默认建议 7*24h。
 	ExpiringSoonWindow time.Duration
 
+	// SpreadWindow 定时任务的「随机摊开」窗口：定时触发时，每个账号的执行时刻 =
+	// 整点 + uniform(0, SpreadWindow)，避免整池账号在同一秒打上游（见 spread.go）。
+	// 0（或负数）= 关闭，回到「到点立刻 + 固定间隔」的旧行为。
+	// 来源：config.json 的 schedule.spread_window（默认 15m）；
+	// 环境变量 WB2A_TASK_SPREAD 可临时覆盖（排障用）。
+	SpreadWindow time.Duration
+
 	// CheckinDisabled 显式关闭签到排程（对应 config 的 schedule.checkin_enabled=false）。
 	// 禁用后不再有任何签到时点。旅行不再搭签到便车（已剥离为独立排程）。
 	CheckinDisabled bool
@@ -523,11 +530,7 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 	if pacer.Active() {
 		log.Printf("checkin spread: %d account(s) within %s", len(targets), pacer.Window().Round(time.Second))
 	}
-	// 同一账号内的连续请求（global 号签到跳过、只查余额）仍需要一点间隔，
-	// 与"账号之间摊开"是两件事。
-	intraAccountGap := func() bool {
-		return sleepCtx(ctx, s.accountGap(ctx, checkinAccountDelay))
-	}
+
 
 	for k, idx := range pacer.Order() {
 		if !pacer.Wait(k) {
@@ -546,9 +549,6 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 			// 因子对 global 完全失效，选号退化成纯轮询（issue #228）。
 			// UserResourceDetailed 只调 billing/meter 只读接口，不碰签到，
 			// 风控语义与 D4 门控一致。
-			if !intraAccountGap() {
-				return out, ctx.Err()
-			}
 			if remain, buckets, err := s.cfg.Upstream.UserResourceDetailed(a, s.cfg.ExpiringSoonWindow); err != nil {
 				log.Printf("user-resource(global) %s: %v", logfmt.Label(st.UID, st.Nickname), err)
 			} else {
@@ -588,6 +588,11 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 				}
 			}
 		}
+		// 同一账号内的连续请求之间隔一个 0.5~3s 的随机间隔（见 spread.go 说明）：
+		// 刷新 → 签到 → 查余额 三连背靠背发出去，比"整批账号挤在一起"更像机器。
+		if !s.intraJitter(ctx) {
+			return out, ctx.Err()
+		}
 		// 签到返回错误（含"今天已签到"）也继续查余额：余额恢复即可解冻账号。
 		// 瞬时失败（HTTP 5xx / 10001）先在原地退避重试，避免错过当天签到。
 		if err := s.dailyCheckinWithRetry(ctx, a, logfmt.Label(st.UID, st.Nickname)); err != nil {
@@ -602,6 +607,9 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 			}
 		} else {
 			oc.Status = CheckinOK
+		}
+		if !s.intraJitter(ctx) {
+			return out, ctx.Err()
 		}
 		// 分桶查余额：快过期窗口内的积分单独标记，pool 优先消耗（issue:积分过期）。
 		// ExpiringSoonWindow<=0 时退化为纯总量（与引入前一致）。
@@ -704,8 +712,9 @@ func (s *Scheduler) runActivity(ctx context.Context) {
 			log.Printf("activity %s: report %d/%d ok", logfmt.Label(a.UID, a.Nickname), i, count)
 			ok++
 			if i < count {
-				// 账号内 5 条之间间隔，避免秒发风控；取消时立即放弃本号剩余条数。
-				if !sleepCtx(ctx, activityReportGap) {
+				// 账号内 N 条之间隔一个随机间隔（0.5~3s）：固定 1.5s 本身就是节奏特征；
+				// 取消时立即放弃本号剩余条数。
+				if !s.intraJitter(ctx) {
 					return
 				}
 			}
