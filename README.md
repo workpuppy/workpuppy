@@ -290,6 +290,11 @@ curl -s http://localhost:7863/v1/chat/completions \
 `:latest` 即可 —— docker / NAS / k8s 会按本机架构自动挑对应 manifest，不需要你判断平台。
 需要「固定到某次提交」时用不可变的 `sha-<7位>`。
 
+> index 里**只有** `linux/amd64` 与 `linux/arm64` 两条：流水线显式关掉了 buildx 的
+> provenance / SBOM 附件（它们会以 `unknown/unknown` 平台出现在 index 里，老版本 NAS
+> 的镜像列表会因此报「unknown platform」）。每次推送后流水线还会用
+> `docker buildx imagetools inspect` 反向校验平台齐全、无 attestation 条目。
+
 ```bash
 # 客户端：一条命令，架构自适配
 docker pull ghcr.io/workpuppy/workpuppy:latest

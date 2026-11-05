@@ -245,7 +245,39 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          provenance: true
+          # 关掉构建证明（provenance）与 SBOM：buildx 默认会往 image index 里塞
+          # 两个 attestation manifest，它们在列表里显示成 `unknown/unknown` 平台。
+          # docker / containerd 会自动忽略，但**老版本 NAS 的前端会因此报
+          # "unknown platform" 或干脆选错 manifest** —— 本项目分发渠道正是 NAS，
+          # 所以这里显式关掉，让 index 里**只有** amd64 和 arm64 两条。
+          # 代价：失去 SLSA provenance/SBOM 附件；镜像摘要与标签追溯不受影响。
+          provenance: false
+          sbom: false
+
+      # 校验真的推上去了什么：index 里只能有目标平台，且**不允许**出现
+      # `unknown/unknown`（那是 attestation manifest 的标志，被 NAS 前端误读）。
+      # 这条同时防止「哪天有人手滑把 provenance 打开」这种静默回归。
+      - name: 校验镜像 index（平台齐全、无 unknown/unknown）
+        if: steps.plan.outputs.push == 'true'
+        env:
+          PLATFORMS: ${{ steps.plan.outputs.platforms }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${IMAGE_NAME}:sha-${GITHUB_SHA::7}"
+          echo "--- docker buildx imagetools inspect ${ref} ---"
+          docker buildx imagetools inspect "$ref" | tee /tmp/index.txt
+          echo
+          if grep -qi 'unknown/unknown' /tmp/index.txt; then
+            echo "::error::镜像 index 里出现 unknown/unknown（provenance/SBOM 又被打开了？）"
+            exit 1
+          fi
+          for p in $(echo "$PLATFORMS" | tr ',' ' '); do
+            if ! grep -q "$p" /tmp/index.txt; then
+              echo "::error::index 缺少平台 $p"
+              exit 1
+            fi
+          done
+          echo "index 校验通过：平台齐全且无 attestation 条目"
 
       # ── 以下两步在所有分支/标签上执行（Docker Hub 已按需求移除：只推 GHCR）──
       - name: 写入构建摘要
