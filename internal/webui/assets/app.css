@@ -1,0 +1,29 @@
+/* app.css —— 管理后台的少量自定义样式（其余全部用 Bootstrap 5 的工具类）。
+   为什么不引 Sass/npm：这套后台刻意不设构建步骤，改完直接 go build。 */
+
+.pg-out {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.nav-link {
+  /* Bootstrap 的 nav-link 按 <a> 设计，这里用 <button> 承载视图切换，
+     需要把按钮的默认外观压掉，保持和链接一致。 */
+  background: none;
+  border: 0;
+}
+
+.nav-link.active {
+  font-weight: 600;
+}
+
+#accountsBody td,
+#modelsBody td {
+  vertical-align: middle;
+}
+
+.status-badge {
+  font-weight: 500;
+}

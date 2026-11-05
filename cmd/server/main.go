@@ -21,6 +21,7 @@ import (
 	"workbuddy2api/internal/server"
 	"workbuddy2api/internal/session"
 	"workbuddy2api/internal/upstream"
+	"workbuddy2api/internal/webui"
 )
 
 // modelJSONPath 由 state.json 路径推导 model.json 路径（同目录同名换缀）：
@@ -263,6 +264,9 @@ func main() {
 		Scheduler: sch,
 		AuthDir:   cfg.AuthDir,
 		Login:     loginsvc.New(),
+		// 管理后台（Bootstrap 静态页，embed 进二进制）：/ 是入口，
+		// /assets/... 是内嵌资源，/v1 与 /admin 走各自的 handler。
+		UI: webui.Handler(),
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -304,6 +304,42 @@ https://github.com/orgs/<org>/packages/container/<repo>
 需要到 `organizations/<org>/settings/packages` 或企业的 `Policies → Packages` 放开。
 本仓库已把它设为 public，可直接匿名拉取。
 
+## Web 管理后台
+
+打开 `http://<host>:7863/` 就是后台入口 —— **同一个 Go 进程、同一个端口**托管页面与 API，
+容器里不需要 nginx，也不需要任何前端构建步骤（没有 npm / node_modules / 打包产物）。
+
+| 路径 | 用途 |
+|---|---|
+| `/` | 管理后台（Bootstrap 单页，`location.hash` 切视图） |
+| `/assets/...` | 内嵌静态资源（Bootstrap 5.3.3 + app.js/app.css） |
+| `/v1/*` | **OpenAI 兼容接口**（原样保留，供下游 SDK 使用） |
+| `/admin/*` | 管理面 REST（见下一节） |
+| `/status`、`/healthz` | 状态与存活探测 |
+
+页面能力（全部直接打 `/admin/*`，无中间层）：
+
+- **概览**：账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + 原始 `/status`
+- **账号**：列表（状态徽标、积分、在途、凭证有效期、线路与权重）+ 单号签到 / 停用 / 启用 / 复活 + 全部签到
+- **模型**：模型中心（描述、上下文、最大输出、思考档位、积分倍率、能力标记），支持过滤
+- **测试台**：选模型 → 填提示词 → 流式（SSE）或非流式试跑，可指定 `reasoning_effort`
+- **扫码加号**：拿授权 URL → 轮询 → 账号自动落盘并进入账号池（与 `login.sh` 等价）
+
+### 选型与实现约束
+
+- **Bootstrap 5.3.3 已 vendored 进仓库**（`internal/webui/assets/`，随二进制 embed），
+  改样式就改 `app.css` / `app.js`，`go build` 即生效 —— 没有 `npm install`、没有打包器、
+  没有 CI 前端阶段。许可与来源见 `internal/webui/assets/NOTICE.txt`。
+- **一切数据都从 REST 拿**：页面不内置任何业务判定（状态分类、能否签到、是否入池都由
+  服务端字段决定），所以「界面显示」与「curl 结果」不可能不一致。
+- **密钥**：页面本身不含任何密钥；首次打开会让你填 `config.json` 里的 `api_key`
+  （与 `/v1` 同一把），只存在浏览器 `localStorage`，每个请求带
+  `Authorization: Bearer …`。无 key 时所有数据请求回 401 并弹窗。
+- **安全**：响应统一带 CSP（`default-src 'self'`，禁内联脚本与外链）、`nosniff`、
+  `frame-ancestors 'none'`；渲染一律 `textContent`，不拼 HTML（账号昵称/描述都是外部输入）。
+- **前提**：`config.json` 里 `admin.enabled=true`，否则 `/admin/*` 不注册，页面会直接提示
+  「管理面未开启」。
+
 ## 管理面（REST + CLI）
 
 > 本仓库以**上游源码快照为基线**做二次开发（原 Python/Next 可视化面板已归档到 `old/`，

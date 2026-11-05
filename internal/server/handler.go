@@ -78,6 +78,13 @@ type Config struct {
 	AuthDir string
 	// Login 扫码登录服务（/admin/auth/start、/admin/auth/poll）。nil = 未接线。
 	Login *loginsvc.Manager
+
+	// UI 管理后台静态界面（internal/webui）。挂在 `GET /`（catch-all）上：
+	//   /            → 后台入口页
+	//   /assets/...  → 内嵌的 Bootstrap 与 app.js
+	// 具体路径（/v1/*、/status、/admin/*）由更精确的模式优先匹配，不受影响。
+	// nil = 不托管界面（测试与纯 API 部署）。
+	UI http.Handler
 }
 
 // notFoundCooldown 上游 404 的固定短冷却时长。
@@ -246,6 +253,12 @@ func NewHandler(cfg Config) *Handler {
 		h.mux.HandleFunc("POST /admin/playground/chat", h.withAuth(h.adminPlaygroundChat))
 	}
 	h.mux.HandleFunc("GET /healthz", h.healthz)
+	// 管理后台（可选）。放在最后注册，纯粹是为了让「具体路由」都先声明；
+	// Go 1.22 的 ServeMux 按**具体度**选路，与注册顺序无关，所以 /v1/* 与
+	// /admin/* 不会被这条 catch-all 抢走（方法不同、模式更具体）。
+	if cfg.UI != nil {
+		h.mux.Handle("GET /", cfg.UI)
+	}
 	return h
 }
 
