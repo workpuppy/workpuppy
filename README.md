@@ -150,24 +150,37 @@ flowchart LR
 ### Docker Compose 一键部署
 
 ```bash
-git clone https://github.com/Sliverkiss/workbuddy2api.git
-cd workbuddy2api
+git clone https://github.com/workpuppy/workpuppy.git
+cd workpuppy
 cp config.example.json config.json
 ```
 
-编辑 `config.json`，**至少设置 `api_key`**（`留空 = 不鉴权`，公网部署务必设置）。示例中的 `test_key` 等均为占位符，`config.example.json` 不含任何真实密钥。
+编辑 `config.json`，**至少设置 `api_key`**（`留空 = 不鉴权`，公网部署务必设置）；要用 Web 管理后台再做 `"admin": {"enabled": true}`。示例中的 `test_key` 等均为占位符，`config.example.json` 不含任何真实密钥。
+
+两种起法，按需选一种：
+
+```bash
+# ① 用已发布镜像（推荐；镜像多架构，docker 会按本机架构自动选择）
+docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \
+  -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
+  -v "$PWD/config.json:/app/config.json:ro" \
+  ghcr.io/workpuppy/workpuppy:latest
+
+# ② 本地源码构建（改了代码时用）
+docker compose up -d --build
+```
 
 ```bash
 # 登录添加账号（重复执行可加多号；注意：执行过下方说明中的 chown 后，
 # host 侧 login.sh 会被可写性预检拦截——此时请在容器内登录，见下方说明）
 ./login.sh
 
-# 启动服务
-docker compose up -d --build
-
 # 健康检查（无可用账号时 503）；service 字段用于确认打到的是本网关
 curl -s http://localhost:7863/healthz
 # {"healthy":2,"total":3,"service":"workbuddy2api"}
+
+# 管理后台（需 admin.enabled=true，首次打开填 api_key）
+curl -sI http://localhost:7863/ | head -1
 ```
 
 `login.sh` 内置授权 URL 获取 + 浏览器登录 + token 轮询 + 首次签到 + `auths/workbuddy-<uid>.json` 落盘 + 容器重启，全程无 PKCE（state 由服务端签发）。账号池在容器启动时用 `auths/` 目录自动对齐，新增凭证文件即自动发现。
@@ -269,23 +282,33 @@ curl -s http://localhost:7863/v1/chat/completions \
 
 | 触发 | 平台 | 推送的标签 |
 |---|---|---|
-| push 到任意分支 | `linux/amd64` | `sha-<7位>`、`<分支名>`；默认分支额外 `latest` |
-| push `v*` tag | `linux/amd64,linux/arm64` | `sha-<7位>`、`<tag>`、`latest` |
-| 手动（Actions → docker → Run workflow） | 输入决定（默认 amd64+arm64） | 同上（可关掉推送只验证） |
+| push 到任意分支 | `linux/amd64,linux/arm64` | **`latest`**、`sha-<7位>`、`<分支名>` |
+| push `v*` tag | `linux/amd64,linux/arm64` | **`latest`**、`sha-<7位>`、`<tag>` |
+| 手动（Actions → docker → Run workflow） | 输入决定（默认双架构） | 同上（可关掉推送只验证） |
+
+**镜像标签以 `latest` 为主**：镜像是一个多架构 index（amd64 + arm64），客户端只写
+`:latest` 即可 —— docker / NAS / k8s 会按本机架构自动挑对应 manifest，不需要你判断平台。
+需要「固定到某次提交」时用不可变的 `sha-<7位>`。
+
+```bash
+# 客户端：一条命令，架构自适配
+docker pull ghcr.io/workpuppy/workpuppy:latest
+
+docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \
+  -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
+  -v "$PWD/config.json:/app/config.json:ro" \
+  ghcr.io/workpuppy/workpuppy:latest
+
+# 管理后台：http://127.0.0.1:7863/     （/v1 仍是 OpenAI 兼容入口）
+# 需要实名某个提交：ghcr.io/workpuppy/workpuppy:sha-<7位>
+```
 
 流水线分两段：
 
 1. **`test`**：`go build` / `go vet` / `go test ./...` —— 测试红了不产出镜像。
 2. **`image`**：buildx 构建（GHA 层缓存）→ **真跑一次容器冒烟**（`/healthz` 有应答、
-   无 key 访问 `/status` 必须 401、容器内**不允许存在 python3**）→ 推送到 GHCR。
-
-```bash
-# 构建产物可以直接拉来跑（<sha> 换成提交短号或 latest）
-docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \
-  -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
-  -v "$PWD/config.json:/app/config.json:ro" \
-  ghcr.io/workpuppy/workpuppy:sha-<7位>
-```
+   无 key 访问 `/status` 必须 401、`GET /` 是管理后台且内嵌 Bootstrap 可访问、
+   容器内**不允许存在 python3**）→ 推送到 GHCR。
 
 > **首次启用需要一次仓库设置**：`Settings → Actions → General → Workflow permissions`
 > 选 **Read and write**（或至少允许 `packages: write`），否则推 GHCR 会 403。
@@ -420,7 +443,7 @@ go build -o wbctl ./cmd/wbctl        # 或用发布包里的 wbctl.exe
 
 ### 发布来源与合规边界
 
-- **CI 自动打包**：GitHub Actions（`.github/workflows/build.yml`）每日定时 + push tag 触发多架构（amd64/arm64）构建，发布至 `ghcr.io`，同时输出 amd64 离线 `tar.gz` artifact 供 NAS / 离线环境使用；也可本地 `docker compose build` 自构建
+- **CI 自动打包**：GitHub Actions（`.github/workflows/docker.yml`）**每次提交**都构建多架构镜像（amd64/arm64，同一 image index）并推送到 `ghcr.io`，标签以 `latest` 为主、`sha-<7位>` 供追溯；也可本地 `docker compose build` 自构建
 - 登录 / 签到 / 积分工具：`./login.sh` / `./signin.sh` / `./credit.sh`
 - **无产物校验和**：`go.sum` 仅约束 Go 模块依赖；Docker 镜像由本地 `docker compose build` 生成，未引用第三方镜像
 - 上游 CodeBuddy 属第三方商业产品，本项目是其**非官方 OpenAI 兼容网关**；使用其账号做 API 网关涉及目标平台服务条款与账号风险，作者不对账号封禁、条款违约或使用结果负责

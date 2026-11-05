@@ -6,12 +6,15 @@
 #   2. **先测再打包**：test job 跑 go build / vet / test，镜像 job 依赖它 ——
 #      不让「测试红的提交」产出可部署镜像。这与仓库 README 的「改 → 自检 → 提交 → 推送」一致。
 #   3. **打包后真跑一次容器**（smoke）：/healthz 应答、/status 无 key 必须 401、
-#      镜像里**不允许有 python3**（Go 化后的硬约束，回归即失败）。验证的是加载到本地的
-#      amd64 镜像，随后多架构构建直接复用同一份层缓存。
-#   4. **推送策略**：默认分支/git tag 才打 `latest`；任何构建都带不可变的 `sha-<7位>`，
-#      分支带分支名 —— 这样「某次提交对应哪个镜像」永远可追。
-#   5. **架构**：分支提交只打 amd64（快）；tag 与手动触发默认 amd64+arm64（QEMU）。
-#      要改就在 workflow_dispatch 的 platforms 输入里写。
+#      `GET /` 是管理后台并且内嵌 Bootstrap 可访问、镜像里**不允许有 python3**
+#      （Go 化后的硬约束，回归即失败）。验证的是加载到本地的 amd64 镜像，
+#      随后多架构构建直接复用同一份层缓存。
+#   4. **标签以 `latest` 为主**：每次构建都覆盖 `latest`，客户端只写 `:latest`，
+#      由 docker / NAS / k8s 按本机架构从 image index 里自选 amd64 或 arm64。
+#      同时保留不可变的 `sha-<7位>`（某次提交对应哪个镜像永远可追）与分支/tag 名。
+#   5. **架构**：默认每次都是 amd64 + arm64（latest 要能在两种机器上拉得动）。
+#      耗时已压住——Dockerfile 的构建阶段在原生架构上交叉编译，QEMU 只跑最后阶段
+#      的 apk/useradd。手动触发可用 platforms 输入临时只做一个架构。
 #   6. 权限最小化：contents:read + packages:write（推 GHCR 需要后者）。
 name: docker
 
@@ -80,13 +83,17 @@ jobs:
           INPUT_PUSH: ${{ inputs.push_image }}
         run: |
           set -euo pipefail
-          # 平台：手动触发用输入值；tag 推送做双架构；分支提交只做 amd64（QEMU 太慢）。
+          # 平台：手动触发用输入值；其余一律**双架构**。
+          # 为什么默认双架构：镜像是按 `latest` 分发的，客户端（docker / NAS / k8s）
+          # 自己按本机架构挑 manifest —— 若 latest 只有 amd64，arm64 机器会直接
+          # 报 "no matching manifest"。所以「客户端自己判断架构」的前提就是
+          # 每次构建都把 amd64+arm64 放进同一个 image index。
+          # 代价已经压住：Dockerfile 的构建阶段在原生架构上交叉编译，QEMU 只跑
+          # 最后阶段的 apk/useradd（见 Dockerfile 顶部注释）。
           if [ -n "${INPUT_PLATFORMS:-}" ]; then
             platforms="$INPUT_PLATFORMS"
-          elif [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
-            platforms="linux/amd64,linux/arm64"
           else
-            platforms="linux/amd64"
+            platforms="linux/amd64,linux/arm64"
           fi
           # 是否推送：手动触发听从输入（默认推）；自动触发一律推。
           if [ -n "${INPUT_PUSH:-}" ]; then
@@ -216,14 +223,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # 标签策略：**latest 为主**（客户端只要 `:latest` 就能按自己的架构拉对），
+          # sha-<7位> 作为不可变追溯标签，分支名/tag 名保留给人用。
           tags: |
+            type=raw,value=latest
             type=sha,format=short,prefix=sha-
             type=ref,event=branch
             type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.title=workbuddy2api
-            org.opencontainers.image.description=CodeBuddy 多账号池 + OpenAI 兼容网关（Go 单栈）
+            org.opencontainers.image.description=CodeBuddy 多账号池 + OpenAI 兼容网关（Go 单栈，多架构 amd64/arm64）
 
       - name: 构建（多架构）并推送 GHCR
         id: build
@@ -254,12 +263,18 @@ jobs:
             echo ""
             echo "**包页**：https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${IMAGE_NAME##*/}"
             echo ""
-            echo "拉取并运行："
+            echo "客户端只需要 \`:latest\`：镜像 index 含 amd64 + arm64，docker / NAS 会按本机架构自动选择。"
+            echo ""
             echo '```bash'
+            echo "docker pull ${REGISTRY}/${IMAGE_NAME}:latest"
+            echo ""
             echo "docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \\"
             echo "  -v \"\$PWD/auths:/app/auths\" -v \"\$PWD/data:/app/data\" \\"
             echo "  -v \"\$PWD/config.json:/app/config.json:ro\" \\"
-            echo "  ${REGISTRY}/${IMAGE_NAME}:sha-${GITHUB_SHA::7}"
+            echo "  ${REGISTRY}/${IMAGE_NAME}:latest"
+            echo ""
+            echo "# 需要固定到某次提交时用不可变标签："
+            echo "docker pull ${REGISTRY}/${IMAGE_NAME}:sha-${GITHUB_SHA::7}"
             echo ""
             echo "# 管理后台：http://127.0.0.1:7863/  （/v1 仍是 OpenAI 兼容入口）"
             echo '```'

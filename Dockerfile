@@ -1,28 +1,39 @@
 # syntax=docker/dockerfile:1
 # 目标形态：**单个 Alpine 镜像，全部由 Go 构建，不含 python3**。
 # 构建镜像只用来编译；运行镜像里只有静态链接的 Go 二进制 + bash（shell 运维脚本）。
-FROM golang:1.26-alpine AS build
+#
+# 多架构姿势（关键）：构建阶段固定在 **$BUILDPLATFORM**（跑 CI/本机的原生架构），
+# 只把 GOOS/GOARCH 指向目标架构做**交叉编译**。好处是 arm64 镜像不需要在 QEMU 里
+# 跑整套 Go 编译器（那会慢到 10 分钟级），最后阶段仍按目标架构拉 alpine，由
+# buildx 的 QEMU 只承担 apk/useradd 这几步。于是「每次提交都出双架构 latest」
+# 才在时间上可接受。
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 # go mod download 默认走 proxy.golang.org，国内网络不可达时构建失败。默认改走
 # goproxy.cn（公共 CDN，海外同样可达，回源走 direct）。要换代理时用构建参数覆盖：
 #   docker compose build --build-arg GOPROXY=https://proxy.golang.org,direct
 ARG GOPROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GOPROXY}
+# TARGETOS / TARGETARCH 由 buildx 注入；普通 `docker build` 不带时回落本机架构。
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
 COPY . .
-# 一次编译全部二进制（全部 -trimpath -s -w，CGO 关闭以便静态链接到 alpine）。
+# 一次编译全部二进制（全部 -trimpath -s -w；CGO 关闭以便静态链接到 alpine）。
+# GOOS/GOARCH 走目标架构 —— 这一步在原生架构上执行，只是输出交叉编译产物。
 # 为什么这么多小工具：容器内要能直接跑运维命令（登录 / 签到 / 积分 / 任务 / 管理面），
 # 而不是让用户再装一套运行时。
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/wb2api ./cmd/server \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/signin_bin ./cmd/signin \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/login ./cmd/login \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/credit ./cmd/credit \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/trial_bin ./cmd/trial \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/activity_bin ./cmd/activity \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/task_runner ./cmd/taskrunner \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/school_bin ./cmd/school \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/wbctl ./cmd/wbctl
+ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH}
+RUN go build -trimpath -ldflags="-s -w" -o /out/wb2api ./cmd/server \
+ && go build -trimpath -ldflags="-s -w" -o /out/signin_bin ./cmd/signin \
+ && go build -trimpath -ldflags="-s -w" -o /out/login ./cmd/login \
+ && go build -trimpath -ldflags="-s -w" -o /out/credit ./cmd/credit \
+ && go build -trimpath -ldflags="-s -w" -o /out/trial_bin ./cmd/trial \
+ && go build -trimpath -ldflags="-s -w" -o /out/activity_bin ./cmd/activity \
+ && go build -trimpath -ldflags="-s -w" -o /out/task_runner ./cmd/taskrunner \
+ && go build -trimpath -ldflags="-s -w" -o /out/school_bin ./cmd/school \
+ && go build -trimpath -ldflags="-s -w" -o /out/wbctl ./cmd/wbctl
 
 FROM alpine:3.20
 # Alpine 官方 CDN 在国内经常超时。构建参数可覆盖：
