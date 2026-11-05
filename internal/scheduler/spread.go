@@ -168,18 +168,20 @@ func sortDurations(d []time.Duration) {
 // 为什么单独做一件事：一个账号在一次任务里往往要连打好几个请求（签到链路是
 // 「刷新 token → 签到 → 查余额」；旅行是「查有无猫 → 查旅行状态 → 派出/领奖」）。
 // 这些请求同一账号、同一域名、同一秒内背靠背发出——比"整批账号挤在一起"更像机器。
-// 0.5~3s 的随机间隔既打断这种形态，又不会把整批拖慢（每号最多多等几秒）。
-var (
-	intraRequestJitterMin = 500 * time.Millisecond
-	intraRequestJitterMax = 3 * time.Second
-)
-
-// intraJitter 在同一个账号的相邻请求之间等一个 0.5~3s 的随机间隔。
-// 返回 false 表示 ctx 取消（调用方应立即返回）。
+//
+// 间隔区间由 config.json 的 `schedule.intra_request_jitter_min/max` 决定
+// （默认 1s~3s；两者都设 0 = 关闭）。取值语义：
+//   - 每次等待 = uniform[min, max]；
+//   - max <= min 时退化为固定间隔 min（配置里 min>max 会在加载期报错）；
+//   - 两个都为 0 → 不等待（测试与排障用）。
 func (s *Scheduler) intraJitter(ctx context.Context) bool {
-	span := int64(intraRequestJitterMax - intraRequestJitterMin)
-	d := intraRequestJitterMin
-	if span > 0 {
+	min := s.cfg.IntraJitterMin
+	max := s.cfg.IntraJitterMax
+	if max < min {
+		max = min
+	}
+	d := min
+	if span := int64(max - min); span > 0 {
 		d += time.Duration(spreadRandInt63n(span))
 	}
 	return sleepCtx(ctx, d)

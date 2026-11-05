@@ -212,6 +212,10 @@ type Config struct {
 	// SpreadWindowDur 定时任务账号随机分布窗口（schedule.spread_window 解析结果）。
 	// 0 = 关闭（回到"到点立刻 + 固定间隔"）。默认 15m。
 	SpreadWindowDur time.Duration `json:"-"`
+	// IntraJitterMinD/MaxD 同账号内连续请求的随机间隔区间
+	// （schedule.intra_request_jitter_min/max 解析结果）。默认 1s / 3s；都 0 = 关闭。
+	IntraJitterMinD time.Duration `json:"-"`
+	IntraJitterMaxD time.Duration `json:"-"`
 }
 
 // Default 默认配置。
@@ -517,6 +521,27 @@ func (c *Config) normalize() error {
 	}
 	if c.SpreadWindowDur < 0 {
 		c.SpreadWindowDur = 0
+	}
+	// 同账号内连续请求的随机间隔（schedule.intra_request_jitter_min/max）：
+	// 空值回落默认 1s / 3s；"0" 是合法值（关闭）；min>max 视为配置错误（早报错早发现）。
+	if c.Schedule.IntraRequestJitterMin == "" {
+		c.Schedule.IntraRequestJitterMin = "1s"
+	}
+	if c.Schedule.IntraRequestJitterMax == "" {
+		c.Schedule.IntraRequestJitterMax = "3s"
+	}
+	if c.IntraJitterMinD, err = time.ParseDuration(c.Schedule.IntraRequestJitterMin); err != nil {
+		return fmt.Errorf("schedule.intra_request_jitter_min: %w", err)
+	}
+	if c.IntraJitterMaxD, err = time.ParseDuration(c.Schedule.IntraRequestJitterMax); err != nil {
+		return fmt.Errorf("schedule.intra_request_jitter_max: %w", err)
+	}
+	if c.IntraJitterMinD < 0 || c.IntraJitterMaxD < 0 {
+		return fmt.Errorf("schedule.intra_request_jitter_*: 不能为负（关闭请写 0）")
+	}
+	if c.IntraJitterMaxD < c.IntraJitterMinD {
+		return fmt.Errorf("schedule.intra_request_jitter_max(%s) 不能小于 min(%s)",
+			c.IntraJitterMaxD, c.IntraJitterMinD)
 	}
 	// 快过期窗口：空值回落默认 168h（Default 已置；此兜底覆盖显式 ""）；显式 "0"/负值 = 禁用分桶。
 	if c.Pool.ExpiringSoon == "" {

@@ -245,14 +245,13 @@ func TestScheduledScriptTaskRunsPerAccount(t *testing.T) {
 	}
 }
 
-// 同一账号内的连续请求之间要有 0.5~3s 的随机间隔：单号签到时是「签到 → 查余额」
-// 两次背靠背调用，把抖动上下限都设为 30ms 后总耗时应 ≥ 60ms。
+// 同一账号内的连续请求之间要有随机间隔：单号签到时是「签到 → 查余额」两次背靠背
+// 调用，把区间设为 30ms~30ms（固定 30ms）后总耗时应 ≥ 55ms。
+// 区间来自 config.json 的 schedule.intra_request_jitter_min/max，这里直接设 Config。
 func TestIntraAccountJitterApplied(t *testing.T) {
-	oldMin, oldMax := intraRequestJitterMin, intraRequestJitterMax
-	intraRequestJitterMin, intraRequestJitterMax = 30*time.Millisecond, 30*time.Millisecond
-	t.Cleanup(func() { intraRequestJitterMin, intraRequestJitterMax = oldMin, oldMax })
-
 	s, _ := newCheckinS(t, &checkinStub{checkinBody: `{"code":0,"data":{}}`, resourceRemain: 100})
+	s.cfg.IntraJitterMin = 30 * time.Millisecond
+	s.cfg.IntraJitterMax = 30 * time.Millisecond
 	start := time.Now()
 	if _, err := s.CheckinAll(); err != nil { // 手动触发：不摊开，只有账号内抖动
 		t.Fatalf("CheckinAll: %v", err)

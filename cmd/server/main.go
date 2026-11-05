@@ -202,6 +202,8 @@ func main() {
 		ActivityReportCount:    cfg.Schedule.ActivityReportCount,
 		ExpiringSoonWindow:     cfg.ExpiringSoonDur, // 快过期积分优先消耗（issue:积分过期）
 		SpreadWindow:           cfg.SpreadWindowDur, // 定时任务账号随机分布窗口（schedule.spread_window）
+		IntraJitterMin:         cfg.IntraJitterMinD, // 同账号连续请求的随机间隔下限
+		IntraJitterMax:         cfg.IntraJitterMaxD, // 上限
 		CheckinDisabled:        !cfg.Schedule.CheckinEnabled,
 		TravelDisabled:         !cfg.Schedule.TravelEnabled,
 		ActivityDisabled:       !cfg.Schedule.ActivityEnabled,
@@ -248,6 +250,12 @@ func main() {
 			cfg.SpreadWindowDur)
 	} else {
 		log.Printf("定时任务随机分布已关闭（schedule.spread_window=0）：到点后按固定间隔顺序执行")
+	}
+	if cfg.IntraJitterMaxD > 0 {
+		log.Printf("同账号连续请求间隔：每次 `%v ~ %v` 随机（schedule.intra_request_jitter_min/max）",
+			cfg.IntraJitterMinD, cfg.IntraJitterMaxD)
+	} else {
+		log.Printf("同账号连续请求间隔：未加随机间隔（schedule.intra_request_jitter_min/max 均为 0）")
 	}
 
 	// 管理面凭据：每次启动随机生成（只存内存），启动完成后打印到终端。

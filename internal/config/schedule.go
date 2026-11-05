@@ -24,13 +24,19 @@ type Schedule struct {
 	// 避免整池账号在同一秒打上游。空 = 默认 15m；"0" = 关闭（回到固定间隔顺序执行）。
 	// 与上面的 RandomDelayMinutes 分工：那个抖的是**整批起点**在小时内的小偏移，
 	// 这个摊的是**账号之间**的分布。
-	SpreadWindow     string `json:"spread_window"`
-	CheckinHours     []int  `json:"checkin_hours"`   // [9,21]
-	TravelHours        []int `json:"travel_hours"`    // [9,21]
-	ActivityHours      []int `json:"activity_hours"`  // [10]
-	KeepaliveHours     []int `json:"keepalive_hours"` // [22]
-	SchoolHours        []int `json:"school_hours"`    // [12] 开学季任务（迁移自 school/cat 两条系统 crontab）
-	CatHours           []int `json:"cat_hours"`       // [1] 夜猫窗口 23-08 CST，01:00 窗口内补 1 次
+	SpreadWindow string `json:"spread_window"`
+	// IntraRequestJitterMin/Max 同一账号内连续请求之间的随机间隔区间（时长字符串，
+	// 如 "1s" / "3s"）。签到链路「刷新 → 签到 → 查余额」、旅行「查有无猫 → 查状态 →
+	// 派出/领奖」这些同号同秒背靠背的请求，各步之间按 uniform[min,max] 等待。
+	// 两者都 "0" = 关闭；min>max 在加载期报错。
+	IntraRequestJitterMin string `json:"intra_request_jitter_min"`
+	IntraRequestJitterMax string `json:"intra_request_jitter_max"`
+	CheckinHours          []int  `json:"checkin_hours"`   // [9,21]
+	TravelHours           []int  `json:"travel_hours"`    // [9,21]
+	ActivityHours         []int  `json:"activity_hours"`  // [10]
+	KeepaliveHours        []int  `json:"keepalive_hours"` // [22]
+	SchoolHours           []int  `json:"school_hours"`    // [12] 开学季任务（迁移自 school/cat 两条系统 crontab）
+	CatHours              []int  `json:"cat_hours"`       // [1] 夜猫窗口 23-08 CST，01:00 窗口内补 1 次
 	// CheckinEnabled/TravelEnabled/ActivityEnabled/KeepaliveEnabled/SchoolEnabled/CatEnabled
 	// 显式禁用开关（缺省 true）。
 	//

@@ -50,6 +50,14 @@ type Config struct {
 	// 环境变量 WB2A_TASK_SPREAD 可临时覆盖（排障用）。
 	SpreadWindow time.Duration
 
+	// IntraJitterMin/Max 同一账号内**连续请求**之间的随机间隔区间（uniform[min,max]）。
+	// 例如签到链路「刷新 → 签到 → 查余额」三连、旅行「查有无猫 → 查状态 → 派出/领奖」，
+	// 这些请求同号同秒背靠背发出，比"整批账号挤在一起"更像机器。
+	// 来源：config.json 的 schedule.intra_request_jitter_min/max（默认 1s / 3s）。
+	// 两者都为 0 = 关闭（测试与排障用）；max<min 按 max=min 处理。
+	IntraJitterMin time.Duration
+	IntraJitterMax time.Duration
+
 	// CheckinDisabled 显式关闭签到排程（对应 config 的 schedule.checkin_enabled=false）。
 	// 禁用后不再有任何签到时点。旅行不再搭签到便车（已剥离为独立排程）。
 	CheckinDisabled bool
@@ -530,7 +538,6 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 	if pacer.Active() {
 		log.Printf("checkin spread: %d account(s) within %s", len(targets), pacer.Window().Round(time.Second))
 	}
-
 
 	for k, idx := range pacer.Order() {
 		if !pacer.Wait(k) {

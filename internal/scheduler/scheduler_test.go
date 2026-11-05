@@ -27,9 +27,8 @@ import (
 func TestMain(m *testing.M) {
 	checkinAccountDelay = 0
 	checkinRetryDelays = nil
-	// 同账号内连续请求的随机抖动（生产 0.5~3s）：测试里归零，否则每个用例白等几秒。
-	intraRequestJitterMin = 0
-	intraRequestJitterMax = 0
+	// 同账号内连续请求的随机抖动由 Config.IntraJitterMin/Max 控制（零值 = 关闭），
+	// 因此 New(Config{}) 天然不等待；需要验证抖动的用例自行设置这两个字段。
 	// 随机摊开由 Config.SpreadWindow 控制（默认 0 = 关闭），这里清掉环境变量，
 	// 防止外部环境把测试带偏。验证摊开行为的用例自己设 Config.SpreadWindow。
 	os.Unsetenv("WB2A_TASK_SPREAD")

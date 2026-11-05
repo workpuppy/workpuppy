@@ -9,6 +9,8 @@
   },
   "schedule": {
     "spread_window": "15m",
+    "intra_request_jitter_min": "1s",
+    "intra_request_jitter_max": "3s",
     "checkin_hours": [
       9,
       21

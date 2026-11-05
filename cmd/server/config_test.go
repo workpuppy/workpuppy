@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefault(t *testing.T) {
@@ -145,6 +146,76 @@ func TestPoolConfigParsedFromFile(t *testing.T) {
 	}
 	if c.SessionTTL.Hours() != 1 || c.SessionGCInterval.Minutes() != 2 {
 		t.Errorf("session durations=%v/%v", c.SessionTTL, c.SessionGCInterval)
+	}
+}
+
+// 定时任务的节奏设置：spread_window（账号之间）与 intra_request_jitter_*（账号内连打）。
+func TestSpreadWindowAndJitterParsed(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	os.WriteFile(fp, []byte(`{"schedule":{"spread_window":"45s","intra_request_jitter_min":"2s","intra_request_jitter_max":"5s"}}`), 0o600)
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SpreadWindowDur != 45*time.Second {
+		t.Errorf("spread_window=%v want 45s", c.SpreadWindowDur)
+	}
+	if c.IntraJitterMinD != 2*time.Second || c.IntraJitterMaxD != 5*time.Second {
+		t.Errorf("jitter=%v~%v want 2s~5s", c.IntraJitterMinD, c.IntraJitterMaxD)
+	}
+}
+
+// 缺省值：spread_window=15m、jitter=1s~3s（用户要求的默认区间）。
+func TestSpreadAndJitterDefaults(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	os.WriteFile(fp, []byte(`{}`), 0o600)
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SpreadWindowDur != 15*time.Minute {
+		t.Errorf("spread_window 默认 = %v want 15m", c.SpreadWindowDur)
+	}
+	if c.IntraJitterMinD != time.Second || c.IntraJitterMaxD != 3*time.Second {
+		t.Errorf("jitter 默认 = %v~%v want 1s~3s", c.IntraJitterMinD, c.IntraJitterMaxD)
+	}
+}
+
+// "0" 是合法值（关闭），不是"回落默认"。
+func TestSpreadAndJitterExplicitZero(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	os.WriteFile(fp, []byte(`{"schedule":{"spread_window":"0","intra_request_jitter_min":"0","intra_request_jitter_max":"0"}}`), 0o600)
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SpreadWindowDur != 0 || c.IntraJitterMinD != 0 || c.IntraJitterMaxD != 0 {
+		t.Errorf("显式 0 应关闭：spread=%v jitter=%v~%v", c.SpreadWindowDur, c.IntraJitterMinD, c.IntraJitterMaxD)
+	}
+}
+
+// min > max 属配置错误：加载期就报错，而不是运行时静默按某个值跑。
+func TestJitterMinGreaterThanMaxRejected(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	os.WriteFile(fp, []byte(`{"schedule":{"intra_request_jitter_min":"5s","intra_request_jitter_max":"2s"}}`), 0o600)
+	if _, err := Load(fp); err == nil {
+		t.Fatal("min>max 应报错")
+	} else if !strings.Contains(err.Error(), "intra_request_jitter_max") {
+		t.Fatalf("错误信息应点名配置项：%v", err)
+	}
+}
+
+// 非法时长同样在加载期报错。
+func TestJitterBadDurationRejected(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	os.WriteFile(fp, []byte(`{"schedule":{"intra_request_jitter_min":"abc"}}`), 0o600)
+	if _, err := Load(fp); err == nil {
+		t.Fatal("非法时长应报错")
 	}
 }
 

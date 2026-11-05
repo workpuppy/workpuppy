@@ -119,8 +119,17 @@ WorkBuddy2API 是一个自托管的 **OpenAI 兼容上游网关**，将 ```CodeB
   （开学季、夜猫子）在定时触发时改为**逐账号起子进程**，各落在自己的时刻。
 
 **同一账号内的连续请求同样有抖动**：签到链路是「刷新 token → 签到 → 查余额」三连、
-旅行是「查有无猫 → 查状态 → 派出/领奖」三连——这些背靠背请求之间插入 **0.5–3s 随机
-间隔**，打断「同号同秒连打」的形态（活跃上报的 N 条之间同理）。
+旅行是「查有无猫 → 查状态 → 派出/领奖」三连——这些背靠背请求之间插入随机间隔，
+打断「同号同秒连打」的形态（活跃上报的 N 条之间同理）。区间可配：
+
+```json
+"schedule": {
+  "intra_request_jitter_min": "1s",
+  "intra_request_jitter_max": "3s"
+}
+```
+
+缺省 **1s ~ 3s**（每次等待取 `uniform[min, max]`）；两个都写 `"0"` 关闭；`min > max` 加载期报错。
 
 排障时可用环境变量临时代替设置项（不改配置文件）：`WB2A_TASK_SPREAD=20m` 改窗口、
 `WB2A_TASK_SPREAD=0` 关闭。
@@ -128,7 +137,7 @@ WorkBuddy2API 是一个自托管的 **OpenAI 兼容上游网关**，将 ```CodeB
 > 三者的分工：`schedule.random_delay_minutes` 抖的是**整批起点**在小时内的小偏移（可选）；
 > `schedule.spread_window` 是**账号之间**的分布（默认 15m）；`schedule.account_delay_min_seconds/
 > max_seconds` 是摊开关闭后账号间的固定/抖动间隔。手动触发（后台「全部签到」、`./signin.sh`、
-> `wbctl checkin`）**不摊开**——用户正等着结果，只保留账号内的 0.5–3s 抖动。
+> `wbctl checkin`）**不摊开**——用户正等着结果，只保留账号内的随机间隔抖动（`intra_request_jitter_*`）。
 
 ### 双域适配
 
