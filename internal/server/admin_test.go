@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"workbuddy2api/internal/adminauth"
 	"workbuddy2api/internal/auth"
 )
 
@@ -33,7 +34,10 @@ func doAdmin(t *testing.T, h *Handler, method, path string, body string) (*httpt
 		rdr = bytes.NewReader([]byte(body))
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(method, path, rdr))
+	req := httptest.NewRequest(method, path, rdr)
+	// 管理面现在只认管理密码（与 /v1 的 api_key 分离），helper 统一带上。
+	req.Header.Set("Authorization", "Bearer "+testAdminPW)
+	h.ServeHTTP(rec, req)
 	var out adminResp
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -80,39 +84,52 @@ func TestAdminDisabledByDefault(t *testing.T) {
 	}
 }
 
-// TestAdminRequiresSameAPIKey 管理端点与 /status 共用同一把 key。
-func TestAdminRequiresSameAPIKey(t *testing.T) {
+// TestAdminRequiresAdminPassword 管理端点只认管理密码（与 /v1 的 api_key 分离）。
+func TestAdminRequiresAdminPassword(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, APIKey: "secret", AdminEnabled: true})
+	h := NewHandler(Config{
+		Pool:         p,
+		APIKey:       "secret",
+		AdminAuth:    adminauth.MustNew("admin-secret"),
+		AdminEnabled: true,
+	})
 
-	// 无 key → 401
+	// 不带任何凭据 → 401
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("POST", "/admin/accounts/u1/disable", nil))
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("code=%d want 401 without key", rec.Code)
+		t.Fatalf("code=%d want 401 without credential", rec.Code)
 	}
-	// 错 key → 401
+	// 用 /v1 的 api_key → 401（这正是本次改动的目的：下游 key 不再能管后台）
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/admin/accounts/u1/disable", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code=%d want 401 with api_key（管理面不应接受 /v1 的 key）", rec.Code)
+	}
+	// 错的管理密码 → 401
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/admin/accounts/u1/disable", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("code=%d want 401 with wrong key", rec.Code)
+		t.Fatalf("code=%d want 401 with wrong admin password", rec.Code)
 	}
-	// 正确 key → 200
+	// 正确的管理密码 → 200
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/admin/accounts/u1/disable", nil)
-	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Authorization", "Bearer admin-secret")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("code=%d want 200 with correct key, body=%s", rec.Code, rec.Body)
+		t.Fatalf("code=%d want 200 with correct admin password, body=%s", rec.Code, rec.Body)
 	}
 }
 
 // TestAdminDisableEnableRoundTrip 停用 → 状态可读且不参与选号 → 恢复 → 可选。
 func TestAdminDisableEnableRoundTrip(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	rec, out := doAdmin(t, h, "POST", "/admin/accounts/u1/disable", `{"reason":"观察几天"}`)
 	if rec.Code != http.StatusOK {
@@ -151,7 +168,7 @@ func TestAdminDisableEnableRoundTrip(t *testing.T) {
 // TestAdminDisableWithoutBody 无请求体是最常见的调用形态（curl / CLI），必须可用。
 func TestAdminDisableWithoutBody(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	rec, out := doAdmin(t, h, "POST", "/admin/accounts/u1/disable", "")
 	if rec.Code != http.StatusOK || !out.ManualDisabled {
@@ -166,7 +183,7 @@ func TestAdminDisableWithoutBody(t *testing.T) {
 // TestAdminIdempotent 面板重试场景：重复调用不报错，第二次 changed=false。
 func TestAdminIdempotent(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	_, first := doAdmin(t, h, "POST", "/admin/accounts/u1/disable", `{"reason":"r"}`)
 	if !first.Changed {
@@ -184,7 +201,7 @@ func TestAdminIdempotent(t *testing.T) {
 // TestAdminOrthogonalSemantics enable 不解除自动禁用；revive 不解除手动停用。
 func TestAdminOrthogonalSemantics(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	// 造出自动禁用
 	p.NoteSessionDead("u1")
@@ -226,7 +243,7 @@ func TestAdminOrthogonalSemantics(t *testing.T) {
 // TestAdminUnknownUID uid 不存在 → 404（三个端点一致）。
 func TestAdminUnknownUID(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	for _, op := range []string{"disable", "enable", "revive"} {
 		rec, _ := doAdmin(t, h, "POST", "/admin/accounts/nope/"+op, "")
@@ -240,7 +257,7 @@ func TestAdminUnknownUID(t *testing.T) {
 // TestAdminStatusExposesManualDisabled /status 透出 manual_disabled 双位状态。
 func TestAdminStatusExposesManualDisabled(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 	p.SetManualDisabled("u1", true, "面板摘除")
 
 	rec := httptest.NewRecorder()

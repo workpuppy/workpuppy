@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"workbuddy2api/internal/adminauth"
 	"workbuddy2api/internal/auth"
 	"workbuddy2api/internal/loginsvc"
 	"workbuddy2api/internal/pool"
@@ -240,10 +242,18 @@ func main() {
 		log.Printf("夜猫子任务已启用：%v 点（task_runner ALL --yes --only black_cat）", cfg.Schedule.CatHours)
 	}
 
+	// 管理面凭据：每次启动随机生成（只存内存），启动完成后打印到终端。
+	// WB2A_ADMIN_PASSWORD 可固定密码（开发/自动化用，长度不足会启动失败）。
+	adminStore, adminErr := adminauth.New(os.Getenv("WB2A_ADMIN_PASSWORD"))
+	if adminErr != nil {
+		log.Fatalf("管理密码配置无效: %v", adminErr)
+	}
+
 	h := server.NewHandler(server.Config{
 		Pool:                     p,
 		Upstream:                 up,
 		APIKey:                   cfg.APIKey,
+		AdminAuth:                adminStore,
 		Session:                  sessRouter,
 		StickyCount:              sessCount,
 		RedisMode:                redisMode,
@@ -306,8 +316,19 @@ func main() {
 	} else {
 		log.Printf("global realm 已禁用（config global.enabled=false，纯 CN）")
 	}
-	log.Printf("workbuddy2api listening on %s (api_key=%v)", cfg.Listen, cfg.APIKey != "")
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	// 先显式绑定端口，再打印状态与管理密码：横幅必须在"服务真的能接连接"之后出现，
+	// 否则端口被占用导致启动失败时，日志里会留下一个看起来可用的密码。
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		log.Fatalf("listen %s: %v", cfg.Listen, err)
+	}
+	log.Printf("workbuddy2api listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
+	if cfg.Admin.Enabled {
+		printAdminBanner(adminStore, ln.Addr().String())
+	} else {
+		log.Printf("管理后台未启用（config admin.enabled=false）：/admin/* 不注册，/ 仍可打开页面但没有数据接口")
+	}
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("http: %v", err)
 	}
 	log.Printf("bye")

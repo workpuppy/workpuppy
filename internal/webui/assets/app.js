@@ -1,19 +1,24 @@
 // app.js —— 管理后台的全部前端逻辑（原生 JS，无框架、无构建步骤）。
 //
-// 约定：
-//   * 所有数据请求都走 api()，自动带上 localStorage 里的网关 api_key；
+// 认证模型（与 /v1 完全分离）：
+//   * 管理面只认**管理密码**：服务每次启动随机生成、只存服务器内存、打印在容器日志里；
+//   * 本页面把密码存在 localStorage['wb2a.adminPassword']，之后每个请求带
+//     `Authorization: Bearer <密码>`；没有用户名、没有会话 Cookie（因此也没有 CSRF 面）；
+//   * 任何 401（密码错/服务重启换了密码）→ **清掉本地存储并跳回登录页**，
+//     绝不留在空白面板上让人误以为"数据没了"。
+//
+// 其它约定：
 //   * 服务端返回的错误原文直接展示（排障就看那句话），这里不"翻译"；
-//   * 渲染一律用 textContent 拼节点，不用 innerHTML 拼数据 —— 账号昵称/描述都是
-//     外部输入，拼字符串就是把 XSS 请进门；
-//   * 不做任何业务判定：状态分类、能否签到、是否入池，全部由服务端字段决定。
+//   * 渲染一律用 textContent 拼节点，不用 innerHTML 拼数据（昵称/描述都是外部输入）；
+//   * 不做业务判定：状态分类、能否签到、是否入池全部由服务端字段决定。
 
 'use strict';
 
-const KEY_STORE = 'wb2a.apiKey';
+const PW_STORE = 'wb2a.adminPassword';
 const THEME_STORE = 'wb2a.theme';
 
 const state = {
-  key: localStorage.getItem(KEY_STORE) || '',
+  password: localStorage.getItem(PW_STORE) || '',
   view: '',
   models: [],
   accounts: [],
@@ -53,11 +58,13 @@ function fmtDuration(sec) {
 
 function toast(msg, kind = 'secondary') {
   const box = $('#toasts');
-  const body = el('div', { class: 'toast-body', text: msg });
   const t = el('div', { class: 'toast align-items-center border-0 text-bg-' + kind, attrs: { role: 'alert' } }, [
     el('div', { class: 'd-flex' }, [
-      body,
-      el('button', { class: 'btn-close btn-close-white me-2 m-auto', attrs: { type: 'button', 'data-bs-dismiss': 'toast', 'aria-label': '关闭' } }),
+      el('div', { class: 'toast-body', text: msg }),
+      el('button', {
+        class: 'btn-close btn-close-white me-2 m-auto',
+        attrs: { type: 'button', 'data-bs-dismiss': 'toast', 'aria-label': '关闭' },
+      }),
     ]),
   ]);
   box.appendChild(t);
@@ -67,19 +74,78 @@ function toast(msg, kind = 'secondary') {
 }
 
 function alertBox(msg, kind = 'warning') {
-  const slot = $('#alertSlot');
-  slot.replaceChildren(el('div', { class: 'alert alert-' + kind + ' py-2 small', text: msg }));
+  $('#alertSlot').replaceChildren(el('div', { class: 'alert alert-' + kind + ' py-2 small', text: msg }));
 }
 
 function clearAlert() {
   $('#alertSlot').replaceChildren();
 }
 
+// ── 登录态 ──────────────────────────────────────────────────
+function showLogin(message) {
+  $('#app').hidden = true;
+  $('#loginWrap').hidden = false;
+  const box = $('#loginError');
+  if (message) {
+    box.textContent = message;
+    box.classList.remove('d-none');
+  } else {
+    box.classList.add('d-none');
+    box.textContent = '';
+  }
+  const input = $('#loginPassword');
+  input.value = '';
+  input.focus();
+}
+
+function showApp() {
+  $('#loginWrap').hidden = true;
+  $('#app').hidden = false;
+}
+
+// clearSession 清掉本地密码与内存副本（"凭据为空/失效"时统一走这里）。
+function clearSession() {
+  state.password = '';
+  localStorage.removeItem(PW_STORE);
+}
+
+// logout 供"退出登录"按钮使用。
+function logout() {
+  clearSession();
+  stopAuthPoll();
+  showLogin('已退出登录');
+}
+
+// login 用密码换取"可以进后台"的确认；成功后把密码存本地并进入主界面。
+async function login(password) {
+  const resp = await fetch('/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (resp.status === 404) {
+    throw new Error('管理面未开启：在 config.json 里设 "admin": {"enabled": true} 并重启服务');
+  }
+  if (resp.status === 429) {
+    throw new Error('密码错误次数过多，请 5 分钟后再试');
+  }
+  if (resp.status === 401) {
+    const body = await resp.text();
+    throw new Error('密码错误（' + body.slice(0, 200) + '）');
+  }
+  if (!resp.ok) {
+    throw new Error('HTTP ' + resp.status + '：' + (await resp.text()).slice(0, 300));
+  }
+  state.password = password;
+  localStorage.setItem(PW_STORE, password);
+  return resp.json();
+}
+
 // ── 请求封装 ────────────────────────────────────────────────
 async function api(path, opts = {}) {
-  const { method = 'GET', body = null, raw = false } = opts;
+  const { method = 'GET', body = null } = opts;
   const headers = {};
-  if (state.key) headers['Authorization'] = 'Bearer ' + state.key;
+  if (state.password) headers['Authorization'] = 'Bearer ' + state.password;
   if (body !== null) headers['Content-Type'] = 'application/json';
 
   const resp = await fetch(path, {
@@ -89,31 +155,23 @@ async function api(path, opts = {}) {
   });
 
   if (resp.status === 401) {
-    openKeyModal('密钥无效或未设置（服务端返回 401）');
-    throw new Error('401 未授权：请设置正确的 api_key');
+    // 密码错 / 服务重启换了密码：清本地存储并回登录页（需求：凭据无效时不得留在面板里）。
+    clearSession();
+    stopAuthPoll();
+    showLogin('管理密码已失效或为空（服务重启会更换密码，请用日志里的新密码登录）');
+    throw new Error('401 未授权：请重新登录');
+  }
+  if (resp.status === 503) {
+    const text = await resp.text();
+    throw new Error('管理密码未初始化（服务启动异常）：' + text.slice(0, 200));
   }
   if (resp.status === 404 && path.startsWith('/admin')) {
     throw new Error('管理面未开启：在 config.json 里设 "admin": {"enabled": true} 并重启服务');
   }
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error('HTTP ' + resp.status + '：' + text.slice(0, 400));
+    throw new Error('HTTP ' + resp.status + '：' + (await resp.text()).slice(0, 400));
   }
-  return raw ? resp : resp.json();
-}
-
-// ── 密钥 ────────────────────────────────────────────────────
-const keyModal = () => bootstrap.Modal.getOrCreateInstance($('#keyModal'));
-
-function openKeyModal(hint) {
-  if (hint) alertBox(hint, 'warning');
-  $('#keyInput').value = state.key;
-  keyModal().show();
-}
-
-function updateKeyState() {
-  $('#keyState').textContent = state.key ? '密钥已设置' : '未设置密钥';
-  $('#keyState').className = 'small ' + (state.key ? 'text-success' : 'text-body-secondary');
+  return resp.json();
 }
 
 // ── 视图切换（hash 路由，零框架）─────────────────────────────
@@ -125,6 +183,10 @@ function currentView() {
 }
 
 function render() {
+  if (!state.password) {
+    showLogin(null);
+    return;
+  }
   state.view = currentView();
   for (const v of VIEWS) {
     $('#view-' + v).hidden = v !== state.view;
@@ -133,10 +195,6 @@ function render() {
     b.classList.toggle('active', b.dataset.view === state.view);
   });
   clearAlert();
-
-  if (!state.key) {
-    openKeyModal('先设置网关 api_key，然后才能读取账号/模型等数据');
-  }
 
   switch (state.view) {
     case 'overview': loadStatus(); break;
@@ -150,7 +208,8 @@ function render() {
 // ── 概览 ────────────────────────────────────────────────────
 async function loadStatus() {
   try {
-    const s = await api('/status');
+    // 走 /admin/status（管理凭据）；/status 是数据面接口，留给下游用 api_key 调。
+    const s = await api('/admin/status');
     $('#kpiTotal').textContent = fmtNum(s.total);
     $('#kpiHealthy').textContent = fmtNum(s.healthy);
     $('#kpiCooling').textContent = fmtNum(s.cooling);
@@ -350,12 +409,13 @@ async function sendPlayground() {
 
   try {
     const headers = { 'Content-Type': 'application/json' };
-    if (state.key) headers['Authorization'] = 'Bearer ' + state.key;
+    if (state.password) headers['Authorization'] = 'Bearer ' + state.password;
     const resp = await fetch('/admin/playground/chat', {
       method: 'POST', headers, body: JSON.stringify(body), signal: state.aborter.signal,
     });
     if (resp.status === 401) {
-      openKeyModal('密钥无效或未设置（服务端返回 401）');
+      clearSession();
+      showLogin('管理密码已失效（服务重启会更换密码）');
       throw new Error('401 未授权');
     }
     if (!resp.ok) {
@@ -388,16 +448,13 @@ async function sendPlayground() {
             const delta = (obj.choices && obj.choices[0] && obj.choices[0].delta) || {};
             if (delta.reasoning_content) out.textContent += delta.reasoning_content;
             if (delta.content) out.textContent += delta.content;
-            if (obj.usage) {
-              out.textContent += '\n\n【用量】' + JSON.stringify(obj.usage);
-            }
+            if (obj.usage) out.textContent += '\n\n【用量】' + JSON.stringify(obj.usage);
           } catch (_) { /* 上游偶发非 JSON 帧：跳过，不影响已收内容 */ }
         }
       }
       if (!out.textContent) out.textContent = '（流结束但没有正文，可能是该模型在思考或上游返回空流）';
     }
-    const ms = Math.round(performance.now() - started);
-    $('#pgMeta').textContent = '完成，' + ms + ' ms';
+    $('#pgMeta').textContent = '完成，' + Math.round(performance.now() - started) + ' ms';
   } catch (e) {
     if (e.name === 'AbortError') {
       $('#pgMeta').textContent = '已中断';
@@ -468,37 +525,44 @@ function applyTheme(theme) {
 
 // ── 启动 ────────────────────────────────────────────────────
 function bind() {
+  // 登录表单
+  $('#loginForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const pw = ($('#loginPassword').value || '').trim();
+    if (!pw) {
+      showLogin('请输入管理密码');
+      return;
+    }
+    const btn = $('#btnLogin');
+    btn.disabled = true;
+    btn.textContent = '登录中…';
+    try {
+      await login(pw);
+      showApp();
+      render();
+    } catch (e) {
+      clearSession();
+      showLogin(String(e.message || e));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '登录';
+    }
+  });
+
+  $('#btnLogout').addEventListener('click', logout);
+
   // 导航（按钮切换 hash，由 hashchange 驱动渲染）
   $$('.nav-link[data-view]').forEach((b) => {
     b.addEventListener('click', () => {
       location.hash = '#/' + b.dataset.view;
-      // 移动端点了以后收起折叠菜单
       const nav = $('#nav');
       if (nav.classList.contains('show')) bootstrap.Collapse.getOrCreateInstance(nav).hide();
     });
   });
 
-  $('#btnKey').addEventListener('click', () => openKeyModal(null));
-  $('#btnKeySave').addEventListener('click', () => {
-    state.key = $('#keyInput').value.trim();
-    if (state.key) localStorage.setItem(KEY_STORE, state.key);
-    else localStorage.removeItem(KEY_STORE);
-    updateKeyState();
-    keyModal().hide();
-    render();
-  });
-  $('#btnKeyClear').addEventListener('click', () => {
-    state.key = '';
-    localStorage.removeItem(KEY_STORE);
-    $('#keyInput').value = '';
-    updateKeyState();
-    keyModal().hide();
-    toast('已清除本地密钥', 'secondary');
-  });
-
-  $('#btnTheme').addEventListener('click', () => {
-    applyTheme(document.documentElement.dataset.bsTheme === 'dark' ? 'light' : 'dark');
-  });
+  const toggleTheme = () => applyTheme(document.documentElement.dataset.bsTheme === 'dark' ? 'light' : 'dark');
+  $('#btnTheme').addEventListener('click', toggleTheme);
+  $('#btnThemeLogin').addEventListener('click', toggleTheme);
 
   $('#btnRefreshStatus').addEventListener('click', loadStatus);
   $('#btnRefreshAccounts').addEventListener('click', loadAccounts);
@@ -522,9 +586,22 @@ function bind() {
   window.addEventListener('hashchange', render);
 }
 
-(function main() {
+// boot：先看本地有没有密码。有就先验一次（服务重启后旧密码会失效），
+// 验不过就清掉并停在登录页；没有就直接显示登录页。
+(async function boot() {
   applyTheme(localStorage.getItem(THEME_STORE) || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-  updateKeyState();
   bind();
-  render();
+
+  if (!state.password) {
+    showLogin(null);
+    return;
+  }
+  try {
+    await login(state.password);
+    showApp();
+    render();
+  } catch (e) {
+    clearSession();
+    showLogin('上次的密码已失效（服务重启会更换密码）：' + String(e.message || e));
+  }
 })();

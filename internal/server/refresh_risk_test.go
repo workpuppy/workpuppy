@@ -5,13 +5,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"workbuddy2api/internal/adminauth"
 	"workbuddy2api/internal/auth"
 )
 
 func TestRefreshRiskAdminAuthAndIndependentRecovery(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	for _, enabled := range []bool{false, true} {
-		h := NewHandler(Config{Pool: p, APIKey: "key", AdminEnabled: enabled})
+		h := NewHandler(Config{Pool: p, APIKey: "key", AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: enabled})
 		for _, action := range []string{"refresh-risk", "refresh-risk/clear"} {
 			path := "/admin/accounts/u1/" + action
 			req := httptest.NewRequest("POST", path, strings.NewReader(`{"retry_after_sec":900}`))
@@ -26,10 +27,10 @@ func TestRefreshRiskAdminAuthAndIndependentRecovery(t *testing.T) {
 			}
 		}
 	}
-	h := NewHandler(Config{Pool: p, APIKey: "key", AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, APIKey: "key", AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 	for _, action := range []string{"refresh-risk", "disable", "enable", "refresh-risk/clear"} {
 		req := httptest.NewRequest("POST", "/admin/accounts/u1/"+action, strings.NewReader(`{"retry_after_sec":900}`))
-		req.Header.Set("Authorization", "Bearer key")
+		req.Header.Set("Authorization", "Bearer "+testAdminPW)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != 200 {
@@ -44,10 +45,10 @@ func TestRefreshRiskAdminAuthAndIndependentRecovery(t *testing.T) {
 	}
 	p.PauseRefreshRateLimited("u1", time.Hour)
 	req := httptest.NewRequest("POST", "/admin/accounts/u1/disable", strings.NewReader(`{}`))
-	req.Header.Set("Authorization", "Bearer key")
+	req.Header.Set("Authorization", "Bearer "+testAdminPW)
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	req = httptest.NewRequest("POST", "/admin/accounts/u1/refresh-risk/clear", strings.NewReader(`{}`))
-	req.Header.Set("Authorization", "Bearer key")
+	req.Header.Set("Authorization", "Bearer "+testAdminPW)
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	st, _ := p.Status("u1")
 	if !st.ManualDisabled || p.RiskPaused("u1") {

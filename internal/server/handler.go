@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"workbuddy2api/internal/adminauth"
 	"workbuddy2api/internal/auth"
 	"workbuddy2api/internal/logfmt"
 	"workbuddy2api/internal/loginsvc"
@@ -79,6 +80,10 @@ type Config struct {
 	// Login 扫码登录服务（/admin/auth/start、/admin/auth/poll）。nil = 未接线。
 	Login *loginsvc.Manager
 
+	// AdminAuth 管理面凭据（启动时随机生成、只存内存）。与 APIKey 完全分离：
+	// 管理端点只认它，且它未初始化时一律拒绝（绝不放行）。
+	AdminAuth *adminauth.Store
+
 	// UI 管理后台静态界面（internal/webui）。挂在 `GET /`（catch-all）上：
 	//   /            → 后台入口页
 	//   /assets/...  → 内嵌的 Bootstrap 与 app.js
@@ -133,6 +138,9 @@ type Handler struct {
 	// largeUsed 最近承接过大上下文请求的号（uid → 时刻），见 LargeRequestBytes。
 	largeMu   sync.Mutex
 	largeUsed map[string][]time.Time
+
+	// adminLoginLimit 管理后台登录失败的按 IP 限速（进程内存，重启清零）。
+	adminLoginLimit adminLoginLimiter
 }
 
 // largeExclusions 返回「LargeRequestCooldown 窗口内已承接过大请求」的号集合，
@@ -222,6 +230,7 @@ func NewHandler(cfg Config) *Handler {
 		cfg.PromptMode = "passthrough" // 缺省 passthrough：透传客户端原始 system
 	}
 	h := &Handler{cfg: cfg, mux: http.NewServeMux(), largeUsed: make(map[string][]time.Time)}
+	h.adminLoginLimit.fail = make(map[string][]time.Time)
 	h.mux.HandleFunc("POST /v1/chat/completions", h.withAuth(h.chatCompletions))
 	h.mux.HandleFunc("GET /v1/models", h.withAuth(h.models))
 	h.mux.HandleFunc("GET /status", h.withAuth(h.status))
@@ -234,23 +243,26 @@ func NewHandler(cfg Config) *Handler {
 	// 区分——路由一旦注册，"带 key 得 401 / GET 得 405 / JSON 信封 404" 三者都会
 	// 暴露管理面存在。
 	if cfg.AdminEnabled {
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/disable", h.withAuth(h.adminAccountDisable))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/enable", h.withAuth(h.adminAccountEnable))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/revive", h.withAuth(h.adminAccountRevive))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk", h.withAuth(h.adminRefreshRisk))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/clear", h.withAuth(h.adminClearRefreshRisk))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/success", h.withAuth(h.adminRefreshRiskSuccess))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/models/{model}/available", h.withAuth(h.adminModelAvailable))
-		// 管理面（REST）第一批：账号清单/详情、签到、扫码加号、模型中心、聊天测试台。
-		// 全部与上面同源鉴权（同一把 api_key），同受 admin.enabled 闸门。
-		h.mux.HandleFunc("GET /admin/accounts", h.withAuth(h.adminAccounts))
-		h.mux.HandleFunc("GET /admin/accounts/{uid}", h.withAuth(h.adminAccountDetail))
-		h.mux.HandleFunc("POST /admin/accounts/checkin", h.withAuth(h.adminCheckinAll))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/checkin", h.withAuth(h.adminCheckinOne))
-		h.mux.HandleFunc("POST /admin/auth/start", h.withAuth(h.adminAuthStart))
-		h.mux.HandleFunc("GET /admin/auth/poll", h.withAuth(h.adminAuthPoll))
-		h.mux.HandleFunc("GET /admin/models", h.withAuth(h.adminModels))
-		h.mux.HandleFunc("POST /admin/playground/chat", h.withAuth(h.adminPlaygroundChat))
+		// 管理面**只认管理密码**（adminauth.Store），与 /v1 的 api_key 彻底分离：
+		// 下游手里的 key 不再附带停号/加号/看全量账号的能力。
+		h.mux.HandleFunc("POST /admin/login", h.adminLogin)
+		h.mux.HandleFunc("GET /admin/status", h.withAdminAuth(h.adminStatus))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/disable", h.withAdminAuth(h.adminAccountDisable))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/enable", h.withAdminAuth(h.adminAccountEnable))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/revive", h.withAdminAuth(h.adminAccountRevive))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk", h.withAdminAuth(h.adminRefreshRisk))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/clear", h.withAdminAuth(h.adminClearRefreshRisk))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/success", h.withAdminAuth(h.adminRefreshRiskSuccess))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/models/{model}/available", h.withAdminAuth(h.adminModelAvailable))
+		// 管理面（REST）：账号清单/详情、签到、扫码加号、模型中心、聊天测试台。
+		h.mux.HandleFunc("GET /admin/accounts", h.withAdminAuth(h.adminAccounts))
+		h.mux.HandleFunc("GET /admin/accounts/{uid}", h.withAdminAuth(h.adminAccountDetail))
+		h.mux.HandleFunc("POST /admin/accounts/checkin", h.withAdminAuth(h.adminCheckinAll))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/checkin", h.withAdminAuth(h.adminCheckinOne))
+		h.mux.HandleFunc("POST /admin/auth/start", h.withAdminAuth(h.adminAuthStart))
+		h.mux.HandleFunc("GET /admin/auth/poll", h.withAdminAuth(h.adminAuthPoll))
+		h.mux.HandleFunc("GET /admin/models", h.withAdminAuth(h.adminModels))
+		h.mux.HandleFunc("POST /admin/playground/chat", h.withAdminAuth(h.adminPlaygroundChat))
 	}
 	h.mux.HandleFunc("GET /healthz", h.healthz)
 	// 管理后台（可选）。放在最后注册，纯粹是为了让「具体路由」都先声明；
@@ -308,6 +320,11 @@ func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.statusPayload())
+}
+
+// statusPayload 组装 /status 响应体（数据面与 /admin/status 共用，避免两份口径）。
+func (h *Handler) statusPayload() map[string]any {
 	total, healthy, cooling, disabled, inFlightFull := h.cfg.Pool.CountsDetailed()
 	sticky := 0
 	if h.cfg.StickyCount != nil {
@@ -323,7 +340,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	exploreEvents, exploreLast := h.cfg.Pool.CostExploreStatus()
 	// realm_totals 按域分组的计数汇总（双 realm 并存时运维一眼看到各域可用性）：
 	// 只新增字段，既有 total/healthy/cooling/disabled/in_flight_full 汇总键不变（零回归）。
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"accounts":       h.cfg.Pool.List(),
 		"total":          total,
 		"healthy":        healthy,
@@ -341,7 +358,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 			"events_total": exploreEvents,
 			"per_model":    exploreLast,
 		},
-	})
+	}
 }
 
 // countsMapFrom 把 CountsDetailed 五元组编码为 /status realm_totals 的字段对象。

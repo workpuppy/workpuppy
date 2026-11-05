@@ -179,7 +179,7 @@ docker compose up -d --build
 curl -s http://localhost:7863/healthz
 # {"healthy":2,"total":3,"service":"workbuddy2api"}
 
-# 管理后台（需 admin.enabled=true，首次打开填 api_key）
+# 管理后台（需 admin.enabled=true；登录密码在启动日志里：docker logs workbuddy2api | grep 登录密码）
 curl -sI http://localhost:7863/ | head -1
 ```
 
@@ -353,6 +353,44 @@ https://github.com/orgs/<org>/packages/container/<repo>
 - **测试台**：选模型 → 填提示词 → 流式（SSE）或非流式试跑，可指定 `reasoning_effort`
 - **扫码加号**：拿授权 URL → 轮询 → 账号自动落盘并进入账号池（与 `login.sh` 等价）
 
+### 登录：一把每次启动都会变的密码
+
+**没有用户名，也没有会话 Cookie** —— 打开 `/` 是登录页，填一串密码就进去了：
+
+```bash
+docker logs workbuddy2api | grep 登录密码
+#  登录密码: HDBzN2dnojSNGrpki7UA    （本次启动随机生成）
+```
+
+- **每次启动随机生成**（20 字符，crypto/rand），**只存在进程内存里**：重启即换新密码，
+  旧密码立即失效；不落盘、不写 `config.json`、不进数据库。
+- 打印时机在**端口已绑定之后**（"ready 之后"）：端口占用导致启动失败时，日志里不会
+  留下一个看起来能用的密码。
+- 想固定密码（开发/自动化）就设环境变量 `WB2A_ADMIN_PASSWORD`（≥8 字符，否则启动失败）。
+- 前端把密码存在浏览器 `localStorage`，每个请求带 `Authorization: Bearer <密码>`；
+  **密码为空 / 失效（401）时自动清掉本地存储并回到登录页**，不会停在空白面板上。
+- 登录失败按来源 IP 限速：5 分钟内 10 次后回 `429`。
+- 管理凭据与 `/v1`、`/status` 的 `api_key` **完全分离**：拿下游 key 打 `/admin/*` 一律 401。
+
+> 谁能看容器日志，谁就能进后台 —— 这本来就是同一权限层（能看日志的人已经能控制容器）。
+> 反过来说：**不要把容器日志外发给第三方**。
+
+| 路径 | 用途 |
+|---|---|
+| `/` | 管理后台（Bootstrap 单页，`location.hash` 切视图） |
+| `/assets/...` | 内嵌静态资源（Bootstrap 5.3.3 + app.js/app.css） |
+| `/v1/*` | **OpenAI 兼容接口**（原样保留，供下游 SDK 使用，`api_key` 鉴权） |
+| `/admin/*` | 管理面 REST（管理密码鉴权，见下一节） |
+| `/status`、`/healthz` | 状态与存活探测（`/status` 走 `api_key`，`/healthz` 不鉴权） |
+
+页面能力（全部直接打 `/admin/*`，无中间层）：
+
+- **概览**：账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + 原始状态 JSON（`/admin/status`）
+- **账号**：列表（状态徽标、积分、在途、凭证有效期、线路与权重）+ 单号签到 / 停用 / 启用 / 复活 + 全部签到
+- **模型**：模型中心（描述、上下文、最大输出、思考档位、积分倍率、能力标记），支持过滤
+- **测试台**：选模型 → 填提示词 → 流式（SSE）或非流式试跑，可指定 `reasoning_effort`
+- **扫码加号**：拿授权 URL → 轮询 → 账号自动落盘并进入账号池（与 `login.sh` 等价）
+
 ### 选型与实现约束
 
 - **Bootstrap 5.3.3 已 vendored 进仓库**（`internal/webui/assets/`，随二进制 embed），
@@ -360,26 +398,25 @@ https://github.com/orgs/<org>/packages/container/<repo>
   没有 CI 前端阶段。许可与来源见 `internal/webui/assets/NOTICE.txt`。
 - **一切数据都从 REST 拿**：页面不内置任何业务判定（状态分类、能否签到、是否入池都由
   服务端字段决定），所以「界面显示」与「curl 结果」不可能不一致。
-- **密钥**：页面本身不含任何密钥；首次打开会让你填 `config.json` 里的 `api_key`
-  （与 `/v1` 同一把），只存在浏览器 `localStorage`，每个请求带
-  `Authorization: Bearer …`。无 key 时所有数据请求回 401 并弹窗。
+- **页面本身不含任何凭据**：登录页可以匿名打开，但每个数据请求都要带管理密码。
 - **安全**：响应统一带 CSP（`default-src 'self'`，禁内联脚本与外链）、`nosniff`、
   `frame-ancestors 'none'`；渲染一律 `textContent`，不拼 HTML（账号昵称/描述都是外部输入）。
-- **前提**：`config.json` 里 `admin.enabled=true`，否则 `/admin/*` 不注册，页面会直接提示
+- **前提**：`config.json` 里 `admin.enabled=true`，否则 `/admin/*` 不注册，页面会提示
   「管理面未开启」。
 
 ## 管理面（REST + CLI）
 
 > 本仓库以**上游源码快照为基线**做二次开发（原 Python/Next 可视化面板已归档到 `old/`，
-> 二进制不再包含它）。管理能力按「够用就好」重建：只做 REST 端点 + 一个命令行客户端，
-> 不做 Web 界面 —— 需要界面时用任意 HTTP 工具、脚本或自建前端打这些端点即可。
+> 二进制不再包含它）。管理能力按「够用就好」重建：Web 后台 + REST 端点 + 命令行客户端。
 
 ### 设计边界
 
 - **开关**：`config.json` 的 `admin.enabled`（默认 `false`）。未开启时 `/admin/*` **根本不注册**（回 404），
   而不是 403 —— 后者等于告诉扫描者「这里有管理面，只是没给钥匙」。
-- **鉴权**：与 `/status`、`/v1/*` 同源，用同一把 `api_key`（`Authorization: Bearer …`）。
-  不开第二个密码体系，也不额外引入会话/cookie。
+- **鉴权**：管理面**只认管理密码**（启动时随机生成、只存内存、打印在终端）。
+  与 `/v1`、`/status` 的 `api_key` 彻底分离 —— 下游手里的 key **不能**停号、加号或看全量账号。
+- **绝不放行**：凭据未初始化时管理面回 `503`。**没有**「api_key 为空 = 不鉴权」这种默认值
+  （数据面沿用上游语义，管理面不沿用）。
 - **只读端点不写上游**：`/admin/accounts` 只读池状态与 `auths/*.json`，不刷新 token、不查余额。
   要查余额就签到（它顺带回填积分），或走既有 `/v1/*`。
 - **字段契约分开演进**：`/status` 是给**下游 SDK** 看的稳定契约，`/admin/*` 是排障口径
@@ -389,6 +426,8 @@ https://github.com/orgs/<org>/packages/container/<repo>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| `POST` | `/admin/login` | 用密码确认身份：`{"password":"…"}` → `{"ok":true}`；错误 401、超限 429（无需用户名） |
+| `GET` | `/admin/status` | 与 `/status` 同形，但走管理凭据（后台看池子不必拿下游 key） |
 | `GET` | `/admin/accounts` | 账号清单：池运行态（积分/冷却/在途/连败…）+ 凭证元信息（有效期、能否刷新、线路、权重）。**含只在文件里、没进池的账号**（否则「加了号却看不见」无从排查） |
 | `GET` | `/admin/accounts/{uid}` | 单账号详情（同上 + 池状态原样） |
 | `POST` | `/admin/accounts/checkin` | 全部签到。复用调度器入口，共享它的单飞锁与「相邻账号间隔」；正在跑时回 `409 busy` |
@@ -402,25 +441,35 @@ https://github.com/orgs/<org>/packages/container/<repo>
 | `POST` | `/admin/playground/chat` | 聊天测试台：**复用 `/v1/chat/completions` 整条链路**（净化/指纹改写/轮转/SSE/错误分类一致），`?uid=` 可指定账号定点验证 |
 
 ```bash
+# 管理密码在启动日志里（每次重启都会变）
+PW=$(docker logs workbuddy2api 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
+
+# 先登录确认（也可以跳过，后面直接用这个密码）
+curl -s -X POST http://127.0.0.1:7863/admin/login \
+  -H "Content-Type: application/json" -d "{\"password\":\"$PW\"}"
+
 # 加号（扫码）
 curl -s -X POST http://127.0.0.1:7863/admin/auth/start \
-  -H "Authorization: Bearer your-api-key" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
   -d '{"realm":"cn"}'          # → {"state":"…","auth_url":"https://…"}
 # 扫码后轮询，成功即落盘
 curl -s "http://127.0.0.1:7863/admin/auth/poll?state=<state>&realm=cn" \
-  -H "Authorization: Bearer your-api-key"
+  -H "Authorization: Bearer $PW"
 
 # 签到 / 定点试模型
-curl -s -X POST http://127.0.0.1:7863/admin/accounts/checkin -H "Authorization: Bearer your-api-key"
+curl -s -X POST http://127.0.0.1:7863/admin/accounts/checkin -H "Authorization: Bearer $PW"
 curl -s -X POST "http://127.0.0.1:7863/admin/playground/chat?uid=<uid>" \
-  -H "Authorization: Bearer your-api-key" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
   -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}'
 ```
 
 ### 命令行客户端 `wbctl`
 
 ```bash
-go build -o wbctl ./cmd/wbctl        # 或用发布包里的 wbctl.exe
+go build -o wbctl ./cmd/wbctl        # 或用发布包里的 wbctl
+
+# 密码来源：-password 或环境变量 WB2A_ADMIN_PASSWORD（与后台登录用同一串）
+export WB2A_ADMIN_PASSWORD=$(docker logs workbuddy2api 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
 
 ./wbctl accounts                     # 账号清单（-json 出原始 JSON）
 ./wbctl account <uid>                # 单账号详情
@@ -434,7 +483,7 @@ go build -o wbctl ./cmd/wbctl        # 或用发布包里的 wbctl.exe
 ./wbctl enable <uid> ; ./wbctl revive <uid>
 ```
 
-`wbctl` 默认读 `./config.json`（取 `listen` 与 `api_key`），可用 `-config/-server/-key` 覆盖。
+`wbctl` 默认读 `./config.json`（只为拿 `listen`），管理密码用 `-password` 或环境变量 `WB2A_ADMIN_PASSWORD`。
 它**不含业务逻辑**：所有判定都在服务端，因此 `curl` 与 `wbctl` 的行为不可能不一致。
 
 ### 这一版**没有**做（与旧的 Python 面板相比）

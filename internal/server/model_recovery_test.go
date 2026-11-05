@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"workbuddy2api/internal/adminauth"
 	"workbuddy2api/internal/auth"
 )
 
@@ -14,7 +15,7 @@ func TestSuccessfulProbeClearsOnlyMissingModel(t *testing.T) {
 	p.BlockModelBackoff("u1", "deepseek-v4.1-flash", "11102 model not available")
 	p.CooldownSoftForModel("u1", time.Minute, time.Now().Add(time.Hour), "glm-5.3", "6004 model rate limit")
 	p.SetManualDisabled("u1", true, "operator")
-	h := NewHandler(Config{Pool: p, APIKey: "test", AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, APIKey: "test", AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 	url := "/admin/accounts/u1/models/deepseek-v4.1-flash/available"
 	request := httptest.NewRequest("POST", url, nil)
 	rec := httptest.NewRecorder()
@@ -23,7 +24,7 @@ func TestSuccessfulProbeClearsOnlyMissingModel(t *testing.T) {
 		t.Fatalf("recovery requires gateway key: %d", rec.Code)
 	}
 	request = httptest.NewRequest("POST", url, nil)
-	request.Header.Set("Authorization", "Bearer test")
+	request.Header.Set("Authorization", "Bearer "+testAdminPW)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, request)
 	if rec.Code != http.StatusOK {
@@ -38,9 +39,12 @@ func TestSuccessfulProbeClearsOnlyMissingModel(t *testing.T) {
 func TestProbeRecoveryDoesNotClearSameModelQuota(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	p.CooldownSoftForModel("u1", time.Minute, time.Now().Add(time.Hour), "deepseek-v4.1-flash", "6004 model rate limit")
-	h := NewHandler(Config{Pool: p, AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/admin/accounts/u1/models/deepseek-v4.1-flash/available", nil))
+	req := httptest.NewRequest("POST", "/admin/accounts/u1/models/deepseek-v4.1-flash/available", nil)
+	// 管理端点只认管理密码（"api_key 为空 = 不鉴权" 已不再适用于管理面）。
+	req.Header.Set("Authorization", "Bearer "+testAdminPW)
+	h.ServeHTTP(rec, req)
 	st, _ := p.Status("u1")
 	if rec.Code != http.StatusOK || len(st.RateLimitedModels) != 1 {
 		t.Fatalf("successful small probe must not erase token quota: %d %+v", rec.Code, st)

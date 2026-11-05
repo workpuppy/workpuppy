@@ -2,7 +2,7 @@
 //
 // 为什么有它：轻量版刻意不做 Web 界面，管理动作就落在两种人手上 ——
 // 脚本（curl / CI）与运维（命令行）。wbctl 是后者的入口：读同一份 config.json，
-// 拿同一个 api_key，打同一组 /admin/* 端点。它**不含任何业务逻辑**，只是一层
+// 拿管理密码（服务启动日志里那串），打同一组 /admin/* 端点。它**不含任何业务逻辑**，只是一层
 // 便于人读的封装；真正的判定全在服务端（这样 curl 与 wbctl 的行为不可能不一致）。
 //
 // 用法：
@@ -32,24 +32,27 @@ import (
 	"time"
 )
 
-// cfgFile 服务端配置（只取本工具需要的两项）。
+// cfgFile 服务端配置（本工具只需要监听地址；管理面凭据不在这份文件里）。
 type cfgFile struct {
 	Listen string `json:"listen"`
-	APIKey string `json:"api_key"`
 }
 
+// client 管理面客户端。
+//
+// 凭据是**管理密码**（服务启动时随机生成、打印在容器日志里），不是 /v1 的 api_key：
+// 两者已彻底分离，拿 api_key 调 /admin/* 会被 401。密码来源：-password > WB2A_ADMIN_PASSWORD。
 type client struct {
-	base string
-	key  string
-	http *http.Client
+	base     string
+	password string
+	http     *http.Client
 }
 
 func main() {
 	var (
-		cfgPath = flag.String("config", "config.json", "服务端配置文件（读 listen / api_key）")
-		server  = flag.String("server", "", "覆盖服务地址，如 http://127.0.0.1:7863")
-		key     = flag.String("key", "", "覆盖 api_key")
-		asJSON  = flag.Bool("json", false, "输出原始 JSON")
+		cfgPath  = flag.String("config", "config.json", "服务端配置文件（读 listen）")
+		server   = flag.String("server", "", "覆盖服务地址，如 http://127.0.0.1:7863")
+		password = flag.String("password", "", "管理密码（默认取环境变量 WB2A_ADMIN_PASSWORD）")
+		asJSON   = flag.Bool("json", false, "输出原始 JSON")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -60,7 +63,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	c := newClient(*cfgPath, *server, *key)
+	c := newClient(*cfgPath, *server, *password)
 	var err error
 	switch args[0] {
 	case "accounts":
@@ -110,7 +113,7 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, `wbctl —— workbuddy2api 管理面命令行
 
-用法: wbctl [-config config.json] [-server URL] [-key KEY] [-json] <命令> [参数]
+用法: wbctl [-config config.json] [-server URL] [-password PW] [-json] <命令> [参数]
 
 命令:
   accounts                         账号清单（池状态 + 凭证元信息）
@@ -125,7 +128,8 @@ func usage() {
   enable <uid>                     解除手动停用
   revive <uid>                     解除系统自动禁用（封号救不回）
 
-前置条件：服务端 config.json 里 admin.enabled=true，且已配置 api_key。
+前置条件：服务端 config.json 里 admin.enabled=true；密码取服务启动日志里的「登录密码」，
+           也可用 -password 或环境变量 WB2A_ADMIN_PASSWORD 直接给。
 `)
 }
 
@@ -135,7 +139,7 @@ func fatalf(format string, args ...any) {
 }
 
 // newClient 解析服务地址与密钥。listen 常写成 ":7863"，这里补成本机地址。
-func newClient(cfgPath, server, key string) *client {
+func newClient(cfgPath, server, password string) *client {
 	var cf cfgFile
 	if raw, err := os.ReadFile(cfgPath); err == nil {
 		// 容忍 BOM：Windows 上手工编辑 config.json 很容易带上 BOM，而 json 包会因此
@@ -153,13 +157,13 @@ func newClient(cfgPath, server, key string) *client {
 		}
 		server = "http://" + listen
 	}
-	if key == "" {
-		key = cf.APIKey
+	if password == "" {
+		password = strings.TrimSpace(os.Getenv("WB2A_ADMIN_PASSWORD"))
 	}
 	return &client{
-		base: strings.TrimRight(server, "/"),
-		key:  key,
-		http: &http.Client{Timeout: 10 * time.Minute},
+		base:     strings.TrimRight(server, "/"),
+		password: password,
+		http:     &http.Client{Timeout: 10 * time.Minute},
 	}
 }
 
@@ -177,8 +181,8 @@ func (c *client) do(method, path string, body []byte) ([]byte, error) {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.key != "" {
-		req.Header.Set("Authorization", "Bearer "+c.key)
+	if c.password != "" {
+		req.Header.Set("Authorization", "Bearer "+c.password)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -430,8 +434,8 @@ func (c *client) cmdChat(args []string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.key != "" {
-		req.Header.Set("Authorization", "Bearer "+c.key)
+	if c.password != "" {
+		req.Header.Set("Authorization", "Bearer "+c.password)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

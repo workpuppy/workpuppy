@@ -9,6 +9,10 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
+      # 管理后台密码默认**每次启动随机生成**并打印在容器日志里：
+      #   docker logs workbuddy2api | grep 登录密码
+      # 开发/自动化想固定密码再取消下面一行（≥8 字符）：
+      # - WB2A_ADMIN_PASSWORD=please-change-me
     ports:
       - "7863:7863"
     volumes:

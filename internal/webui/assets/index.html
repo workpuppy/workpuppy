@@ -11,226 +11,233 @@
 </head>
 <body class="bg-body-tertiary">
 
-<nav class="navbar navbar-expand-lg bg-body border-bottom sticky-top">
-  <div class="container-xxl">
-    <a class="navbar-brand fw-semibold" href="#/overview">
-      <span class="badge text-bg-primary me-1">WB</span>WorkBuddy2API
-    </a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav"
-            aria-controls="nav" aria-expanded="false" aria-label="切换导航">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="nav">
-      <ul class="navbar-nav me-auto">
-        <li class="nav-item"><button class="nav-link" data-view="overview">概览</button></li>
-        <li class="nav-item"><button class="nav-link" data-view="accounts">账号</button></li>
-        <li class="nav-item"><button class="nav-link" data-view="models">模型</button></li>
-        <li class="nav-item"><button class="nav-link" data-view="playground">测试台</button></li>
-        <li class="nav-item"><button class="nav-link" data-view="add">扫码加号</button></li>
-      </ul>
-      <div class="d-flex align-items-center gap-2">
-        <span class="small text-body-secondary" id="keyState">未设置密钥</span>
-        <button class="btn btn-outline-secondary btn-sm" id="btnKey">设置密钥</button>
-        <button class="btn btn-outline-secondary btn-sm" id="btnTheme" title="切换深浅色">◐</button>
+<!-- ── 登录页（默认显示；凭据只存浏览器本地，服务端重启即更换）────────── -->
+<div id="loginWrap" class="min-vh-100 d-flex align-items-center justify-content-center p-3">
+  <div class="card shadow-sm login-card">
+    <div class="card-body p-4">
+      <div class="text-center mb-3">
+        <div class="fs-4 fw-semibold"><span class="badge text-bg-primary me-1">WB</span>WorkBuddy2API</div>
+        <div class="small text-body-secondary mt-1">管理后台登录</div>
+      </div>
+      <form id="loginForm" autocomplete="off">
+        <label class="form-label small" for="loginPassword">管理密码</label>
+        <input type="password" class="form-control" id="loginPassword" placeholder="容器启动日志里的那串密码"
+               autocomplete="current-password" required>
+        <div class="form-text">
+          无需用户名。密码在服务启动日志里打印（<code>登录密码: …</code>），每次重启都会更换；
+          它只存在服务器内存里，与 <code>/v1</code> 用的 <code>api_key</code> 完全无关。
+        </div>
+        <div class="alert alert-danger py-2 small mt-3 d-none" id="loginError"></div>
+        <button class="btn btn-primary w-100 mt-3" type="submit" id="btnLogin">登录</button>
+      </form>
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <span class="small text-body-secondary">v1 · Go 单栈</span>
+        <button class="btn btn-sm btn-outline-secondary" id="btnThemeLogin" title="切换深浅色">◐</button>
       </div>
     </div>
   </div>
-</nav>
+</div>
 
-<main class="container-xxl py-4">
-  <div id="alertSlot"></div>
-
-  <!-- 概览 -->
-  <section id="view-overview" hidden>
-    <div class="row g-3 mb-3">
-      <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
-        <div class="text-body-secondary small">账号总数</div>
-        <div class="fs-3 fw-semibold" id="kpiTotal">–</div>
-      </div></div></div>
-      <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
-        <div class="text-body-secondary small">可用</div>
-        <div class="fs-3 fw-semibold text-success" id="kpiHealthy">–</div>
-      </div></div></div>
-      <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
-        <div class="text-body-secondary small">冷却中</div>
-        <div class="fs-3 fw-semibold text-warning" id="kpiCooling">–</div>
-      </div></div></div>
-      <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
-        <div class="text-body-secondary small">已禁用</div>
-        <div class="fs-3 fw-semibold text-danger" id="kpiDisabled">–</div>
-      </div></div></div>
-      <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
-        <div class="text-body-secondary small">在途占满</div>
-        <div class="fs-3 fw-semibold" id="kpiInFlight">–</div>
-      </div></div></div>
-      <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
-        <div class="text-body-secondary small">粘性会话</div>
-        <div class="fs-3 fw-semibold" id="kpiSticky">–</div>
-      </div></div></div>
-    </div>
-    <div class="card">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <span>网关状态</span>
-        <button class="btn btn-sm btn-outline-secondary" id="btnRefreshStatus">刷新</button>
-      </div>
-      <div class="card-body">
-        <pre class="mb-0 small" id="statusRaw">（点「刷新」或设置密钥后自动加载）</pre>
-      </div>
-    </div>
-  </section>
-
-  <!-- 账号 -->
-  <section id="view-accounts" hidden>
-    <div class="d-flex flex-wrap gap-2 mb-3">
-      <button class="btn btn-primary btn-sm" id="btnCheckinAll">全部签到</button>
-      <button class="btn btn-outline-secondary btn-sm" id="btnRefreshAccounts">刷新</button>
-      <span class="ms-auto small text-body-secondary align-self-center" id="accountsHint"></span>
-    </div>
-    <div class="card">
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0">
-          <thead class="table-light">
-            <tr>
-              <th>UID</th><th>昵称</th><th>版本</th><th>状态</th>
-              <th class="text-end">积分</th><th class="text-end">在途</th>
-              <th>凭证</th><th>线路/权重</th><th class="text-end">操作</th>
-            </tr>
-          </thead>
-          <tbody id="accountsBody">
-            <tr><td colspan="9" class="text-center text-body-secondary py-4">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <!-- 模型 -->
-  <section id="view-models" hidden>
-    <div class="d-flex gap-2 mb-3">
-      <input class="form-control form-control-sm" id="modelFilter" placeholder="按 ID / 描述过滤…" style="max-width:320px">
-      <button class="btn btn-outline-secondary btn-sm" id="btnRefreshModels">刷新</button>
-      <span class="ms-auto small text-body-secondary align-self-center" id="modelsHint"></span>
-    </div>
-    <div class="card">
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0">
-          <thead class="table-light">
-            <tr><th>模型</th><th>描述</th><th class="text-end">上下文</th><th class="text-end">最大输出</th><th>思考档位</th><th>积分倍率</th><th>能力</th></tr>
-          </thead>
-          <tbody id="modelsBody">
-            <tr><td colspan="7" class="text-center text-body-secondary py-4">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <!-- 测试台 -->
-  <section id="view-playground" hidden>
-    <div class="row g-3">
-      <div class="col-lg-5">
-        <div class="card h-100">
-          <div class="card-header">请求</div>
-          <div class="card-body">
-            <div class="mb-2">
-              <label class="form-label small" for="pgModel">模型</label>
-              <select class="form-select form-select-sm" id="pgModel"></select>
-            </div>
-            <div class="mb-2">
-              <label class="form-label small" for="pgEffort">思考强度（留空=不传）</label>
-              <select class="form-select form-select-sm" id="pgEffort">
-                <option value="">（不传）</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-              </select>
-            </div>
-            <div class="mb-2">
-              <label class="form-label small" for="pgPrompt">提示词</label>
-              <textarea class="form-control form-control-sm" id="pgPrompt" rows="6" placeholder="输入一句话试试这条链路…"></textarea>
-            </div>
-            <div class="form-check form-switch mb-3">
-              <input class="form-check-input" type="checkbox" id="pgStream" checked>
-              <label class="form-check-label small" for="pgStream">流式输出（SSE）</label>
-            </div>
-            <button class="btn btn-primary btn-sm" id="btnSend">发送</button>
-            <button class="btn btn-outline-secondary btn-sm" id="btnAbort" disabled>中断</button>
-            <span class="small text-body-secondary ms-2" id="pgMeta"></span>
-          </div>
-        </div>
-      </div>
-      <div class="col-lg-7">
-        <div class="card h-100">
-          <div class="card-header">响应</div>
-          <div class="card-body">
-            <pre class="mb-0 small pg-out" id="pgOut">（尚无输出）</pre>
-          </div>
+<!-- ── 主界面（登录后显示）──────────────────────────────────────── -->
+<div id="app" hidden>
+  <nav class="navbar navbar-expand-lg bg-body border-bottom sticky-top">
+    <div class="container-xxl">
+      <a class="navbar-brand fw-semibold" href="#/overview">
+        <span class="badge text-bg-primary me-1">WB</span>WorkBuddy2API
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav"
+              aria-controls="nav" aria-expanded="false" aria-label="切换导航">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="nav">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item"><button class="nav-link" data-view="overview">概览</button></li>
+          <li class="nav-item"><button class="nav-link" data-view="accounts">账号</button></li>
+          <li class="nav-item"><button class="nav-link" data-view="models">模型</button></li>
+          <li class="nav-item"><button class="nav-link" data-view="playground">测试台</button></li>
+          <li class="nav-item"><button class="nav-link" data-view="add">扫码加号</button></li>
+        </ul>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-outline-secondary btn-sm" id="btnTheme" title="切换深浅色">◐</button>
+          <button class="btn btn-outline-danger btn-sm" id="btnLogout">退出登录</button>
         </div>
       </div>
     </div>
-  </section>
+  </nav>
 
-  <!-- 扫码加号 -->
-  <section id="view-add" hidden>
-    <div class="row g-3">
-      <div class="col-lg-6">
-        <div class="card">
-          <div class="card-header">扫码添加账号</div>
-          <div class="card-body">
-            <div class="mb-3">
-              <label class="form-label small" for="addRealm">版本</label>
-              <select class="form-select form-select-sm" id="addRealm">
-                <option value="cn">国内版（cn）</option>
-                <option value="global">国际版（global）</option>
-              </select>
+  <main class="container-xxl py-4">
+    <div id="alertSlot"></div>
+
+    <!-- 概览 -->
+    <section id="view-overview" hidden>
+      <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
+          <div class="text-body-secondary small">账号总数</div>
+          <div class="fs-3 fw-semibold" id="kpiTotal">–</div>
+        </div></div></div>
+        <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
+          <div class="text-body-secondary small">可用</div>
+          <div class="fs-3 fw-semibold text-success" id="kpiHealthy">–</div>
+        </div></div></div>
+        <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
+          <div class="text-body-secondary small">冷却中</div>
+          <div class="fs-3 fw-semibold text-warning" id="kpiCooling">–</div>
+        </div></div></div>
+        <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
+          <div class="text-body-secondary small">已禁用</div>
+          <div class="fs-3 fw-semibold text-danger" id="kpiDisabled">–</div>
+        </div></div></div>
+        <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
+          <div class="text-body-secondary small">在途占满</div>
+          <div class="fs-3 fw-semibold" id="kpiInFlight">–</div>
+        </div></div></div>
+        <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
+          <div class="text-body-secondary small">粘性会话</div>
+          <div class="fs-3 fw-semibold" id="kpiSticky">–</div>
+        </div></div></div>
+      </div>
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>网关状态</span>
+          <button class="btn btn-sm btn-outline-secondary" id="btnRefreshStatus">刷新</button>
+        </div>
+        <div class="card-body">
+          <pre class="mb-0 small" id="statusRaw">（加载中…）</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- 账号 -->
+    <section id="view-accounts" hidden>
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <button class="btn btn-primary btn-sm" id="btnCheckinAll">全部签到</button>
+        <button class="btn btn-outline-secondary btn-sm" id="btnRefreshAccounts">刷新</button>
+        <span class="ms-auto small text-body-secondary align-self-center" id="accountsHint"></span>
+      </div>
+      <div class="card">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>UID</th><th>昵称</th><th>版本</th><th>状态</th>
+                <th class="text-end">积分</th><th class="text-end">在途</th>
+                <th>凭证</th><th>线路/权重</th><th class="text-end">操作</th>
+              </tr>
+            </thead>
+            <tbody id="accountsBody">
+              <tr><td colspan="9" class="text-center text-body-secondary py-4">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 模型 -->
+    <section id="view-models" hidden>
+      <div class="d-flex gap-2 mb-3">
+        <input class="form-control form-control-sm" id="modelFilter" placeholder="按 ID / 描述过滤…" style="max-width:320px">
+        <button class="btn btn-outline-secondary btn-sm" id="btnRefreshModels">刷新</button>
+        <span class="ms-auto small text-body-secondary align-self-center" id="modelsHint"></span>
+      </div>
+      <div class="card">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr><th>模型</th><th>描述</th><th class="text-end">上下文</th><th class="text-end">最大输出</th><th>思考档位</th><th>积分倍率</th><th>能力</th></tr>
+            </thead>
+            <tbody id="modelsBody">
+              <tr><td colspan="7" class="text-center text-body-secondary py-4">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 测试台 -->
+    <section id="view-playground" hidden>
+      <div class="row g-3">
+        <div class="col-lg-5">
+          <div class="card h-100">
+            <div class="card-header">请求</div>
+            <div class="card-body">
+              <div class="mb-2">
+                <label class="form-label small" for="pgModel">模型</label>
+                <select class="form-select form-select-sm" id="pgModel"></select>
+              </div>
+              <div class="mb-2">
+                <label class="form-label small" for="pgEffort">思考强度（留空=不传）</label>
+                <select class="form-select form-select-sm" id="pgEffort">
+                  <option value="">（不传）</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
+              <div class="mb-2">
+                <label class="form-label small" for="pgPrompt">提示词</label>
+                <textarea class="form-control form-control-sm" id="pgPrompt" rows="6" placeholder="输入一句话试试这条链路…"></textarea>
+              </div>
+              <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="pgStream" checked>
+                <label class="form-check-label small" for="pgStream">流式输出（SSE）</label>
+              </div>
+              <button class="btn btn-primary btn-sm" id="btnSend">发送</button>
+              <button class="btn btn-outline-secondary btn-sm" id="btnAbort" disabled>中断</button>
+              <span class="small text-body-secondary ms-2" id="pgMeta"></span>
             </div>
-            <button class="btn btn-primary btn-sm" id="btnAuthStart">获取二维码链接</button>
-            <span class="small text-body-secondary ms-2" id="addMeta"></span>
-            <div class="alert alert-info mt-3 d-none" id="addBox">
-              <div class="small mb-1">用微信 / QQ 扫码，或直接在浏览器打开下面的链接完成授权：</div>
-              <a id="addUrl" class="small text-break" href="#" target="_blank" rel="noreferrer"></a>
-              <div class="small text-body-secondary mt-2">已开始轮询授权结果，成功后账号会自动落盘并进入账号池。</div>
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="card h-100">
+            <div class="card-header">响应</div>
+            <div class="card-body">
+              <pre class="mb-0 small pg-out" id="pgOut">（尚无输出）</pre>
             </div>
           </div>
         </div>
       </div>
-      <div class="col-lg-6">
-        <div class="card h-100">
-          <div class="card-header">说明</div>
-          <div class="card-body small text-body-secondary">
-            <p class="mb-2">这条链路与 <code>login.sh</code> 等价：拿授权 URL → 授权成功 → 写
-              <code>auths/workbuddy-&lt;uid&gt;.json</code> → 账号池几秒内自动热加载，不需要重启容器。</p>
-            <p class="mb-2">国际版账号需要先完善注册地区、再领一次性 trial；这些在
-              <code>login.sh</code> 里由 <code>login save</code> 完成，本页只做「加号」这一步。</p>
-            <p class="mb-0">要求：<code>config.json</code> 里 <code>admin.enabled=true</code>，
-              且用网关的 <code>api_key</code> 作为本页密钥。</p>
+    </section>
+
+    <!-- 扫码加号 -->
+    <section id="view-add" hidden>
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header">扫码添加账号</div>
+            <div class="card-body">
+              <div class="mb-3">
+                <label class="form-label small" for="addRealm">版本</label>
+                <select class="form-select form-select-sm" id="addRealm">
+                  <option value="cn">国内版（cn）</option>
+                  <option value="global">国际版（global）</option>
+                </select>
+              </div>
+              <button class="btn btn-primary btn-sm" id="btnAuthStart">获取二维码链接</button>
+              <span class="small text-body-secondary ms-2" id="addMeta"></span>
+              <div class="alert alert-info mt-3 d-none" id="addBox">
+                <div class="small mb-1">用微信 / QQ 扫码，或直接在浏览器打开下面的链接完成授权：</div>
+                <a id="addUrl" class="small text-break" href="#" target="_blank" rel="noreferrer"></a>
+                <div class="small text-body-secondary mt-2">已开始轮询授权结果，成功后账号会自动落盘并进入账号池。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100">
+            <div class="card-header">说明</div>
+            <div class="card-body small text-body-secondary">
+              <p class="mb-2">这条链路与 <code>login.sh</code> 等价：拿授权 URL → 授权成功 → 写
+                <code>auths/workbuddy-&lt;uid&gt;.json</code> → 账号池几秒内自动热加载，不需要重启容器。</p>
+              <p class="mb-2">国际版账号需要先完善注册地区、再领一次性 trial；这些在
+                <code>login.sh</code> 里由 <code>login save</code> 完成，本页只做「加号」这一步。</p>
+              <p class="mb-0">要求：<code>config.json</code> 里 <code>admin.enabled=true</code>。
+                本页用的是**管理密码**，不是 <code>/v1</code> 的 <code>api_key</code>。</p>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </section>
-</main>
-
-<!-- 密钥弹窗 -->
-<div class="modal fade" id="keyModal" tabindex="-1" aria-labelledby="keyTitle" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="keyTitle">设置管理密钥</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
-      </div>
-      <div class="modal-body">
-        <p class="small text-body-secondary">填 <code>config.json</code> 里的 <code>api_key</code>
-          （与 <code>/v1</code> 用的是同一把）。密钥只保存在本浏览器的 localStorage，不会上传到别处。</p>
-        <input type="password" class="form-control" id="keyInput" placeholder="Bearer token（api_key）" autocomplete="off">
-        <div class="form-text">服务端要求 <code>admin.enabled=true</code> 才会注册 /admin/* 端点。</div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-secondary btn-sm" id="btnKeyClear">清除</button>
-        <button class="btn btn-primary btn-sm" id="btnKeySave">保存并加载</button>
-      </div>
-    </div>
-  </div>
+    </section>
+  </main>
 </div>
 
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts"></div>

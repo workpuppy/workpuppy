@@ -10,10 +10,18 @@ import (
 	"strings"
 	"testing"
 
+	"workbuddy2api/internal/adminauth"
 	"workbuddy2api/internal/auth"
 	"workbuddy2api/internal/loginsvc"
 	"workbuddy2api/internal/pool"
 	"workbuddy2api/internal/upstream"
+)
+
+// 测试用的两套凭据：数据面（/v1、/status）用 apiKey，管理面用 adminPW。
+// 刻意取不同值——「拿 api_key 打 /admin」必须是 401，这是本次改动的核心断言。
+const (
+	testAPIKey  = "v1-test-key"
+	testAdminPW = "admin-test-pw"
 )
 
 // newAdminHandler 构造一个开启管理面的 handler（无状态文件、纯内存池）。
@@ -27,13 +35,14 @@ func newAdminHandler(t *testing.T, poolAccs []*auth.Auth, authDir string) *Handl
 	return NewHandler(Config{
 		Pool:         p,
 		Upstream:     upstream.New(),
-		APIKey:       "test-key",
+		APIKey:       testAPIKey,
+		AdminAuth:    adminauth.MustNew(testAdminPW),
 		AdminEnabled: true,
 		AuthDir:      authDir,
 	})
 }
 
-// adminReq 发一次带鉴权的管理面请求。
+// adminReq 发一次带**管理密码**的管理面请求。
 func adminReq(h *Handler, method, target string, body io.Reader) *httptest.ResponseRecorder {
 	var r *http.Request
 	if body != nil {
@@ -41,10 +50,19 @@ func adminReq(h *Handler, method, target string, body io.Reader) *httptest.Respo
 	} else {
 		r = httptest.NewRequest(method, target, nil)
 	}
-	r.Header.Set("Authorization", "Bearer test-key")
+	r.Header.Set("Authorization", "Bearer "+testAdminPW)
 	if body != nil {
 		r.Header.Set("Content-Type", "application/json")
 	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+// apiKeyReq 发一次带**数据面 api_key** 的请求（用于证明它打不进管理面）。
+func apiKeyReq(h *Handler, method, target string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, target, nil)
+	r.Header.Set("Authorization", "Bearer "+testAPIKey)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
@@ -66,7 +84,7 @@ func writeAuthFile(t *testing.T, dir, uid, nickname, realm string) string {
 func TestAdminRoutesAbsentWhenDisabled(t *testing.T) {
 	p := pool.New("")
 	defer p.Close()
-	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: "test-key"})
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: testAPIKey})
 
 	for _, target := range []string{"/admin/accounts", "/admin/models"} {
 		w := adminReq(h, http.MethodGet, target, nil)
@@ -76,14 +94,91 @@ func TestAdminRoutesAbsentWhenDisabled(t *testing.T) {
 	}
 }
 
-// 管理面与 /status 同源鉴权：没有 api_key 一律 401。
-func TestAdminRequiresAPIKey(t *testing.T) {
+// 管理面只认管理密码：不带头必须是 401（细粒度矩阵见 admin_test.go / ui_mount_test.go）。
+func TestAdminMissingPasswordGets401(t *testing.T) {
 	h := newAdminHandler(t, nil, "")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/accounts", nil))
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("缺 key 应 401，实际 %d", w.Code)
+		t.Fatalf("缺管理密码应 401，实际 %d", w.Code)
 	}
+}
+
+// 核心断言：/v1 的 api_key **不能**用来进管理面（本次改动的目的就在这）。
+func TestAPIKeyCannotReachAdmin(t *testing.T) {
+	h := newAdminHandler(t, nil, "")
+
+	w := apiKeyReq(h, http.MethodGet, "/admin/accounts")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("用 api_key 打 /admin/accounts 应 401，实际 %d（body=%s）", w.Code, w.Body.String())
+	}
+	// 同一把 key 打数据面接口仍然正常（不能把 /v1 一起改坏）。
+	if w := apiKeyReq(h, http.MethodGet, "/status"); w.Code != http.StatusOK {
+		t.Fatalf("/status 用 api_key 应 200，实际 %d", w.Code)
+	}
+	// 管理凭据打管理面正常。
+	if w := adminReq(h, http.MethodGet, "/admin/accounts", nil); w.Code != http.StatusOK {
+		t.Fatalf("管理密码打 /admin/accounts 应 200，实际 %d（body=%s）", w.Code, w.Body.String())
+	}
+}
+
+// 管理凭据未初始化时**一律拒绝**（503），绝不沿用「api_key 为空 = 不鉴权」。
+func TestAdminRejectsWhenPasswordUninitialized(t *testing.T) {
+	p := pool.New("")
+	t.Cleanup(p.Close)
+	// 不传 AdminAuth（nil）：模拟启动异常/漏接线。
+	h := NewHandler(Config{
+		Pool: p, Upstream: upstream.New(), APIKey: testAPIKey, AdminEnabled: true,
+	})
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/admin/accounts"},
+		{http.MethodGet, "/admin/status"},
+		{http.MethodPost, "/admin/login"},
+	} {
+		w := adminReq(h, tc.method, tc.path, nil)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s %s 未初始化应 503，实际 %d（body=%s）", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+}
+
+// 登录端点：密码对 → 200；密码错/为空 → 401（文案不区分，避免探测）。
+func TestAdminLogin(t *testing.T) {
+	h := newAdminHandler(t, nil, "")
+
+	ok := adminReq(h, http.MethodPost, "/admin/login", strings.NewReader(`{"password":"`+testAdminPW+`"}`))
+	if ok.Code != http.StatusOK || !strings.Contains(ok.Body.String(), `"ok":true`) {
+		t.Fatalf("正确密码应 200 且 ok=true，实际 %d %s", ok.Code, ok.Body.String())
+	}
+	for _, body := range []string{`{"password":"wrong"}`, `{}`, `{"password":""}`} {
+		w := htptestPost(h, "/admin/login", body)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("密码 %s 应 401，实际 %d（body=%s）", body, w.Code, w.Body.String())
+		}
+	}
+}
+
+// /admin/status 与 /status 同形，但只走管理凭据（数据面接口保持不变）。
+func TestAdminStatusPayload(t *testing.T) {
+	h := newAdminHandler(t, []*auth.Auth{auth.NewFromLogin("9", "", "n", "a", "r", "copilot.tencent.com", "cn", 4102444800)}, "")
+
+	w := adminReq(h, http.MethodGet, "/admin/status", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"accounts"`) {
+		t.Fatalf("/admin/status 应 200 且含 accounts，实际 %d %s", w.Code, w.Body.String())
+	}
+	if w := apiKeyReq(h, http.MethodGet, "/admin/status"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("/admin/status 用 api_key 应 401，实际 %d", w.Code)
+	}
+}
+
+// htptestPost 发一个不带鉴权的 POST（登录端点本身不需要 Bearer）。
+func htptestPost(h *Handler, target, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
 }
 
 // 账号清单要同时覆盖「池里的号」与「只在文件里、没进池的号」：缺后者的表现是
@@ -184,7 +279,7 @@ func TestAdminPlaygroundForcedAccount(t *testing.T) {
 		}, nil
 	})}
 
-	h := NewHandler(Config{Pool: p, Upstream: up, APIKey: "test-key", AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, Upstream: up, APIKey: testAPIKey, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	payload := `{"model":"glm-5.2","messages":[{"role":"user","content":"ping"}]}`
 	w := adminReq(h, http.MethodPost, "/admin/playground/chat?uid=444", strings.NewReader(payload))
@@ -235,7 +330,7 @@ func TestAdminAuthStartPollWritesFile(t *testing.T) {
 	p := pool.New("")
 	t.Cleanup(p.Close)
 	h := NewHandler(Config{
-		Pool: p, Upstream: upstream.New(), APIKey: "test-key",
+		Pool: p, Upstream: upstream.New(), APIKey: testAPIKey, AdminAuth: adminauth.MustNew(testAdminPW),
 		AdminEnabled: true, AuthDir: dir, Login: login,
 	})
 
@@ -303,7 +398,7 @@ func TestAdminAuthPollRejectsBadUID(t *testing.T) {
 	dir := t.TempDir()
 	p := pool.New("")
 	t.Cleanup(p.Close)
-	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: "test-key",
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: testAPIKey, AdminAuth: adminauth.MustNew(testAdminPW),
 		AdminEnabled: true, AuthDir: dir, Login: login})
 
 	w := adminReq(h, http.MethodGet, "/admin/auth/poll?state=s&realm=cn", nil)
