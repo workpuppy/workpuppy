@@ -694,10 +694,10 @@ func (c *Config) normalize() error {
 		return fmt.Errorf("pool.large_request_budget_window: %w", err)
 	}
 	if c.Pool.LargeRequestBudget == 0 {
-		c.Pool.LargeRequestBudget = 6
+		c.Pool.LargeRequestBudget = defaults().Pool.LargeRequestBudget
 	}
 	if c.Pool.LargeRequestBytes == 0 {
-		c.Pool.LargeRequestBytes = 2 << 20
+		c.Pool.LargeRequestBytes = defaults().Pool.LargeRequestBytes
 	}
 	if c.Pool.CreditFloor < 0 {
 		c.Pool.CreditFloor = 0
@@ -723,7 +723,7 @@ func (c *Config) normalize() error {
 	}
 	// global 在途分档：0/负数视为未设置回落默认 2（WAF 403 修复 P1-1）。
 	if c.Pool.MaxInFlightGlobal <= 0 {
-		c.Pool.MaxInFlightGlobal = 2
+		c.Pool.MaxInFlightGlobal = defaults().Pool.MaxInFlightGlobal
 	}
 	if c.Pool.IdleWeightPerHour <= 0 {
 		c.Pool.IdleWeightPerHour = 0.5
@@ -794,7 +794,7 @@ func (c *Config) normalize() error {
 		c.Upstream.HeaderTimeoutSeconds = c.Upstream.TimeoutSeconds
 	}
 	if c.Upstream.IdleTimeoutSeconds <= 0 {
-		c.Upstream.IdleTimeoutSeconds = 300
+		c.Upstream.IdleTimeoutSeconds = defaults().Upstream.IdleTimeoutSeconds
 	}
 	if !strings.HasPrefix(c.Listen, ":") && !strings.Contains(c.Listen, ":") {
 		c.Listen = ":" + c.Listen

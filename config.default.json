@@ -73,7 +73,7 @@
   "upstream": {
     "timeout_seconds": 120,
     "header_timeout_seconds": 0,
-    "idle_timeout_seconds": 0,
+    "idle_timeout_seconds": 300,
     "user_agent": "",
     "client_version": "5.5.4",
     "cli_version": "2.137.1",
@@ -104,9 +104,9 @@
     "write_concurrency": 8
   },
   "pool": {
-    "large_request_bytes": 0,
+    "large_request_bytes": 2097152,
     "large_request_cooldown": "0s",
-    "large_request_budget": 0,
+    "large_request_budget": 6,
     "large_request_budget_window": "120s",
     "credit_floor": 0,
     "max_in_flight": 3,
