@@ -9,11 +9,18 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"workbuddy2api/internal/config"
 	"workbuddy2api/internal/configdata"
 	"workbuddy2api/internal/prompt"
+)
+
+// defaultCfg/defaultCfgOnce 缓存"纯默认配置"，供 normalize 的兜底取值使用。
+var (
+	defaultCfg     *Config
+	defaultCfgOnce sync.Once
 )
 
 // Config 顶层配置。
@@ -213,7 +220,7 @@ type Config struct {
 	// SpreadWindowDur 定时任务账号随机分布窗口（schedule.spread_window 解析结果）。
 	// 0 = 关闭（回到"到点立刻 + 固定间隔"）。默认 15m。
 	SpreadWindowDur time.Duration `json:"-"`
-	// SourcePath 本次配置的实际来源（config.json / 回退的 config.example.json / 内嵌默认）。
+	// SourcePath 本次配置的实际来源（config.json / 内置默认 builtin:config.default.json）。
 	// 只用于启动日志与排障，不参与 JSON 序列化。
 	SourcePath string `json:"-"`
 	// IntraJitterMinD/MaxD 同账号内连续请求的随机间隔区间
@@ -222,30 +229,35 @@ type Config struct {
 	IntraJitterMaxD time.Duration `json:"-"`
 }
 
-// Default 默认配置 —— **完全来自内嵌的 config.example.json**。
+// Default 默认配置 —— **完全来自内嵌的 config.default.json**（唯一权威来源）。
 //
 // 为什么这样做：默认值以前硬编码在这个函数里（listen、超时、池阈值、排程时刻……几十个），
 // 用户读 README 也拼不出"完整默认配置"，改默认值要翻 Go 代码。现在唯一的权威来源是
-// internal/configdata/config.example.json（随二进制内嵌）：
-//   - 想看/想改默认值 → 改那份 JSON（根目录的 config.example.json 是它的对外副本，
-//     用 `go run ./cmd/example-config -write` 同步，测试会强制两者一致）；
+// internal/configdata/config.default.json（随二进制内嵌）：
+//   - 想看/想改默认值 → 改那份 JSON（根目录的 config.default.json 是它的对外副本，
+//     用 `go run ./cmd/config-default -write` 同步，测试会强制两者一致）；
 //   - config.json 缺失时，Load 也回退到这份示例（见 internal/configdata.Resolve）。
 //
 // 需要指针语义的少数字段（如 ReasoningAsContent）由 JSON 里的 true/false 直接表达。
 func Default() *Config {
 	c := &Config{}
-	if err := json.Unmarshal(configdata.Example(), c); err != nil {
+	if err := json.Unmarshal(configdata.Bytes(), c); err != nil {
 		// 内嵌文件在编译期就固定了：解析失败只能是构建问题，带病启动更难查。
-		panic("内置 config.example.json 无法解析: " + err.Error())
+		panic("内置 config.default.json 无法解析: " + err.Error())
 	}
 	return c
 }
 
-// Load 读取配置：文件名默认 config.json；**文件不存在时回退到示例配置**
-// （同目录 config.example.json → 内嵌副本，都会打 WARNING），再用 WB2A_* env 覆盖。
+// Load 读取配置，语义与 Spring 的属性文件一致：
 //
-// 「默认值来自示例配置」的落地方式：先用内嵌示例反序列化出默认配置，再把用户文件覆盖上去。
-// 因此用户文件里没写的键，值就是 config.example.json 里的值——读那份文件即可知道全部默认。
+//	配置 = 内置默认配置(config.default.json) ← 被 config.json 逐属性覆盖
+//
+// 也就是说：
+//   - config.json **文件缺失**（或该路径其实是个目录）→ 全部属性取内置默认值，并打 WARNING；
+//   - config.json 存在但**某个属性没写** → 该属性取 config.default.json 里的值；
+//   - 属性**写成 null** 也按"未定义"处理（回退到默认值），而不是清成零值——
+//     JSON 里 `"ttl": null` 的直觉含义就是"没设"；
+//   - 最终再用 WB2A_* 环境变量覆盖（最高优先级）。
 func Load(path string) (*Config, error) {
 	c := Default()
 
@@ -254,11 +266,17 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 	c.SourcePath = source
+
 	// 容忍 UTF-8 BOM：Windows 记事本 / PowerShell 5.1 的 `Set-Content -Encoding utf8`
 	// 默认会写 BOM，而 encoding/json 遇到 \ufeff 会直接报
 	// 「invalid character 'ï' looking for beginning of value」——
 	// 用户看到的是一句和配置文件内容毫不相干的解析错误。
 	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+	// null = 未定义：先剔除所有 null 值，让默认配置的值留下来。
+	raw, err = stripNulls(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", source, err)
+	}
 	if err := json.Unmarshal(raw, c); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", source, err)
 	}
@@ -267,6 +285,56 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// stripNulls 递归剔除 JSON 对象里值为 null 的键，让"显式 null"等同于"未定义"，
+// 从而回退到默认配置的值（Spring 式属性覆盖语义）。
+//
+// 为什么不用 map[string]json.RawMessage 手工合并：那要为每个嵌套段写一遍合并逻辑；
+// 这里先解码成通用结构、删掉 null、再编码回字节，交给随后的 Unmarshal 统一处理，
+// 对以后新增的配置段天然生效。
+func stripNulls(raw []byte) ([]byte, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(dropNulls(v))
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func dropNulls(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, item := range val {
+			if item == nil {
+				continue
+			}
+			out[k] = dropNulls(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			out[i] = dropNulls(item)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// defaults 返回「纯默认配置」（供 normalize 做"显式空值 → 默认值"的兜底）。
+//
+// 兜底值同样取自 config.default.json，不放字面量：这样"默认值只有一处来源"始终成立。
+func defaults() *Config {
+	defaultCfgOnce.Do(func() {
+		defaultCfg = Default()
+	})
+	return defaultCfg
 }
 
 func applyEnv(c *Config) {
@@ -372,7 +440,7 @@ func (c *Config) normalize() error {
 	}
 	// 空值回落默认 2h（Default() 已置值；此兜底覆盖显式 "" 与 Default() 被绕过的场景）。
 	if c.Cooldown.SoftRateMax == "" {
-		c.Cooldown.SoftRateMax = "2h"
+		c.Cooldown.SoftRateMax = defaults().Cooldown.SoftRateMax
 	}
 	if c.SoftRateMaxDur, err = time.ParseDuration(c.Cooldown.SoftRateMax); err != nil {
 		return fmt.Errorf("cooldown.soft_rate_max: %w", err)
@@ -436,13 +504,13 @@ func (c *Config) normalize() error {
 		return fmt.Errorf("pool.degrade_cooldown_max: %w", err)
 	}
 	if c.Pool.LargeRequestCooldown == "" {
-		c.Pool.LargeRequestCooldown = "0s" // 空 = 关闭逐请求轮换（默认）
+		c.Pool.LargeRequestCooldown = defaults().Pool.LargeRequestCooldown
 	}
 	if c.LargeRequestCooldownDur, err = time.ParseDuration(c.Pool.LargeRequestCooldown); err != nil {
 		return fmt.Errorf("pool.large_request_cooldown: %w", err)
 	}
 	if c.Pool.LargeRequestBudgetWindow == "" {
-		c.Pool.LargeRequestBudgetWindow = "120s"
+		c.Pool.LargeRequestBudgetWindow = defaults().Pool.LargeRequestBudgetWindow
 	}
 	if c.LargeRequestBudgetWindowDur, err = time.ParseDuration(c.Pool.LargeRequestBudgetWindow); err != nil {
 		return fmt.Errorf("pool.large_request_budget_window: %w", err)
@@ -470,10 +538,10 @@ func (c *Config) normalize() error {
 		c.Pool.DegradeThreshold = 5
 	}
 	if c.Pool.DegradeCooldown == "" {
-		c.Pool.DegradeCooldown = "10m"
+		c.Pool.DegradeCooldown = defaults().Pool.DegradeCooldown
 	}
 	if c.Pool.DegradeCooldownMax == "" {
-		c.Pool.DegradeCooldownMax = "2h"
+		c.Pool.DegradeCooldownMax = defaults().Pool.DegradeCooldownMax
 	}
 	// global 在途分档：0/负数视为未设置回落默认 2（WAF 403 修复 P1-1）。
 	if c.Pool.MaxInFlightGlobal <= 0 {
@@ -488,7 +556,7 @@ func (c *Config) normalize() error {
 	// 定时任务账号随机分布窗口（schedule.spread_window）：
 	// 空值回落默认 15m；"0" 是合法值（关闭，回到固定间隔）；负值钳 0。
 	if c.Schedule.SpreadWindow == "" {
-		c.Schedule.SpreadWindow = "15m"
+		c.Schedule.SpreadWindow = defaults().Schedule.SpreadWindow
 	}
 	if c.SpreadWindowDur, err = time.ParseDuration(c.Schedule.SpreadWindow); err != nil {
 		return fmt.Errorf("schedule.spread_window: %w", err)
@@ -499,10 +567,10 @@ func (c *Config) normalize() error {
 	// 同账号内连续请求的随机间隔（schedule.intra_request_jitter_min/max）：
 	// 空值回落默认 1s / 3s；"0" 是合法值（关闭）；min>max 视为配置错误（早报错早发现）。
 	if c.Schedule.IntraRequestJitterMin == "" {
-		c.Schedule.IntraRequestJitterMin = "1s"
+		c.Schedule.IntraRequestJitterMin = defaults().Schedule.IntraRequestJitterMin
 	}
 	if c.Schedule.IntraRequestJitterMax == "" {
-		c.Schedule.IntraRequestJitterMax = "3s"
+		c.Schedule.IntraRequestJitterMax = defaults().Schedule.IntraRequestJitterMax
 	}
 	if c.IntraJitterMinD, err = time.ParseDuration(c.Schedule.IntraRequestJitterMin); err != nil {
 		return fmt.Errorf("schedule.intra_request_jitter_min: %w", err)
@@ -519,7 +587,7 @@ func (c *Config) normalize() error {
 	}
 	// 快过期窗口：空值回落默认 168h（Default 已置；此兜底覆盖显式 ""）；显式 "0"/负值 = 禁用分桶。
 	if c.Pool.ExpiringSoon == "" {
-		c.Pool.ExpiringSoon = "168h"
+		c.Pool.ExpiringSoon = defaults().Pool.ExpiringSoon
 	}
 	if c.ExpiringSoonDur, err = time.ParseDuration(c.Pool.ExpiringSoon); err != nil {
 		return fmt.Errorf("pool.expiring_soon: %w", err)
@@ -531,7 +599,7 @@ func (c *Config) normalize() error {
 	// 显式 ""）；"0" 是合法值（关停，完全回到现状行为），不回落；负值钳 0 同关停
 	// （"−5m" 无合理语义）。
 	if c.Pool.CostExploreInterval == "" {
-		c.Pool.CostExploreInterval = "30m"
+		c.Pool.CostExploreInterval = defaults().Pool.CostExploreInterval
 	}
 	if c.CostExploreIntervalDur, err = time.ParseDuration(c.Pool.CostExploreInterval); err != nil {
 		return fmt.Errorf("pool.cost_explore_interval: %w", err)

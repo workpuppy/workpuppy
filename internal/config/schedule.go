@@ -91,11 +91,11 @@ type Schedule struct {
 	migrated []string
 }
 
-// DefaultSchedule 返回排程段的默认值 —— **直接取自内嵌的 config.example.json**。
+// DefaultSchedule 返回排程段的默认值 —— **直接取自内嵌的 config.default.json**。
 //
-// 默认值只有一处权威来源（internal/configdata/config.example.json），这里不再写死任何
-// 数字：想改默认时刻/开关/上报条数，改那份 JSON 即可（根目录的 config.example.json 是
-// 它的对外副本，用 `go run ./cmd/example-config -write` 同步）。
+// 默认值只有一处权威来源（internal/configdata/config.default.json），这里不再写死任何
+// 数字：想改默认时刻/开关/上报条数，改那份 JSON 即可（根目录的 config.default.json 是
+// 它的对外副本，用 `go run ./cmd/config-default -write` 同步）。
 //
 // 开关「缺省 true」也来自示例里的 true：调用方先取 DefaultSchedule 再用 json.Unmarshal
 // 覆盖，键缺席（或为 null）时字段原样保留，只有显式 false 才关。
@@ -103,9 +103,9 @@ func DefaultSchedule() Schedule {
 	var wrapper struct {
 		Schedule Schedule `json:"schedule"`
 	}
-	if err := json.Unmarshal(configdata.Example(), &wrapper); err != nil {
+	if err := json.Unmarshal(configdata.Bytes(), &wrapper); err != nil {
 		// 内嵌文件在编译期就确定了：解析失败只能是构建问题，带病运行更难查。
-		panic("内置 config.example.json 的 schedule 段无法解析: " + err.Error())
+		panic("内置 config.default.json 的 schedule 段无法解析: " + err.Error())
 	}
 	return wrapper.Schedule
 }
@@ -146,7 +146,7 @@ func FormatClock(min int) string {
 // schedulePairs 六类任务的字段对应关系（新 *_time / 旧 *_hours / 解析结果 *_At / 默认值）。
 //
 // 默认值只用于「显式写了 null 或空数组」这种边角情况；**主路径的默认值来自
-// config.example.json**（内嵌，见 DefaultSchedule/Default）。
+// config.default.json**（内嵌，见 DefaultSchedule/Default）。
 func (s *Schedule) schedulePairs() []struct {
 	field   string
 	times   *[]string
@@ -172,7 +172,7 @@ func (s *Schedule) schedulePairs() []struct {
 
 // UnmarshalJSON 在**解析配置文件的当下**处理旧的小时写法。
 //
-// 为什么必须在反序列化时做、不能在 Normalize 里做：默认配置本身（内嵌 config.example.json）
+// 为什么必须在反序列化时做、不能在 Normalize 里做：默认配置本身（内嵌 config.default.json）
 // 已经把 *_time 填好了，等到 Normalize 时根本无法区分「用户写了 *_time」与「这是默认值」。
 // 只有在这里（只看用户文件里真正出现的键）才能准确判断「用户只写了旧键」。
 //
@@ -182,7 +182,7 @@ func (s *Schedule) schedulePairs() []struct {
 //   - 旧键越界 → 直接报错（带新写法的提示），不让它静默生效。
 func (s *Schedule) UnmarshalJSON(b []byte) error {
 	// 注意：反序列化到**已存在的值**上（而不是先清零）——上一层的默认配置（内嵌
-	// config.example.json）已经填好了各字段，用户文件里没写的键必须保持默认值，
+	// config.default.json）已经填好了各字段，用户文件里没写的键必须保持默认值，
 	// 否则「键缺席 = 回落默认」的语义会被本方法破坏。
 	type alias Schedule // 避免递归调用本方法
 	if err := json.Unmarshal(b, (*alias)(s)); err != nil {

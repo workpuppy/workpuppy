@@ -62,8 +62,8 @@ COPY --from=build /out/wbctl /app/wbctl
 COPY login.sh signin.sh credit.sh trial.sh /app/
 RUN sed -i 's/\r$//' /app/*.sh && chmod 755 /app/*.sh
 # 镜像不带真实配置：落 example 作为默认（生产由挂载卷 /app/config.json 覆盖）
-COPY config.example.json /app/config.json
-COPY config.example.json /app/config.example.json
+COPY config.default.json /app/config.json
+COPY config.default.json /app/config.default.json
 USER app
 EXPOSE 7863
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \

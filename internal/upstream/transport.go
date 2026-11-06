@@ -48,7 +48,7 @@ const (
 	// 注意：本常量只是 newTransport 的构造默认，main.go 会按 config
 	// upstream.header_timeout_seconds 无条件覆盖。因此生产生效值 = config
 	// 解析值（未配置时 normalize 回落 timeout_seconds，默认 120），本 60s 仅作
-	// 「Config 未接线/测试裸用」时的安全网——与 config.example.json 的取值
+	// 「Config 未接线/测试裸用」时的安全网——与 config.default.json 的取值
 	// 对齐避免三处口径漂移（transport 60 / config 回落 120 / example 60）。
 	responseHeaderTimeout = 60 * time.Second
 )

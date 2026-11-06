@@ -81,9 +81,9 @@
   },
   "pool": {
     "large_request_bytes": 0,
-    "large_request_cooldown": "",
+    "large_request_cooldown": "0s",
     "large_request_budget": 0,
-    "large_request_budget_window": "",
+    "large_request_budget_window": "120s",
     "credit_floor": 0,
     "max_in_flight": 3,
     "max_in_flight_global": 2,

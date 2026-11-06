@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Default() 完全来自内嵌的 config.example.json：这里钉几处关键默认值，防止
+// Default() 完全来自内嵌的 config.default.json：这里钉几处关键默认值，防止
 // 「示例被改、程序没跟上」或「代码里又被塞回硬编码默认值」。
 func TestDefaultComesFromExampleConfig(t *testing.T) {
 	c := Default()
@@ -57,6 +57,49 @@ func TestNormalizeIsNoOpOnDefaults(t *testing.T) {
 	}
 }
 
+// Spring 式属性覆盖语义：config.json **写了什么就用什么**，没写的键与写成 null 的键
+// 都回退到 config.default.json 的值（不是零值）。
+func TestLoadFallsBackPerProperty(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	os.WriteFile(fp, []byte(`{"listen":":19999","pool":{"max_in_flight":5,"breaker_threshold":null},"session_sticky":{"ttl":null,"enabled":null}}`), 0o600)
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 用户显式写的 → 用户的
+	if c.Listen != ":19999" {
+		t.Errorf("listen=%q want :19999", c.Listen)
+	}
+	if c.Pool.MaxInFlight != 5 {
+		t.Errorf("max_in_flight=%d want 5（用户显式值）", c.Pool.MaxInFlight)
+	}
+	// 写成 null → 按"未定义"处理，取默认值
+	if c.Pool.BreakerThreshold != 3 {
+		t.Errorf("breaker_threshold=%d want 3（null 应回退默认）", c.Pool.BreakerThreshold)
+	}
+	if c.SessionSticky.TTL != "30m" || !c.SessionSticky.Enabled {
+		t.Errorf("session_sticky=%+v want 默认 30m/true（null 应回退默认）", c.SessionSticky)
+	}
+	// 完全没写的键 → 默认值
+	if c.Pool.ExpiringSoon != "168h" || c.AuthDir != "./auths" {
+		t.Errorf("未写的键应取默认值：expiring_soon=%q auth_dir=%q", c.Pool.ExpiringSoon, c.AuthDir)
+	}
+	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
+		t.Errorf("未写的排程应取默认值：%s", got)
+	}
+	// 显式写 0 仍然是 0（"0 = 关闭/不限"这类语义不能被默认值覆盖）
+	dir2 := t.TempDir()
+	fp2 := filepath.Join(dir2, "c.json")
+	os.WriteFile(fp2, []byte(`{"pool":{"max_in_flight":0}}`), 0o600)
+	c2, err := Load(fp2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.Pool.MaxInFlight != 0 {
+		t.Errorf("显式 0 应保留：max_in_flight=%d", c2.Pool.MaxInFlight)
+	}
+}
 func TestDefault(t *testing.T) {
 	c := Default()
 	if c.Listen != ":7863" {
@@ -776,12 +819,12 @@ func TestUpstreamVersionConfig(t *testing.T) {
 	if c.Upstream.ClientVersion != "6.0.0" || c.Upstream.CliVersion != "3.0.0" {
 		t.Errorf("client_version=%q cli_version=%q want 6.0.0/3.0.0", c.Upstream.ClientVersion, c.Upstream.CliVersion)
 	}
-	// 缺省值来自内嵌的 config.example.json（默认值不再是源码里的空串）。
+	// 缺省值来自内嵌的 config.default.json（默认值不再是源码里的空串）。
 	if c2, err := Load(""); err != nil || c2.Upstream.ClientVersion == "" || c2.Upstream.CliVersion == "" {
 		t.Errorf("default versions=%q/%q 应取自示例配置 (err=%v)",
 			c2.Upstream.ClientVersion, c2.Upstream.CliVersion, err)
 	} else if c2.Upstream.ClientVersion != "5.5.4" || c2.Upstream.CliVersion != "2.137.1" {
-		t.Errorf("示例配置的默认版本=%q/%q，若刚改过 config.example.json 请同步本断言",
+		t.Errorf("示例配置的默认版本=%q/%q，若刚改过 config.default.json 请同步本断言",
 			c2.Upstream.ClientVersion, c2.Upstream.CliVersion)
 	}
 	// env 覆盖。
