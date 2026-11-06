@@ -195,8 +195,18 @@ jobs:
 
           # 管理后台：/ 必须是页面（同源由本进程托管，镜像里没有 nginx），
           # /assets 里的 Bootstrap 也必须能取到 —— 二者缺一，后台就是白屏。
-          if ! curl -fsS http://127.0.0.1:17863/ | grep -q 'WorkBuddy2API'; then
-            echo "::error::GET / 未返回管理后台页面"
+          #
+          # 这里先打印状态码 + 首字节，再断言内容：失败时能一眼看出是"没起来/回错码"
+          # 还是"回了页面但内容不对"，不用再为定位问题重跑一次流水线。
+          page_head="$(curl -sS --retry 5 --retry-delay 1 --retry-connrefused -D - \
+            http://127.0.0.1:17863/ -o /tmp/wb-index.html 2>&1 | head -n 12 || true)"
+          echo "GET / 响应头："; echo "$page_head"
+          echo "GET / 正文：$(wc -c < /tmp/wb-index.html 2>/dev/null || echo 0) 字节"
+          if ! grep -q 'WorkBuddy2API' /tmp/wb-index.html; then
+            # 关键诊断同时打到 annotation（日志只有仓库管理员能看，annotation 是公开的）。
+            snippet="$(tr -d '\r\n' < /tmp/wb-index.html 2>/dev/null | head -c 200 || true)"
+            echo "::error::GET / 未返回管理后台页面（status=$(echo "$page_head" | head -n1) bytes=$(wc -c < /tmp/wb-index.html 2>/dev/null || echo 0) body=$snippet）"
+            docker logs wb-smoke || true
             docker rm -f wb-smoke || true
             exit 1
           fi
