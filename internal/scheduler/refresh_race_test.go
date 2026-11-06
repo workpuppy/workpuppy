@@ -2,7 +2,7 @@ package scheduler
 
 // refresh_race_test.go keepalive 前置守卫的锁外直读回归（#125 同族残留）。
 //
-// 生产并发面：Scheduler.RunKeepaliveNow 由定时排程在 keepalive_hours 窗口触发，
+// 生产并发面：Scheduler.RunKeepaliveNow 由定时排程在 keepalive_time 窗口触发，
 // 对**每个**非禁用账号调 upstream.RefreshToken——后者在 a.mu 内改写
 // AccessToken/RefreshToken/Domain/ExpiresAt（client.go「第 2 段（锁内）：校验快照
 // 一致后写回」）。而 cmd/login 的登录流程与同进程内其他刷新路径可在同一个

@@ -57,12 +57,12 @@ func TestWaitForSlotContextCancel(t *testing.T) {
 // 醒来时补上」——修前 Run 从 time.Now() 重算，09:00 会被直接跳过（只能等第二天）。
 func TestDueSlotsCatchesSlotsCrossedBySleep(t *testing.T) {
 	s := New(Config{
-		CheckinHours:   []int{9},
-		TravelHours:    []int{9}, // 与签到同刻：验证同刻合并
-		ActivityHours:  []int{10},
-		KeepaliveHours: []int{21},
-		SchoolHours:    []int{12},
-		CatHours:       []int{1},
+		CheckinAt:   []int{540},
+		TravelAt:    []int{540}, // 与签到同刻：验证同刻合并
+		ActivityAt:  []int{600},
+		KeepaliveAt: []int{1260},
+		SchoolAt:    []int{720},
+		CatAt:       []int{60},
 	})
 	cursor := time.Date(2026, 9, 27, 20, 0, 0, 0, time.Local)
 	now := time.Date(2026, 9, 28, 9, 5, 0, 0, time.Local)
@@ -91,7 +91,7 @@ func TestDueSlotsCatchesSlotsCrossedBySleep(t *testing.T) {
 func TestDueSlotsSkipsDisabledAndDoesNotRepeatCursor(t *testing.T) {
 	// 零值 Config 里其余五类是「启用」的（见 Config 的说明），所以这里只断言
 	// 「签到这一类」（被显式禁用）不出现在补跑列表里。
-	s := New(Config{CheckinHours: []int{9}, CheckinDisabled: true})
+	s := New(Config{CheckinAt: []int{540}, CheckinDisabled: true})
 	cursor := time.Date(2026, 9, 27, 20, 0, 0, 0, time.Local)
 	now := time.Date(2026, 9, 28, 9, 5, 0, 0, time.Local)
 	for _, d := range s.dueSlots(cursor, now) {
@@ -100,7 +100,7 @@ func TestDueSlotsSkipsDisabledAndDoesNotRepeatCursor(t *testing.T) {
 		}
 	}
 	// cursor == now：没有任何「已过」的槽位（刚派发完的那个不能重复派发）
-	s2 := New(Config{CheckinHours: []int{9}})
+	s2 := New(Config{CheckinAt: []int{540}})
 	at := time.Date(2026, 9, 28, 9, 0, 0, 0, time.Local)
 	if got := s2.dueSlots(at, at); len(got) != 0 {
 		t.Fatalf("刚派发过的槽位被重复派发：%v", got)
@@ -129,8 +129,8 @@ func TestRunCatchesUpAfterSleep(t *testing.T) {
 	up := &upstream.Client{HTTP: srv.Client(), ChatBaseCN: srv.URL, BillingBaseCN: srv.URL}
 	s := New(Config{
 		Pool: p, Upstream: up,
-		CheckinHours:   []int{9},
-		KeepaliveHours: []int{21},
+		CheckinAt:   []int{540},
+		KeepaliveAt: []int{1260},
 		TravelDisabled: true, ActivityDisabled: true, SchoolDisabled: true, CatDisabled: true,
 	})
 
@@ -176,7 +176,7 @@ func TestRunDoesNotCatchUpBeyondWindow(t *testing.T) {
 	up := &upstream.Client{HTTP: srv.Client(), ChatBaseCN: srv.URL, BillingBaseCN: srv.URL}
 	s := New(Config{
 		Pool: p, Upstream: up,
-		CheckinHours: []int{9}, TravelDisabled: true, ActivityDisabled: true,
+		CheckinAt: []int{540}, TravelDisabled: true, ActivityDisabled: true,
 		KeepaliveDisabled: true, SchoolDisabled: true, CatDisabled: true,
 	})
 	ctx, cancel := context.WithCancel(context.Background())

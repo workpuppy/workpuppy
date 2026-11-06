@@ -101,10 +101,10 @@ func main() {
 		Pool:     p,
 		Upstream: newUpstream(&c),
 
-		CheckinHours:        c.Schedule.CheckinHours,
-		TravelHours:         c.Schedule.TravelHours,
-		ActivityHours:       c.Schedule.ActivityHours,
-		KeepaliveHours:      c.Schedule.KeepaliveHours,
+		CheckinAt:           c.Schedule.CheckinAt,
+		TravelAt:            c.Schedule.TravelAt,
+		ActivityAt:          c.Schedule.ActivityAt,
+		KeepaliveAt:         c.Schedule.KeepaliveAt,
 		ActivityReportCount: c.Schedule.ActivityReportCount,
 	})
 	sch.RunActivityNow()

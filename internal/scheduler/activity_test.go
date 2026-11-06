@@ -488,10 +488,10 @@ func TestRunCheckinDoesNotTriggerTravel(t *testing.T) {
 // TestNextWakeTravelIndependent 旅行有独立时点，与签到互不影响。
 func TestNextWakeTravelIndependent(t *testing.T) {
 	s := New(Config{
-		CheckinHours:   []int{21},
-		TravelHours:    []int{9},
-		ActivityHours:  []int{10},
-		KeepaliveHours: []int{22},
+		CheckinAt:   []int{1260},
+		TravelAt:    []int{540},
+		ActivityAt:  []int{600},
+		KeepaliveAt: []int{1320},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 11, 8, 0, 0, 0, time.Local))
 	if want := time.Date(2026, 9, 11, 9, 0, 0, 0, time.Local); !at.Equal(want) {
@@ -505,10 +505,10 @@ func TestNextWakeTravelIndependent(t *testing.T) {
 // TestNextWakeActivityIndependent 活跃上报有独立时点。
 func TestNextWakeActivityIndependent(t *testing.T) {
 	s := New(Config{
-		CheckinHours:   []int{21},
-		TravelHours:    []int{9},
-		ActivityHours:  []int{10},
-		KeepaliveHours: []int{22},
+		CheckinAt:   []int{1260},
+		TravelAt:    []int{540},
+		ActivityAt:  []int{600},
+		KeepaliveAt: []int{1320},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 11, 9, 30, 0, 0, time.Local))
 	if want := time.Date(2026, 9, 11, 10, 0, 0, 0, time.Local); !at.Equal(want) {
@@ -522,10 +522,10 @@ func TestNextWakeActivityIndependent(t *testing.T) {
 // TestNextWakeTravelDisabled 旅行禁用后排程里不再有旅行时点（签到照常）。
 func TestNextWakeTravelDisabled(t *testing.T) {
 	s := New(Config{
-		CheckinHours:   []int{9, 21},
-		TravelHours:    []int{9},
+		CheckinAt:   []int{540, 1260},
+		TravelAt:    []int{540},
 		TravelDisabled: true,
-		KeepaliveHours: []int{22},
+		KeepaliveAt: []int{1320},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 11, 8, 0, 0, 0, time.Local))
 	// 旅行禁用 → 09:00 旅行时点不应出现，最近的是 09:00 签到（同小时但签到未禁用）。
@@ -543,10 +543,10 @@ func TestNextWakeTravelDisabled(t *testing.T) {
 // TestNextWakeActivityDisabled 活跃上报禁用后排程里不再有活跃时点。
 func TestNextWakeActivityDisabled(t *testing.T) {
 	s := New(Config{
-		CheckinHours:     []int{9, 21},
-		ActivityHours:    []int{10},
+		CheckinAt:     []int{540, 1260},
+		ActivityAt:    []int{600},
 		ActivityDisabled: true,
-		KeepaliveHours:   []int{22},
+		KeepaliveAt:   []int{1320},
 		SchoolDisabled:   true,
 		CatDisabled:      true,
 	})
@@ -562,11 +562,11 @@ func TestNextWakeActivityDisabled(t *testing.T) {
 // TestCheckinDisabledTravelStillRuns 签到禁用时旅行/活跃照跑（验收标准 2）。
 func TestCheckinDisabledTravelStillRuns(t *testing.T) {
 	s := New(Config{
-		CheckinHours:    []int{9, 21},
+		CheckinAt:    []int{540, 1260},
 		CheckinDisabled: true,
-		TravelHours:     []int{9},
-		ActivityHours:   []int{10},
-		KeepaliveHours:  []int{22},
+		TravelAt:     []int{540},
+		ActivityAt:   []int{600},
+		KeepaliveAt:  []int{1320},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 11, 8, 0, 0, 0, time.Local))
 	if want := time.Date(2026, 9, 11, 9, 0, 0, 0, time.Local); !at.Equal(want) {
@@ -589,10 +589,10 @@ func TestAllFourDisabledNoSpin(t *testing.T) {
 		KeepaliveDisabled: true,
 		SchoolDisabled:    true,
 		CatDisabled:       true,
-		CheckinHours:      []int{9, 21},
-		TravelHours:       []int{9},
-		ActivityHours:     []int{10},
-		KeepaliveHours:    []int{22},
+		CheckinAt:      []int{540, 1260},
+		TravelAt:       []int{540},
+		ActivityAt:     []int{600},
+		KeepaliveAt:    []int{1320},
 	})
 	at, kinds := s.nextWake(time.Now())
 	if !at.IsZero() || len(kinds) != 0 {
@@ -603,10 +603,10 @@ func TestAllFourDisabledNoSpin(t *testing.T) {
 // TestNextWakeSameHourTravelAndCheckin 旅行与签到配到同一小时时两类任务都要执行。
 func TestNextWakeSameHourTravelAndCheckin(t *testing.T) {
 	s := New(Config{
-		CheckinHours:   []int{9, 21},
-		TravelHours:    []int{9},
-		ActivityHours:  []int{10},
-		KeepaliveHours: []int{22},
+		CheckinAt:   []int{540, 1260},
+		TravelAt:    []int{540},
+		ActivityAt:  []int{600},
+		KeepaliveAt: []int{1320},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 11, 8, 0, 0, 0, time.Local))
 	if want := time.Date(2026, 9, 11, 9, 0, 0, 0, time.Local); !at.Equal(want) {
@@ -627,12 +627,12 @@ func TestRunDispatchesActivityAndTravel(t *testing.T) {
 	s := New(Config{
 		Pool:           p,
 		Upstream:       up,
-		CheckinHours:   []int{},
-		TravelHours:    []int{},
-		ActivityHours:  []int{},
-		KeepaliveHours: []int{},
+		CheckinAt:   []int{},
+		TravelAt:    []int{},
+		ActivityAt:  []int{},
+		KeepaliveAt: []int{},
 	})
-	// 六类全空 hours → nextWake 回落默认 → 会构造 timer，ctx 取消即返回。
+	// 六类全空时点 → nextWake 回落默认 → 会构造 timer，ctx 取消即返回。
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { s.Run(ctx); close(done) }()

@@ -193,12 +193,12 @@ func main() {
 		RandomDelaySeed:        scheduleSeed,
 		Pool:                   p,
 		Upstream:               up,
-		CheckinHours:           cfg.Schedule.CheckinHours,
-		TravelHours:            cfg.Schedule.TravelHours,
-		ActivityHours:          cfg.Schedule.ActivityHours,
-		KeepaliveHours:         cfg.Schedule.KeepaliveHours,
-		SchoolHours:            cfg.Schedule.SchoolHours,
-		CatHours:               cfg.Schedule.CatHours,
+		CheckinAt:              cfg.Schedule.CheckinAt,
+		TravelAt:               cfg.Schedule.TravelAt,
+		ActivityAt:             cfg.Schedule.ActivityAt,
+		KeepaliveAt:            cfg.Schedule.KeepaliveAt,
+		SchoolAt:               cfg.Schedule.SchoolAt,
+		CatAt:                  cfg.Schedule.CatAt,
 		ActivityReportCount:    cfg.Schedule.ActivityReportCount,
 		ExpiringSoonWindow:     cfg.ExpiringSoonDur, // 快过期积分优先消耗（issue:积分过期）
 		SpreadWindow:           cfg.SpreadWindowDur, // 定时任务账号随机分布窗口（schedule.spread_window）
@@ -215,34 +215,34 @@ func main() {
 	case !cfg.Schedule.CheckinEnabled:
 		log.Printf("签到已禁用（schedule.checkin_enabled=false）")
 	default:
-		log.Printf("签到已启用：%v 点（签到 + 余额查询解冻）", cfg.Schedule.CheckinHours)
+		log.Printf("签到已启用：%v（签到 + 余额查询解冻）", scheduleTimes(cfg.Schedule.CheckinTime))
 	}
 	switch {
 	case !cfg.Schedule.TravelEnabled:
 		log.Printf("猫猫旅行已禁用（schedule.travel_enabled=false）")
 	default:
-		log.Printf("猫猫旅行已启用：%v 点（独立排程：领养 / 派出 / 领奖）", cfg.Schedule.TravelHours)
+		log.Printf("猫猫旅行已启用：%v（独立排程：领养 / 派出 / 领奖）", scheduleTimes(cfg.Schedule.TravelTime))
 	}
 	switch {
 	case !cfg.Schedule.ActivityEnabled:
 		log.Printf("活跃上报已禁用（schedule.activity_enabled=false）")
 	default:
-		log.Printf("活跃上报已启用：%v 点（每号 %d 条，点亮连登 + 补满领猫对话门槛）", cfg.Schedule.ActivityHours, cfg.Schedule.ActivityReportCount)
+		log.Printf("活跃上报已启用：%v（每号 %d 条，点亮连登 + 补满领猫对话门槛）", scheduleTimes(cfg.Schedule.ActivityTime), cfg.Schedule.ActivityReportCount)
 	}
 	if !cfg.Schedule.KeepaliveEnabled {
 		log.Printf("token 保活已禁用（schedule.keepalive_enabled=false）")
 	} else {
-		log.Printf("token 保活已启用：%v 点", cfg.Schedule.KeepaliveHours)
+		log.Printf("token 保活已启用：%v", scheduleTimes(cfg.Schedule.KeepaliveTime))
 	}
 	if !cfg.Schedule.SchoolEnabled {
 		log.Printf("开学季任务已禁用（schedule.school_enabled=false）")
 	} else {
-		log.Printf("开学季任务已启用：%v 点（school_bin ALL --run --yes）", cfg.Schedule.SchoolHours)
+		log.Printf("开学季任务已启用：%v（school_bin ALL --run --yes）", scheduleTimes(cfg.Schedule.SchoolTime))
 	}
 	if !cfg.Schedule.CatEnabled {
 		log.Printf("夜猫子任务已禁用（schedule.cat_enabled=false）")
 	} else {
-		log.Printf("夜猫子任务已启用：%v 点（task_runner ALL --yes --only black_cat）", cfg.Schedule.CatHours)
+		log.Printf("夜猫子任务已启用：%v（task_runner ALL --yes --only black_cat）", scheduleTimes(cfg.Schedule.CatTime))
 	}
 	// 账号随机分布窗口：让"到点后整池账号同一秒打上游"不再发生（见 internal/scheduler/spread.go）。
 	if cfg.SpreadWindowDur > 0 {
@@ -338,6 +338,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen %s: %v", cfg.Listen, err)
 	}
+	logScheduleMigration(&cfg.Schedule)
 	log.Printf("workbuddy2api listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
 	if cfg.Admin.Enabled {
 		printAdminBanner(adminStore, ln.Addr().String())

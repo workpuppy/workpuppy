@@ -11,25 +11,25 @@
     "spread_window": "15m",
     "intra_request_jitter_min": "1s",
     "intra_request_jitter_max": "3s",
-    "checkin_hours": [
-      9,
-      21
+    "checkin_time": [
+      "09:00",
+      "21:00"
     ],
-    "travel_hours": [
-      9,
-      21
+    "travel_time": [
+      "09:00",
+      "21:00"
     ],
-    "activity_hours": [
-      10
+    "activity_time": [
+      "10:00"
     ],
-    "keepalive_hours": [
-      22
+    "keepalive_time": [
+      "22:00"
     ],
-    "school_hours": [
-      12
+    "school_time": [
+      "12:00"
     ],
-    "cat_hours": [
-      1
+    "cat_time": [
+      "01:00"
     ],
     "checkin_enabled": true,
     "travel_enabled": true,

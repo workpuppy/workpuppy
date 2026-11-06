@@ -1,4 +1,4 @@
-// travel.go 猫猫旅行巡检状态机：随旅行时点（travel_hours，默认 09 点）对池内每个可用账号单趟推进一次。
+// travel.go 猫猫旅行巡检状态机：随旅行时点（travel_time，默认 09 点）对池内每个可用账号单趟推进一次。
 // 无猫 → 同意协议 + 领养；有猫 → 按 travel/status 分派 派出 / 领奖 / 跳过。
 package scheduler
 

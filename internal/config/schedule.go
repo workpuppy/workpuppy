@@ -6,7 +6,12 @@
 // 两个命令共用同一份定义，消除漂移源头。
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+)
 
 // Schedule 排程配置段（对应 config.json 的 "schedule" 对象）。
 //
@@ -20,9 +25,9 @@ type Schedule struct {
 	// hour. Zero preserves the exact-hour schedule; the supported maximum is 60.
 	RandomDelayMinutes int `json:"random_delay_minutes"`
 	// SpreadWindow 账号之间的随机分布窗口（时长字符串，如 "15m"）：
-	// 定时任务到点后，每个账号的执行时刻 = 整点 + uniform(0, SpreadWindow)，
+	// 定时任务到点后，每个账号的执行时刻 = 时点 + uniform(0, SpreadWindow)，
 	// 避免整池账号在同一秒打上游。空 = 默认 15m；"0" = 关闭（回到固定间隔顺序执行）。
-	// 与上面的 RandomDelayMinutes 分工：那个抖的是**整批起点**在小时内的小偏移，
+	// 与上面的 RandomDelayMinutes 分工：那个抖的是**整批起点**的小偏移，
 	// 这个摊的是**账号之间**的分布。
 	SpreadWindow string `json:"spread_window"`
 	// IntraRequestJitterMin/Max 同一账号内连续请求之间的随机间隔区间（时长字符串，
@@ -31,21 +36,44 @@ type Schedule struct {
 	// 两者都 "0" = 关闭；min>max 在加载期报错。
 	IntraRequestJitterMin string `json:"intra_request_jitter_min"`
 	IntraRequestJitterMax string `json:"intra_request_jitter_max"`
-	CheckinHours          []int  `json:"checkin_hours"`   // [9,21]
-	TravelHours           []int  `json:"travel_hours"`    // [9,21]
-	ActivityHours         []int  `json:"activity_hours"`  // [10]
-	KeepaliveHours        []int  `json:"keepalive_hours"` // [22]
-	SchoolHours           []int  `json:"school_hours"`    // [12] 开学季任务（迁移自 school/cat 两条系统 crontab）
-	CatHours              []int  `json:"cat_hours"`       // [1] 夜猫窗口 23-08 CST，01:00 窗口内补 1 次
-	// CheckinEnabled/TravelEnabled/ActivityEnabled/KeepaliveEnabled/SchoolEnabled/CatEnabled
+
+	// ── 六类任务的执行时刻 ────────────────────────────────────────────────
+	// 值形如 "09:30"（24 小时制，精确到分）；一个任务可配多个时刻。
+	// 空数组/null = 未配置 → 回落默认（见 DefaultSchedule）。
+	// 「关闭某类任务」请设对应的 *_enabled=false，不要靠删空数组表意。
+	CheckinTime   []string `json:"checkin_time"`
+	TravelTime    []string `json:"travel_time"`
+	ActivityTime  []string `json:"activity_time"`
+	KeepaliveTime []string `json:"keepalive_time"`
+	SchoolTime    []string `json:"school_time"`
+	CatTime       []string `json:"cat_time"`
+
+	// ── 旧字段：整数小时（checkin_hours: [9, 21]）──────────────────────────
+	// 仅为**兼容存量 config.json** 保留：Normalize 会把它们折算成 "HH:00" 并写进
+	// 上面的 *_time（并打一条迁移提示）。新配置请直接用 *_time。
+	CheckinHours   []int `json:"checkin_hours,omitempty"`
+	TravelHours    []int `json:"travel_hours,omitempty"`
+	ActivityHours  []int `json:"activity_hours,omitempty"`
+	KeepaliveHours []int `json:"keepalive_hours,omitempty"`
+	SchoolHours    []int `json:"school_hours,omitempty"`
+	CatHours       []int `json:"cat_hours,omitempty"`
+
+	// ── 解析结果：自 00:00 起的分钟数（0..1439），升序去重 ──────────────────
+	// 由 Normalize 填充，供 scheduler 直接使用（避免运行期反复解析字符串）。
+	CheckinAt   []int `json:"-"`
+	TravelAt    []int `json:"-"`
+	ActivityAt  []int `json:"-"`
+	KeepaliveAt []int `json:"-"`
+	SchoolAt    []int `json:"-"`
+	CatAt       []int `json:"-"`
+
 	// 显式禁用开关（缺省 true）。
 	//
 	// 为什么用独立 bool 而不是空数组/哨兵值表意"禁用"：
 	//   - 空数组与 null 在老语义里已被"未配置 → 回落默认"占用，改判会静默翻转
 	//     所有老 config 的行为（用户只想删掉一行，结果关掉了签到）；bool 缺省 true
 	//     则对老配置零影响，向后完全兼容。
-	//   - 开关与取值解耦：禁用时仍保留用户显式配的小时，重新启用无需补配。
-	//   - 无需猜测哨兵（[-1] 之类），非法小时一律报错并提示改用本开关。
+	//   - 开关与取值解耦：禁用时仍保留用户显式配的时刻，重新启用无需补配。
 	CheckinEnabled   bool `json:"checkin_enabled"`   // 缺省 true；false = 关签到
 	TravelEnabled    bool `json:"travel_enabled"`    // 缺省 true；false = 完全停猫猫旅行
 	ActivityEnabled  bool `json:"activity_enabled"`  // 缺省 true；false = 停活跃上报
@@ -55,8 +83,9 @@ type Schedule struct {
 	// ActivityReportCount 每号每次活跃上报的条数：领猫前置需 5 次对话，
 	// 默认 5 条把 chat_5 刷满；0/缺省=1 兼容旧行为。
 	ActivityReportCount int `json:"activity_report_count"`
-	// 猫猫旅行已退役 travel_interval_minutes：旅行现为独立排程（travel_hours）。
-	// 旧 config 里的该键因 JSON 未知字段而自然忽略，不报错。
+
+	// migrated 记录本次加载里哪些旧字段被折算（供启动日志提示迁移）。
+	migrated []string
 }
 
 // DefaultSchedule 返回排程段的默认值。
@@ -65,13 +94,10 @@ type Schedule struct {
 // 键缺席（或为 null）时字段原样保留 true，只有显式 false 才关。
 // ActivityReportCount 默认 5：领猫前置需 5 次对话，5 连发刷满 chat_5。
 func DefaultSchedule() Schedule {
+	// 时刻（*_time）**刻意留空**、由 Normalize 统一填默认值：
+	// 这样「旧 config 只写了 *_hours」时，Normalize 仍能识别出「*_time 未配置」并把旧键
+	// 折算过来；若这里预置了默认时刻，迁移分支永远走不到（默认值把空判断填满了）。
 	return Schedule{
-		CheckinHours:        []int{9, 21},
-		TravelHours:         []int{9, 21},
-		ActivityHours:       []int{10},
-		KeepaliveHours:      []int{22},
-		SchoolHours:         []int{12},
-		CatHours:            []int{1},
 		CheckinEnabled:      true,
 		TravelEnabled:       true,
 		ActivityEnabled:     true,
@@ -82,14 +108,43 @@ func DefaultSchedule() Schedule {
 	}
 }
 
-// Normalize 归一化排程段：空数组/null 回落默认小时，ActivityReportCount 归一，校验小时范围。
+// MigratedFields 返回本次加载中被折算成 *_time 的旧字段名（用于启动日志提示）。
+func (s *Schedule) MigratedFields() []string { return s.migrated }
+
+// ParseClock 解析 "HH:MM"（也接受 "H:MM"）为自 00:00 起的分钟数。
+func ParseClock(v string) (int, error) {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return 0, fmt.Errorf("空时刻")
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("%q 不是 HH:MM 形式", v)
+	}
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[0]))
+	m, errM := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errH != nil || errM != nil {
+		return 0, fmt.Errorf("%q 不是 HH:MM 形式", v)
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, fmt.Errorf("%q 超出范围（HH 0-23 / MM 0-59）", v)
+	}
+	return h*60 + m, nil
+}
+
+// FormatClock 把分钟数渲染成 "HH:MM"（日志与报错里用）。
+func FormatClock(min int) string {
+	if min < 0 {
+		min = 0
+	}
+	min %= 24 * 60
+	return fmt.Sprintf("%02d:%02d", min/60, min%60)
+}
+
+// Normalize 归一化排程段：解析时刻、兼容旧的小时字段、补默认值、校验并排序。
 //
-// 空数组与 null 反序列化后覆盖掉 DefaultSchedule 的排程值（键缺席才保留），在此补齐。
-// 空 = 未配置 → 回落默认；「禁用」一律走 *_enabled=false，两者互不混淆。
-//
-// ActivityReportCount：0/负数 → 1 条（兼容旧行为：每号每天 1 条上报点亮连登）。
-// 注意这是「显式配 0 = 旧行为」的兼容语义，与 scheduler.New 的 <=0 → 1 归一一致；
-// 「缺省 = 5」由 DefaultSchedule 在 Unmarshal 前置入，是另一条路径，两者不合并。
+// 「空数组与 null 会覆盖 DefaultSchedule 的值（只有键缺席才保留）」，所以这里要为
+// 空值补默认；「禁用」一律走 *_enabled=false，与空值语义互不混淆。
 func (s *Schedule) Normalize() error {
 	if s.AccountDelayMinSeconds < 0 || s.AccountDelayMaxSeconds > 600 ||
 		s.AccountDelayMaxSeconds < s.AccountDelayMinSeconds {
@@ -98,60 +153,74 @@ func (s *Schedule) Normalize() error {
 	if s.RandomDelayMinutes < 0 || s.RandomDelayMinutes > 60 {
 		return fmt.Errorf("schedule.random_delay_minutes must be between 0 and 60")
 	}
-	if len(s.CheckinHours) == 0 {
-		s.CheckinHours = []int{9, 21}
+
+	s.migrated = nil
+	type pair struct {
+		field   string
+		times   *[]string
+		hours   []int
+		minutes *[]int
+		def     []string
 	}
-	if len(s.TravelHours) == 0 {
-		s.TravelHours = []int{9, 21}
+	pairs := []pair{
+		{"checkin", &s.CheckinTime, s.CheckinHours, &s.CheckinAt, []string{"09:00", "21:00"}},
+		{"travel", &s.TravelTime, s.TravelHours, &s.TravelAt, []string{"09:00", "21:00"}},
+		{"activity", &s.ActivityTime, s.ActivityHours, &s.ActivityAt, []string{"10:00"}},
+		{"keepalive", &s.KeepaliveTime, s.KeepaliveHours, &s.KeepaliveAt, []string{"22:00"}},
+		{"school", &s.SchoolTime, s.SchoolHours, &s.SchoolAt, []string{"12:00"}},
+		{"cat", &s.CatTime, s.CatHours, &s.CatAt, []string{"01:00"}},
 	}
-	if len(s.ActivityHours) == 0 {
-		s.ActivityHours = []int{10}
+	for _, p := range pairs {
+		// 旧字段 → 新字段（"9" → "09:00"）；只在 *_time 缺席时生效，两者并存以新值为准。
+		if len(*p.times) == 0 && len(p.hours) > 0 {
+			converted := make([]string, 0, len(p.hours))
+			for _, h := range p.hours {
+				if h < 0 || h > 23 {
+					return fmt.Errorf("schedule.%s_hours: %d 不是合法小时（0-23）；"+
+						"新写法是 schedule.%s_time: [\"09:30\"]，要关任务请设 schedule.%s_enabled=false",
+						p.field, h, p.field, p.field)
+				}
+				converted = append(converted, FormatClock(h*60))
+			}
+			*p.times = converted
+			s.migrated = append(s.migrated, "schedule."+p.field+"_hours")
+		}
+		if len(*p.times) == 0 {
+			*p.times = p.def
+		}
+		minutes, err := parseClockList("schedule."+p.field+"_time", p.field, *p.times)
+		if err != nil {
+			return err
+		}
+		*p.minutes = minutes
 	}
-	if len(s.KeepaliveHours) == 0 {
-		s.KeepaliveHours = []int{22}
-	}
-	if len(s.SchoolHours) == 0 {
-		s.SchoolHours = []int{12}
-	}
-	if len(s.CatHours) == 0 {
-		s.CatHours = []int{1}
-	}
+
 	// 0/负数 → 1 条（兼容旧行为：每号每天 1 条上报点亮连登）。
 	if s.ActivityReportCount <= 0 {
 		s.ActivityReportCount = 1
 	}
-	return s.validateHours()
-}
-
-// validateHours 校验排程小时落在 0-23。
-//
-// 为什么不用 `[-1]` 之类的哨兵值表意"禁用"：非法小时被静默吞掉时，用户以为关掉了签到，
-// 实际可能被当成另一个整点照常执行；这里直接快速失败，并在错误信息里指向正确的开关
-// （checkin_enabled / keepalive_enabled），避免用户靠猜哨兵值来配。
-func (s *Schedule) validateHours() error {
-	if err := checkHourRange("schedule.checkin_hours", "checkin_enabled", s.CheckinHours); err != nil {
-		return err
-	}
-	if err := checkHourRange("schedule.travel_hours", "travel_enabled", s.TravelHours); err != nil {
-		return err
-	}
-	if err := checkHourRange("schedule.activity_hours", "activity_enabled", s.ActivityHours); err != nil {
-		return err
-	}
-	if err := checkHourRange("schedule.keepalive_hours", "keepalive_enabled", s.KeepaliveHours); err != nil {
-		return err
-	}
-	if err := checkHourRange("schedule.school_hours", "school_enabled", s.SchoolHours); err != nil {
-		return err
-	}
-	return checkHourRange("schedule.cat_hours", "cat_enabled", s.CatHours)
-}
-
-func checkHourRange(field, switchKey string, hours []int) error {
-	for _, h := range hours {
-		if h < 0 || h > 23 {
-			return fmt.Errorf("%s: %d 不是合法小时（0-23）；如要关闭该任务请设 schedule.%s=false", field, h, switchKey)
-		}
-	}
 	return nil
+}
+
+// parseClockList 解析并校验一组时刻：非法格式快速失败、去重、升序。
+func parseClockList(field, name string, times []string) ([]int, error) {
+	out := make([]int, 0, len(times))
+	seen := make(map[int]bool, len(times))
+	for _, raw := range times {
+		m, err := ParseClock(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v；应为 \"HH:MM\"（如 \"09:30\"），"+
+				"要关闭该任务请设 schedule.%s_enabled=false", field, err, name)
+		}
+		if seen[m] {
+			continue
+		}
+		seen[m] = true
+		out = append(out, m)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: 至少要有一个时刻（\"HH:MM\"）", field)
+	}
+	sort.Ints(out)
+	return out, nil
 }

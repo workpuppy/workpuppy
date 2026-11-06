@@ -19,7 +19,7 @@ import (
 
 // Config 调度器依赖。
 //
-// 任务开关用「禁用」命名而非「启用」：零值 Config 即六类任务都启用（hours 回落默认），
+// 任务开关用「禁用」命名而非「启用」：零值 Config 即六类任务都启用（时点回落默认），
 // 与引入开关前的行为逐字一致（老调用方/老测试无需改动）。
 type Config struct {
 	AccountDelayMinSeconds int // scheduled accounts only; zero range keeps existing pacing
@@ -28,12 +28,15 @@ type Config struct {
 	RandomDelaySeed        string // private stable deployment identity; never logged
 	Pool                   *pool.Pool
 	Upstream               *upstream.Client
-	CheckinHours           []int // 默认 [9, 21]
-	TravelHours            []int // 默认 [9,21]：一趟派出 + 一趟领奖闭环
-	ActivityHours          []int // 默认 [10]
-	KeepaliveHours         []int // 默认 [22]
-	SchoolHours            []int // 默认 [12]：开学季任务（迁移自系统 crontab）
-	CatHours               []int // 默认 [1]：夜猫子任务（迁移自系统 crontab）
+	// 六类任务的执行时刻：**自 00:00 起的分钟数**（0..1439，升序）。
+	// 例：09:30 → 570、21:00 → 1260。由 internal/config 解析 "HH:MM" 后填入，
+	// 调度器内部只用分钟数（避免每轮唤醒都解析字符串）。
+	CheckinAt   []int // 默认 [540, 1260]（09:00 / 21:00）
+	TravelAt    []int // 默认 [540, 1260]：一趟派出 + 一趟领奖闭环
+	ActivityAt  []int // 默认 [600]（10:00）
+	KeepaliveAt []int // 默认 [1320]（22:00）
+	SchoolAt    []int // 默认 [720]（12:00）：开学季任务（迁移自系统 crontab）
+	CatAt       []int // 默认 [60]（01:00）：夜猫子任务（迁移自系统 crontab）
 	// ActivityReportCount 每号每次活跃上报的条数：领猫前置需 5 次对话，
 	// 默认 5 条同一 conversationId 内多轮上报把 chat_5 刷满；0/缺省=1 兼容旧行为。
 	ActivityReportCount int
@@ -94,23 +97,23 @@ type Scheduler struct {
 
 // New 构建。
 func New(cfg Config) *Scheduler {
-	if len(cfg.CheckinHours) == 0 {
-		cfg.CheckinHours = []int{9, 21}
+	if len(cfg.CheckinAt) == 0 {
+		cfg.CheckinAt = []int{9 * 60, 21 * 60}
 	}
-	if len(cfg.TravelHours) == 0 {
-		cfg.TravelHours = []int{9, 21}
+	if len(cfg.TravelAt) == 0 {
+		cfg.TravelAt = []int{9 * 60, 21 * 60}
 	}
-	if len(cfg.ActivityHours) == 0 {
-		cfg.ActivityHours = []int{10}
+	if len(cfg.ActivityAt) == 0 {
+		cfg.ActivityAt = []int{10 * 60}
 	}
-	if len(cfg.KeepaliveHours) == 0 {
-		cfg.KeepaliveHours = []int{22}
+	if len(cfg.KeepaliveAt) == 0 {
+		cfg.KeepaliveAt = []int{22 * 60}
 	}
-	if len(cfg.SchoolHours) == 0 {
-		cfg.SchoolHours = []int{12}
+	if len(cfg.SchoolAt) == 0 {
+		cfg.SchoolAt = []int{12 * 60}
 	}
-	if len(cfg.CatHours) == 0 {
-		cfg.CatHours = []int{1}
+	if len(cfg.CatAt) == 0 {
+		cfg.CatAt = []int{1 * 60}
 	}
 	// 0/缺省 = 1 条（兼容旧行为：每号每天 1 条上报点亮连登）。
 	if cfg.ActivityReportCount <= 0 {
@@ -145,11 +148,12 @@ type CheckinOutcome struct {
 // ErrBusy 已有一次签到正在执行（手动入口与定时撞车）。
 var ErrBusy = errors.New("checkin already running")
 
-// nextFire 返回 now 之后最近的一个整点触发时间；hours 为本地小时（0-23）。
-func nextFire(now time.Time, hours []int) time.Time {
+// nextFire 返回 now 之后最近的一个时点；at 为**自 00:00 起的分钟数**（0..1439）。
+// 支持精确到分：at=570 即 09:30。
+func nextFire(now time.Time, at []int) time.Time {
 	var earliest time.Time
-	for _, h := range hours {
-		t := time.Date(now.Year(), now.Month(), now.Day(), h, 0, 0, 0, now.Location())
+	for _, m := range at {
+		t := time.Date(now.Year(), now.Month(), now.Day(), m/60, m%60, 0, 0, now.Location())
 		if !t.After(now) {
 			t = t.Add(24 * time.Hour)
 		}
@@ -171,7 +175,7 @@ type slot struct {
 
 // schedule 一类任务的排程：小时表 + 该类的启用位。
 type schedule struct {
-	hours    []int
+	at       []int // 自 00:00 起的分钟数，升序
 	kind     taskKind
 	disabled bool
 }
@@ -179,12 +183,12 @@ type schedule struct {
 // schedules 六类任务的排程表（顺序即 kinds 的稳定顺序）。
 func (s *Scheduler) schedules() []schedule {
 	return []schedule{
-		{s.cfg.CheckinHours, taskCheckin, s.cfg.CheckinDisabled},
-		{s.cfg.TravelHours, taskTravel, s.cfg.TravelDisabled},
-		{s.cfg.ActivityHours, taskActivity, s.cfg.ActivityDisabled},
-		{s.cfg.KeepaliveHours, taskKeepalive, s.cfg.KeepaliveDisabled},
-		{s.cfg.SchoolHours, taskSchool, s.cfg.SchoolDisabled},
-		{s.cfg.CatHours, taskCat, s.cfg.CatDisabled},
+		{s.cfg.CheckinAt, taskCheckin, s.cfg.CheckinDisabled},
+		{s.cfg.TravelAt, taskTravel, s.cfg.TravelDisabled},
+		{s.cfg.ActivityAt, taskActivity, s.cfg.ActivityDisabled},
+		{s.cfg.KeepaliveAt, taskKeepalive, s.cfg.KeepaliveDisabled},
+		{s.cfg.SchoolAt, taskSchool, s.cfg.SchoolDisabled},
+		{s.cfg.CatAt, taskCat, s.cfg.CatDisabled},
 	}
 }
 
@@ -314,8 +318,8 @@ func (s *Scheduler) dueSlots(cursor, now time.Time) []dueSlot {
 			if sch.disabled {
 				continue
 			}
-			for _, h := range sch.hours {
-				t := s.scheduledSlot(day, h, sch.kind)
+			for _, at := range sch.at {
+				t := s.scheduledSlot(day, at, sch.kind)
 				if !t.After(cursor.Round(0)) || t.After(now) {
 					continue
 				}

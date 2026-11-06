@@ -2,8 +2,8 @@
 //
 // 背景：school（12:00）与 cat（01:00 夜猫窗口）原由系统 crontab 调
 // scripts/school_open_day_cron.sh 执行——依赖外部系统 cron、容器重建可能丢失、
-// 不在 config 里配置。迁入后成为第五、第六类任务，时点由 schedule.school_hours /
-// schedule.cat_hours 配置。
+// 不在 config 里配置。迁入后成为第五、第六类任务，时点由 schedule.school_time /
+// schedule.cat_time 配置。
 //
 // **Go 化改造**：这两类任务的实现原本是 python 脚本（scripts/school_open_day_2026.py、
 // scripts/task_runner.py），现在搬进了 internal/growth，编译成两个独立二进制

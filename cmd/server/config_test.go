@@ -336,18 +336,19 @@ func TestUpstreamEnvOverride(t *testing.T) {
 func TestRetiredTravelIntervalKeyIgnored(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
+	// 旧写法 checkin_hours 仍可用（折算成 09:00），退役键不报错。
 	os.WriteFile(fp, []byte(`{"schedule":{"travel_interval_minutes":15,"checkin_hours":[9]}}`), 0o600)
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatalf("retired key should not fail load: %v", err)
 	}
-	if len(c.Schedule.CheckinHours) != 1 || c.Schedule.CheckinHours[0] != 9 {
-		t.Errorf("checkin_hours=%v want [9]（同段其余键照常生效）", c.Schedule.CheckinHours)
+	if strings.Join(c.Schedule.CheckinTime, ",") != "09:00" {
+		t.Errorf("checkin_time=%v want [09:00]（旧 checkin_hours 折算）", c.Schedule.CheckinTime)
 	}
 }
 
-// TestScheduleEnabledByDefault 四个任务的 enabled 开关默认均为 true：
-// 老 config 不写这些键，行为必须与从前完全一致。
+// TestScheduleEnabledByDefault 四个任务的 enabled 开关默认均为 true，
+// 且时刻以 "HH:MM" 形式回落默认。
 func TestScheduleEnabledByDefault(t *testing.T) {
 	c := Default()
 	if err := c.normalize(); err != nil {
@@ -361,17 +362,21 @@ func TestScheduleEnabledByDefault(t *testing.T) {
 		t.Errorf("travel/activity enabled defaults want true/true, got %v/%v",
 			c.Schedule.TravelEnabled, c.Schedule.ActivityEnabled)
 	}
-	if len(c.Schedule.TravelHours) != 2 || c.Schedule.TravelHours[0] != 9 || c.Schedule.TravelHours[1] != 21 {
-		t.Errorf("travel_hours=%v want [9,21]", c.Schedule.TravelHours)
+	if got := strings.Join(c.Schedule.TravelTime, ","); got != "09:00,21:00" {
+		t.Errorf("travel_time=%s want 09:00,21:00", got)
 	}
-	if len(c.Schedule.ActivityHours) != 1 || c.Schedule.ActivityHours[0] != 10 {
-		t.Errorf("activity_hours=%v want [10]", c.Schedule.ActivityHours)
+	if got := strings.Join(c.Schedule.ActivityTime, ","); got != "10:00" {
+		t.Errorf("activity_time=%s want 10:00", got)
 	}
-	if len(c.Schedule.SchoolHours) != 1 || c.Schedule.SchoolHours[0] != 12 {
-		t.Errorf("school_hours=%v want [12]", c.Schedule.SchoolHours)
+	if got := strings.Join(c.Schedule.SchoolTime, ","); got != "12:00" {
+		t.Errorf("school_time=%s want 12:00", got)
 	}
-	if len(c.Schedule.CatHours) != 1 || c.Schedule.CatHours[0] != 1 {
-		t.Errorf("cat_hours=%v want [1]", c.Schedule.CatHours)
+	if got := strings.Join(c.Schedule.CatTime, ","); got != "01:00" {
+		t.Errorf("cat_time=%s want 01:00", got)
+	}
+	// 解析出的分钟数（scheduler 直接用这些）。
+	if len(c.Schedule.TravelAt) != 2 || c.Schedule.TravelAt[0] != 9*60 || c.Schedule.TravelAt[1] != 21*60 {
+		t.Errorf("travel_at=%v want [540 1260]", c.Schedule.TravelAt)
 	}
 	if !c.Schedule.SchoolEnabled || !c.Schedule.CatEnabled {
 		t.Errorf("school/cat enabled defaults want true/true, got %v/%v",
@@ -379,8 +384,8 @@ func TestScheduleEnabledByDefault(t *testing.T) {
 	}
 }
 
-// TestScheduleLegacyConfigKeepsRunning 老 config（只写签到/保活小时数组，无新键）加载后仍是启用态，
-// 新开关缺省 true、新 hours 回落默认——对老配置零影响。
+// TestScheduleLegacyConfigKeepsRunning 老 config（只写 *_hours 数组）加载后：
+// 开关仍为启用、旧小时折算成 "HH:00"、未写的时刻回落默认。
 func TestScheduleLegacyConfigKeepsRunning(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
@@ -395,24 +400,22 @@ func TestScheduleLegacyConfigKeepsRunning(t *testing.T) {
 	if !c.Schedule.TravelEnabled || !c.Schedule.ActivityEnabled {
 		t.Errorf("new switches must default true on legacy config: %+v", c.Schedule)
 	}
-	if len(c.Schedule.CheckinHours) != 2 {
-		t.Errorf("checkin_hours=%v", c.Schedule.CheckinHours)
+	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
+		t.Errorf("checkin_time=%s want 09:00,21:00（旧数组折算）", got)
 	}
-	// 新 hours 缺省 → 回落默认（非空）。
-	if len(c.Schedule.TravelHours) != 2 || c.Schedule.TravelHours[0] != 9 || c.Schedule.TravelHours[1] != 21 {
-		t.Errorf("travel_hours=%v want default [9,21]", c.Schedule.TravelHours)
+	if got := strings.Join(c.Schedule.KeepaliveTime, ","); got != "22:00" {
+		t.Errorf("keepalive_time=%s want 22:00", got)
 	}
-	if len(c.Schedule.ActivityHours) != 1 || c.Schedule.ActivityHours[0] != 10 {
-		t.Errorf("activity_hours=%v want default [10]", c.Schedule.ActivityHours)
+	// 未配置的时刻回落默认。
+	if got := strings.Join(c.Schedule.TravelTime, ","); got != "09:00,21:00" {
+		t.Errorf("travel_time=%s want default 09:00,21:00", got)
 	}
-	if len(c.Schedule.SchoolHours) != 1 || c.Schedule.SchoolHours[0] != 12 {
-		t.Errorf("school_hours=%v want default [12]", c.Schedule.SchoolHours)
+	if got := strings.Join(c.Schedule.ActivityTime, ","); got != "10:00" {
+		t.Errorf("activity_time=%s want default 10:00", got)
 	}
-	if len(c.Schedule.CatHours) != 1 || c.Schedule.CatHours[0] != 1 {
-		t.Errorf("cat_hours=%v want default [1]", c.Schedule.CatHours)
-	}
-	if !c.Schedule.SchoolEnabled || !c.Schedule.CatEnabled {
-		t.Errorf("school/cat switches must default true on legacy config: %+v", c.Schedule)
+	// 迁移提示：旧键被记录，供启动日志 WARN。
+	if len(c.Schedule.MigratedFields()) == 0 {
+		t.Error("旧 *_hours 应被记入迁移列表")
 	}
 }
 
@@ -429,12 +432,12 @@ func TestScheduleExplicitDisable(t *testing.T) {
 	if c.Schedule.CheckinEnabled || c.Schedule.KeepaliveEnabled {
 		t.Errorf("want both disabled: %+v", c.Schedule)
 	}
-	// 小时数组仍回落默认值（禁用与默认值互不干扰：重新启用无需补配小时）。
-	if len(c.Schedule.CheckinHours) != 2 || c.Schedule.CheckinHours[0] != 9 || c.Schedule.CheckinHours[1] != 21 {
-		t.Errorf("checkin_hours=%v want default [9 21] even when disabled", c.Schedule.CheckinHours)
+	// 时刻仍回落默认值（禁用与默认值互不干扰：重新启用无需补配时刻）。
+	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
+		t.Errorf("checkin_time=%s want default 09:00,21:00 even when disabled", got)
 	}
-	if len(c.Schedule.KeepaliveHours) != 1 || c.Schedule.KeepaliveHours[0] != 22 {
-		t.Errorf("keepalive_hours=%v want default [22] even when disabled", c.Schedule.KeepaliveHours)
+	if got := strings.Join(c.Schedule.KeepaliveTime, ","); got != "22:00" {
+		t.Errorf("keepalive_time=%s want default 22:00 even when disabled", got)
 	}
 }
 
@@ -450,26 +453,29 @@ func TestScheduleTravelActivityExplicitDisable(t *testing.T) {
 	if c.Schedule.TravelEnabled || c.Schedule.ActivityEnabled {
 		t.Errorf("want travel/activity disabled: %+v", c.Schedule)
 	}
-	// 签到/保活开关缺省 true（互不干扰）。
 	if !c.Schedule.CheckinEnabled || !c.Schedule.KeepaliveEnabled {
 		t.Errorf("checkin/keepalive should stay enabled: %+v", c.Schedule)
 	}
-	// hours 仍回落默认。
-	if len(c.Schedule.TravelHours) != 2 || c.Schedule.TravelHours[0] != 9 || c.Schedule.TravelHours[1] != 21 {
-		t.Errorf("travel_hours=%v want default [9,21] even when disabled", c.Schedule.TravelHours)
+	// 时刻仍回落默认。
+	if got := strings.Join(c.Schedule.TravelTime, ","); got != "09:00,21:00" {
+		t.Errorf("travel_time=%s want default 09:00,21:00 even when disabled", got)
 	}
-	if len(c.Schedule.ActivityHours) != 1 || c.Schedule.ActivityHours[0] != 10 {
-		t.Errorf("activity_hours=%v want default [10] even when disabled", c.Schedule.ActivityHours)
+	if got := strings.Join(c.Schedule.ActivityTime, ","); got != "10:00" {
+		t.Errorf("activity_time=%s want default 10:00 even when disabled", got)
 	}
 }
 
-// TestScheduleTravelActivityInvalidHoursRejected 旅行/活跃非法小时报错并指向正确开关。
-func TestScheduleTravelActivityInvalidHoursRejected(t *testing.T) {
+// TestScheduleInvalidTimesRejected 非法时刻报错并指向正确开关：
+// 新旧两种写法都要拦（旧的小时越界、新的 HH:MM 畸形）。
+func TestScheduleInvalidTimesRejected(t *testing.T) {
 	cases := []struct{ body, wantSwitch string }{
 		{`{"schedule":{"travel_hours":[25]}}`, "travel_enabled"},
 		{`{"schedule":{"travel_hours":[-1]}}`, "travel_enabled"},
 		{`{"schedule":{"activity_hours":[24]}}`, "activity_enabled"},
-		{`{"schedule":{"activity_hours":[-1]}}`, "activity_enabled"},
+		{`{"schedule":{"checkin_time":["25:00"]}}`, "checkin_enabled"},
+		{`{"schedule":{"keepalive_time":["22:60"]}}`, "keepalive_enabled"},
+		{`{"schedule":{"school_time":["12"]}}`, "school_enabled"},
+		{`{"schedule":{"cat_time":[""]}}`, "cat_enabled"},
 	}
 	for _, tc := range cases {
 		dir := t.TempDir()
@@ -485,28 +491,31 @@ func TestScheduleTravelActivityInvalidHoursRejected(t *testing.T) {
 	}
 }
 
-// TestScheduleTravelActivityExplicitHours 显式配置旅行/活跃小时。
-func TestScheduleTravelActivityExplicitHours(t *testing.T) {
+// TestScheduleExplicitTimes 显式配置时刻：**分钟精度必须被真正采纳**。
+func TestScheduleExplicitTimes(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"schedule":{"travel_hours":[9,21],"activity_hours":[11]}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"schedule":{"travel_time":["09:15","21:45"],"activity_time":["11:05"]}}`), 0o600)
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Schedule.TravelHours) != 2 || c.Schedule.TravelHours[0] != 9 || c.Schedule.TravelHours[1] != 21 {
-		t.Errorf("travel_hours=%v want [9 21]", c.Schedule.TravelHours)
+	if got := strings.Join(c.Schedule.TravelTime, ","); got != "09:15,21:45" {
+		t.Errorf("travel_time=%s want 09:15,21:45", got)
 	}
-	if len(c.Schedule.ActivityHours) != 1 || c.Schedule.ActivityHours[0] != 11 {
-		t.Errorf("activity_hours=%v want [11]", c.Schedule.ActivityHours)
+	if len(c.Schedule.TravelAt) != 2 || c.Schedule.TravelAt[0] != 9*60+15 || c.Schedule.TravelAt[1] != 21*60+45 {
+		t.Errorf("travel_at=%v want [555 1305]", c.Schedule.TravelAt)
+	}
+	if len(c.Schedule.ActivityAt) != 1 || c.Schedule.ActivityAt[0] != 11*60+5 {
+		t.Errorf("activity_at=%v want [665]", c.Schedule.ActivityAt)
 	}
 }
 
-// TestScheduleDisableKeepsExplicitHours 禁用不擦除用户配置的小时（便于原样恢复）。
-func TestScheduleDisableKeepsExplicitHours(t *testing.T) {
+// TestScheduleDisableKeepsExplicitTimes 禁用不擦除用户配置的时刻（便于原样恢复）。
+func TestScheduleDisableKeepsExplicitTimes(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"schedule":{"checkin_enabled":false,"checkin_hours":[10,14]}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"schedule":{"checkin_enabled":false,"checkin_time":["10:30","14:00"]}}`), 0o600)
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatal(err)
@@ -514,18 +523,21 @@ func TestScheduleDisableKeepsExplicitHours(t *testing.T) {
 	if c.Schedule.CheckinEnabled {
 		t.Error("checkin should be disabled")
 	}
-	if len(c.Schedule.CheckinHours) != 2 || c.Schedule.CheckinHours[0] != 10 || c.Schedule.CheckinHours[1] != 14 {
-		t.Errorf("explicit hours must be preserved: %v", c.Schedule.CheckinHours)
+	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "10:30,14:00" {
+		t.Errorf("explicit time must be preserved: %s", got)
+	}
+	if len(c.Schedule.CheckinAt) != 2 || c.Schedule.CheckinAt[0] != 10*60+30 || c.Schedule.CheckinAt[1] != 14*60 {
+		t.Errorf("checkin_at=%v want [630 840]", c.Schedule.CheckinAt)
 	}
 }
 
-// TestScheduleEmptyHoursFallsBackToDefault 空数组 / null / 缺省都视同「未配置」→ 回落默认。
-func TestScheduleEmptyHoursFallsBackToDefault(t *testing.T) {
+// TestScheduleEmptyTimesFallsBackToDefault 空数组 / null / 缺省都视同「未配置」→ 回落默认。
+func TestScheduleEmptyTimesFallsBackToDefault(t *testing.T) {
 	cases := map[string]string{
 		"absent":   `{}`,
 		"empty":    `{"schedule":{}}`,
-		"null":     `{"schedule":{"checkin_hours":null,"keepalive_hours":null,"travel_hours":null,"activity_hours":null}}`,
-		"emptyarr": `{"schedule":{"checkin_hours":[],"keepalive_hours":[],"travel_hours":[],"activity_hours":[]}}`,
+		"null":     `{"schedule":{"checkin_time":null,"keepalive_time":null,"travel_time":null,"activity_time":null}}`,
+		"emptyarr": `{"schedule":{"checkin_time":[],"keepalive_time":[],"travel_time":[],"activity_time":[]}}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -536,23 +548,23 @@ func TestScheduleEmptyHoursFallsBackToDefault(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(c.Schedule.CheckinHours) != 2 || c.Schedule.CheckinHours[0] != 9 || c.Schedule.CheckinHours[1] != 21 {
-				t.Errorf("checkin_hours=%v want default [9 21]", c.Schedule.CheckinHours)
+			if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
+				t.Errorf("checkin_time=%s want default 09:00,21:00", got)
 			}
-			if len(c.Schedule.KeepaliveHours) != 1 || c.Schedule.KeepaliveHours[0] != 22 {
-				t.Errorf("keepalive_hours=%v want default [22]", c.Schedule.KeepaliveHours)
+			if got := strings.Join(c.Schedule.KeepaliveTime, ","); got != "22:00" {
+				t.Errorf("keepalive_time=%s want default 22:00", got)
 			}
-			if len(c.Schedule.TravelHours) != 2 || c.Schedule.TravelHours[0] != 9 || c.Schedule.TravelHours[1] != 21 {
-				t.Errorf("travel_hours=%v want default [9 21]", c.Schedule.TravelHours)
+			if got := strings.Join(c.Schedule.TravelTime, ","); got != "09:00,21:00" {
+				t.Errorf("travel_time=%s want default 09:00,21:00", got)
 			}
-			if len(c.Schedule.ActivityHours) != 1 || c.Schedule.ActivityHours[0] != 10 {
-				t.Errorf("activity_hours=%v want default [10]", c.Schedule.ActivityHours)
+			if got := strings.Join(c.Schedule.ActivityTime, ","); got != "10:00" {
+				t.Errorf("activity_time=%s want default 10:00", got)
 			}
 			if !c.Schedule.CheckinEnabled || !c.Schedule.KeepaliveEnabled {
-				t.Errorf("empty hours must not imply disabled: %+v", c.Schedule)
+				t.Errorf("empty times must not imply disabled: %+v", c.Schedule)
 			}
 			if !c.Schedule.TravelEnabled || !c.Schedule.ActivityEnabled {
-				t.Errorf("empty hours must not imply disabled: %+v", c.Schedule)
+				t.Errorf("empty times must not imply disabled: %+v", c.Schedule)
 			}
 		})
 	}

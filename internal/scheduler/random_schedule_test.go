@@ -105,7 +105,7 @@ func TestStaggeredCoincidentTaskTypesDoNotOverlap(t *testing.T) {
 func jitterScheduler(minutes int) *Scheduler {
 	return New(Config{
 		RandomDelayMinutes: minutes, RandomDelaySeed: "synthetic-deployment",
-		CheckinHours: []int{9}, TravelDisabled: true, ActivityDisabled: true,
+		CheckinAt: []int{9 * 60}, TravelDisabled: true, ActivityDisabled: true,
 		KeepaliveDisabled: true, SchoolDisabled: true, CatDisabled: true,
 	})
 }
@@ -123,8 +123,8 @@ func TestRandomScheduleZeroPreservesExactHour(t *testing.T) {
 func TestRandomScheduleStableAcrossRestartAndCatchup(t *testing.T) {
 	day := time.Date(2026, 10, 14, 0, 0, 0, 0, cstZone)
 	s := jitterScheduler(60)
-	at := s.scheduledSlot(day, 9, taskCheckin)
-	if !at.Equal(jitterScheduler(60).scheduledSlot(day, 9, taskCheckin)) {
+	at := s.scheduledSlot(day, 9*60, taskCheckin)
+	if !at.Equal(jitterScheduler(60).scheduledSlot(day, 9*60, taskCheckin)) {
 		t.Fatal("restart redrew the planned slot")
 	}
 	next, _ := s.nextWake(day)
@@ -139,22 +139,28 @@ func TestRandomScheduleStableAcrossRestartAndCatchup(t *testing.T) {
 
 func TestRandomScheduleBoundsStayInOriginalHourAndDay(t *testing.T) {
 	day := time.Date(2026, 10, 14, 0, 0, 0, 0, cstZone)
-	for _, minutes := range []int{1, 30, 60, 1000000} {
-		s := jitterScheduler(minutes)
+	// 时点是「自 00:00 起的分钟数」：整点、半点与一天最后一分钟都必须
+	//   ① 落在时点所在的那一小时内、同一自然日内；
+	//   ② 偏移不超过 random_delay_minutes，且被钳到「本小时结束前」。
+	for _, delayMin := range []int{1, 30, 60, 1000000} {
+		s := jitterScheduler(delayMin)
 		for d := 0; d < 30; d++ {
 			date := day.AddDate(0, 0, d)
-			for hour := 0; hour < 24; hour++ {
+			for _, mod := range []int{0, 30, 7*60 + 30, 23*60 + 59} {
 				for kind := taskCheckin; kind <= taskCat; kind++ {
-					at := s.scheduledSlot(date, hour, kind)
-					if at.Hour() != hour || at.Format("2006-01-02") != date.Format("2006-01-02") {
-						t.Fatalf("crossed slot/day: minutes=%d date=%s at=%s", minutes, date, at)
+					at := s.scheduledSlot(date, mod, kind)
+					base := time.Date(date.Year(), date.Month(), date.Day(), mod/60, mod%60, 0, 0, cstZone)
+					if at.Hour() != base.Hour() || at.Format("2006-01-02") != date.Format("2006-01-02") {
+						t.Fatalf("crossed hour/day: delay=%dm mod=%d at=%s", delayMin, mod, at)
 					}
-					base := time.Date(date.Year(), date.Month(), date.Day(), hour, 0, 0, 0, cstZone)
-					limit := time.Duration(minutes) * time.Minute
-					if minutes >= 60 {
+					limit := time.Duration(delayMin) * time.Minute
+					if delayMin >= 60 {
 						limit = time.Hour - time.Second
 					}
-					if at.Sub(base) < 0 || at.Sub(base) > limit {
+					if remain := time.Duration((59*60+59)-(mod%60)*60) * time.Second; limit > remain {
+						limit = remain
+					}
+					if off := at.Sub(base); off < 0 || off > limit {
 						t.Fatalf("out of jitter bounds: at=%s base=%s limit=%s", at, base, limit)
 					}
 				}
@@ -166,7 +172,7 @@ func TestRandomScheduleBoundsStayInOriginalHourAndDay(t *testing.T) {
 func TestRandomScheduleNewDateTaskAndDeploymentDrawIndependently(t *testing.T) {
 	day := time.Date(2026, 10, 14, 0, 0, 0, 0, cstZone)
 	s := jitterScheduler(60)
-	at := s.scheduledSlot(day, 9, taskCheckin)
+	at := s.scheduledSlot(day, 9*60, taskCheckin)
 	other := jitterScheduler(60)
 	other.cfg.RandomDelaySeed = "other-synthetic-deployment"
 	for name, actual := range map[string]time.Duration{
@@ -183,7 +189,7 @@ func TestRandomScheduleNewDateTaskAndDeploymentDrawIndependently(t *testing.T) {
 func TestRandomScheduleRestartWithinHourStillFindsPendingSlot(t *testing.T) {
 	s := jitterScheduler(60)
 	day := time.Date(2026, 10, 14, 0, 0, 0, 0, cstZone)
-	at := s.scheduledSlot(day, 9, taskCheckin)
+	at := s.scheduledSlot(day, 9*60, taskCheckin)
 	if !at.After(day.Add(9 * time.Hour)) {
 		t.Fatal("fixture must have a positive delay")
 	}
@@ -197,7 +203,7 @@ func TestRandomScheduleRestartWithinHourStillFindsPendingSlot(t *testing.T) {
 	}
 }
 
-func TestRandomScheduleDisabledTaskAndMultipleHours(t *testing.T) {
+func TestRandomScheduleDisabledTaskAndMultipleTimes(t *testing.T) {
 	s := jitterScheduler(60)
 	s.cfg.CheckinDisabled = true
 	day := time.Date(2026, 10, 14, 0, 0, 0, 0, cstZone)
@@ -208,7 +214,7 @@ func TestRandomScheduleDisabledTaskAndMultipleHours(t *testing.T) {
 		t.Fatal("disabled task caught up")
 	}
 	s.cfg.CheckinDisabled = false
-	s.cfg.CheckinHours = []int{9, 21}
+	s.cfg.CheckinAt = []int{9 * 60, 21 * 60}
 	due := s.dueSlots(day, day.Add(24*time.Hour))
 	if len(due) != 2 || due[0].planned.Hour() != 9 || due[1].planned.Hour() != 21 {
 		t.Fatalf("multiple-hour slots changed: %v", due)

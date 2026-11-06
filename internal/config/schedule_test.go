@@ -15,17 +15,26 @@ func TestDefaultScheduleActivityCount(t *testing.T) {
 	if !s.CheckinEnabled || !s.TravelEnabled || !s.ActivityEnabled || !s.KeepaliveEnabled {
 		t.Errorf("all switches must default true: %+v", s)
 	}
-	if len(s.CheckinHours) != 2 || s.CheckinHours[0] != 9 || s.CheckinHours[1] != 21 {
-		t.Errorf("checkin_hours=%v want [9 21]", s.CheckinHours)
+	// 时刻**刻意不在 DefaultSchedule 里预置**（否则"旧 *_hours 迁移"分支永远走不到），
+	// 由 Normalize 统一填默认值 —— 这里先归一化再断言。
+	if err := s.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
 	}
-	if len(s.ActivityHours) != 1 || s.ActivityHours[0] != 10 {
-		t.Errorf("activity_hours=%v want [10]", s.ActivityHours)
+	// 时刻是 "HH:MM" 字符串（可精确到分）。
+	want := map[string][]string{
+		"checkin": {"09:00", "21:00"}, "travel": {"09:00", "21:00"},
+		"activity": {"10:00"}, "keepalive": {"22:00"},
+		"school": {"12:00"}, "cat": {"01:00"},
 	}
-	if len(s.SchoolHours) != 1 || s.SchoolHours[0] != 12 {
-		t.Errorf("school_hours=%v want [12]", s.SchoolHours)
+	got := map[string][]string{
+		"checkin": s.CheckinTime, "travel": s.TravelTime,
+		"activity": s.ActivityTime, "keepalive": s.KeepaliveTime,
+		"school": s.SchoolTime, "cat": s.CatTime,
 	}
-	if len(s.CatHours) != 1 || s.CatHours[0] != 1 {
-		t.Errorf("cat_hours=%v want [1]", s.CatHours)
+	for key, exp := range want {
+		if strings.Join(got[key], ",") != strings.Join(exp, ",") {
+			t.Errorf("%s_time=%v want %v", key, got[key], exp)
+		}
 	}
 	if !s.SchoolEnabled || !s.CatEnabled {
 		t.Errorf("school/cat switches must default true: %+v", s)
@@ -33,7 +42,7 @@ func TestDefaultScheduleActivityCount(t *testing.T) {
 }
 
 // TestNormalizeScheduleThreeStates 缺省/显式 0/显式 N 三态默认值：
-//   - 缺省（空 schedule）→ ActivityReportCount 保留 DefaultSchedule 的 5，hours 回落默认。
+//   - 缺省（空 schedule）→ ActivityReportCount 保留 DefaultSchedule 的 5，时刻回落默认。
 //   - 显式 0  → 归一为 1（兼容旧行为）。
 //   - 显式 N  → 保留 N。
 func TestNormalizeScheduleThreeStates(t *testing.T) {
@@ -60,47 +69,116 @@ func TestNormalizeScheduleThreeStates(t *testing.T) {
 	}
 }
 
-// TestNormalizeScheduleEmptyHoursFallback 空数组/缺省 hours 一律回落默认。
-func TestNormalizeScheduleEmptyHoursFallback(t *testing.T) {
-	s := Schedule{ActivityReportCount: 5} // hours 全零值（未配）
-	if err := s.Normalize(); err != nil {
-		t.Fatalf("normalize: %v", err)
+// TestParseClockAndFormat "HH:MM" 解析/渲染：接受 H:MM，拒绝越界与畸形。
+func TestParseClockAndFormat(t *testing.T) {
+	ok := map[string]int{
+		"09:30": 570, "9:30": 570, "00:00": 0, "23:59": 1439, " 07:05 ": 425,
 	}
-	if len(s.CheckinHours) != 2 || s.CheckinHours[0] != 9 || s.CheckinHours[1] != 21 {
-		t.Errorf("checkin_hours=%v want [9 21]", s.CheckinHours)
+	for in, want := range ok {
+		got, err := ParseClock(in)
+		if err != nil || got != want {
+			t.Errorf("ParseClock(%q)=%d,%v want %d", in, got, err, want)
+		}
 	}
-	if len(s.KeepaliveHours) != 1 || s.KeepaliveHours[0] != 22 {
-		t.Errorf("keepalive_hours=%v want [22]", s.KeepaliveHours)
+	for _, bad := range []string{"", "9", "24:00", "09:60", "09-30", "09:30:00", "aa:bb"} {
+		if _, err := ParseClock(bad); err == nil {
+			t.Errorf("ParseClock(%q) 应报错", bad)
+		}
 	}
-	if len(s.TravelHours) != 2 || s.TravelHours[0] != 9 || s.TravelHours[1] != 21 {
-		t.Errorf("travel_hours=%v want [9 21]", s.TravelHours)
+	if got := FormatClock(570); got != "09:30" {
+		t.Errorf("FormatClock(570)=%q want 09:30", got)
 	}
-	if len(s.ActivityHours) != 1 || s.ActivityHours[0] != 10 {
-		t.Errorf("activity_hours=%v want [10]", s.ActivityHours)
-	}
-	if len(s.SchoolHours) != 1 || s.SchoolHours[0] != 12 {
-		t.Errorf("school_hours=%v want [12]", s.SchoolHours)
-	}
-	if len(s.CatHours) != 1 || s.CatHours[0] != 1 {
-		t.Errorf("cat_hours=%v want [1]", s.CatHours)
+	if got := FormatClock(0); got != "00:00" {
+		t.Errorf("FormatClock(0)=%q want 00:00", got)
 	}
 }
 
-// TestNormalizeScheduleInvalidHour 非法小时快速失败并指向正确开关。
-func TestNormalizeScheduleInvalidHour(t *testing.T) {
+// TestNormalizeScheduleEmptyTimesFallback 空数组/缺省时刻一律回落默认，并解析成分钟数。
+func TestNormalizeScheduleEmptyTimesFallback(t *testing.T) {
+	s := Schedule{ActivityReportCount: 5} // 时刻全零值（未配）
+	if err := s.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if strings.Join(s.CheckinTime, ",") != "09:00,21:00" {
+		t.Errorf("checkin_time=%v", s.CheckinTime)
+	}
+	// 分钟数（scheduler 直接用）：09:00=540、21:00=1260
+	if len(s.CheckinAt) != 2 || s.CheckinAt[0] != 540 || s.CheckinAt[1] != 1260 {
+		t.Errorf("checkin_at=%v want [540 1260]", s.CheckinAt)
+	}
+	if len(s.KeepaliveAt) != 1 || s.KeepaliveAt[0] != 22*60 {
+		t.Errorf("keepalive_at=%v want [1320]", s.KeepaliveAt)
+	}
+	if len(s.CatAt) != 1 || s.CatAt[0] != 60 {
+		t.Errorf("cat_at=%v want [60]", s.CatAt)
+	}
+}
+
+// TestNormalizeScheduleMinutePrecision 分钟精度：09:30 必须被真正采纳（不是被抹成 09:00）。
+func TestNormalizeScheduleMinutePrecision(t *testing.T) {
+	s := Schedule{CheckinTime: []string{"09:30", "21:45"}}
+	if err := s.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(s.CheckinAt) != 2 || s.CheckinAt[0] != 9*60+30 || s.CheckinAt[1] != 21*60+45 {
+		t.Fatalf("checkin_at=%v want [570 1305]", s.CheckinAt)
+	}
+}
+
+// TestNormalizeScheduleDedupAndSort 重复时刻去重、乱序输入排成升序。
+func TestNormalizeScheduleDedupAndSort(t *testing.T) {
+	s := Schedule{ActivityTime: []string{"21:00", "09:30", "09:30"}}
+	if err := s.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(s.ActivityAt) != 2 || s.ActivityAt[0] != 570 || s.ActivityAt[1] != 1260 {
+		t.Fatalf("activity_at=%v want [570 1260]", s.ActivityAt)
+	}
+}
+
+// TestNormalizeScheduleLegacyHoursMigrated 旧的 *_hours 折算成 *_time（整点），并记入迁移列表。
+func TestNormalizeScheduleLegacyHoursMigrated(t *testing.T) {
+	s := Schedule{CheckinHours: []int{10, 14}, CatHours: []int{2}}
+	if err := s.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if strings.Join(s.CheckinTime, ",") != "10:00,14:00" {
+		t.Errorf("checkin_time=%v want [10:00 14:00]", s.CheckinTime)
+	}
+	if len(s.CheckinAt) != 2 || s.CheckinAt[0] != 600 || s.CheckinAt[1] != 840 {
+		t.Errorf("checkin_at=%v want [600 840]", s.CheckinAt)
+	}
+	migrated := strings.Join(s.MigratedFields(), ",")
+	if !strings.Contains(migrated, "schedule.checkin_hours") || !strings.Contains(migrated, "schedule.cat_hours") {
+		t.Errorf("MigratedFields=%v", s.MigratedFields())
+	}
+	// 新字段优先：两者并存时以 *_time 为准，且不记迁移。
+	s2 := Schedule{CheckinTime: []string{"08:15"}, CheckinHours: []int{10}}
+	if err := s2.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(s2.CheckinAt) != 1 || s2.CheckinAt[0] != 8*60+15 {
+		t.Errorf("新字段应优先：%v", s2.CheckinAt)
+	}
+	if len(s2.MigratedFields()) != 0 {
+		t.Errorf("并存时不应记迁移：%v", s2.MigratedFields())
+	}
+}
+
+// TestNormalizeScheduleInvalidTime 非法时刻快速失败，错误信息指向字段与正确开关。
+func TestNormalizeScheduleInvalidTime(t *testing.T) {
 	cases := []struct {
-		s           Schedule
-		wantSwitch  string
+		s         Schedule
+		wantInErr string
 	}{
-		{Schedule{CheckinHours: []int{25}}, "checkin_enabled"},
-		{Schedule{CheckinHours: []int{-1}}, "checkin_enabled"},
-		{Schedule{KeepaliveHours: []int{24}}, "keepalive_enabled"},
-		{Schedule{TravelHours: []int{-1}}, "travel_enabled"},
-		{Schedule{ActivityHours: []int{24}}, "activity_enabled"},
-		{Schedule{SchoolHours: []int{25}}, "school_enabled"},
-		{Schedule{SchoolHours: []int{-1}}, "school_enabled"},
-		{Schedule{CatHours: []int{24}}, "cat_enabled"},
-		{Schedule{CatHours: []int{-1}}, "cat_enabled"},
+		{Schedule{CheckinTime: []string{"25:00"}}, "checkin_time"},
+		{Schedule{CheckinTime: []string{"09:70"}}, "checkin_time"},
+		{Schedule{CheckinTime: []string{"0930"}}, "checkin_time"},
+		{Schedule{KeepaliveTime: []string{"24:00"}}, "keepalive_time"},
+		{Schedule{TravelTime: []string{"x"}}, "travel_time"},
+		{Schedule{ActivityTime: []string{"-1:00"}}, "activity_time"},
+		{Schedule{SchoolTime: []string{"12:60"}}, "school_time"},
+		{Schedule{CatTime: []string{""}}, "cat_time"},
 	}
 	for _, tc := range cases {
 		err := tc.s.Normalize()
@@ -108,8 +186,23 @@ func TestNormalizeScheduleInvalidHour(t *testing.T) {
 			t.Errorf("want error for %+v", tc.s)
 			continue
 		}
-		if !strings.Contains(err.Error(), tc.wantSwitch) {
-			t.Errorf("error %q should point at schedule.%s", err.Error(), tc.wantSwitch)
+		if !strings.Contains(err.Error(), tc.wantInErr) {
+			t.Errorf("error %q should mention %s", err.Error(), tc.wantInErr)
 		}
+		if !strings.Contains(err.Error(), "_enabled") {
+			t.Errorf("error %q should point at the _enabled switch", err.Error())
+		}
+	}
+}
+
+// TestNormalizeScheduleInvalidLegacyHour 旧的 *_hours 越界同样快速失败（并提示新写法）。
+func TestNormalizeScheduleInvalidLegacyHour(t *testing.T) {
+	s := Schedule{CheckinHours: []int{25}}
+	err := s.Normalize()
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if !strings.Contains(err.Error(), "checkin_hours") || !strings.Contains(err.Error(), "checkin_time") {
+		t.Errorf("错误信息应同时指出旧键与新写法：%v", err)
 	}
 }
