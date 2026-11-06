@@ -186,6 +186,16 @@ func main() {
 	if scheduleSeed == "" {
 		scheduleSeed = cfg.AuthDir
 	}
+	// 遍历节奏：默认值来自 config.default.json，用户 config.json 有则覆盖。
+	scheduler.Configure(scheduler.Options{
+		CheckinAccountDelay:  cfg.Schedule.CheckinAccountDelayDur,
+		TravelAccountDelay:   cfg.Schedule.TravelAccountDelayDur,
+		ActivityAccountDelay: cfg.Schedule.ActivityAccountDelayDur,
+		CheckinRefreshSkew:   cfg.Schedule.CheckinRefreshSkewDur,
+		CheckinRetryDelays:   cfg.Schedule.CheckinRetryDelaysDur,
+		WakeupGrace:          cfg.Schedule.WakeupGraceDur,
+		CatchupWindow:        cfg.Schedule.CatchupWindowDur,
+	})
 	sch := scheduler.New(scheduler.Config{
 		AccountDelayMinSeconds: cfg.Schedule.AccountDelayMinSeconds,
 		AccountDelayMaxSeconds: cfg.Schedule.AccountDelayMaxSeconds,

@@ -23,10 +23,10 @@ const (
 )
 
 // travelAccountDelay 账号间限速：全量账号约 40s，避免上游风控。测试可置 0。
-var travelAccountDelay = 800 * time.Millisecond
+var travelAccountDelay = schedDefaults().TravelAccountDelayDur
 
 // activityAccountDelay 活跃上报账号间限速：与旅行同口径，避免上游风控。测试可置 0。
-var activityAccountDelay = 800 * time.Millisecond
+var activityAccountDelay = schedDefaults().ActivityAccountDelayDur
 
 // activityReportGap 同一账号内连续上报之间的间隔：5 连发模拟同一会话多轮对话，
 // 秒发易触发风控，故 1.5s 一条。测试可置 0。

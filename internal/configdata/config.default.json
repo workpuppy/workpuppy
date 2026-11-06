@@ -42,6 +42,17 @@
     "intra_request_jitter_min": "1s",
     "intra_request_jitter_max": "3s",
     "random_delay_minutes": 0,
+    "checkin_account_delay": "3s",
+    "travel_account_delay": "800ms",
+    "activity_account_delay": "800ms",
+    "checkin_retry_delays": [
+      "5s",
+      "15s",
+      "60s"
+    ],
+    "checkin_refresh_skew": "10m",
+    "wakeup_grace": "5s",
+    "catchup_window": "24h",
     "account_delay_min_seconds": 0,
     "account_delay_max_seconds": 0
   },

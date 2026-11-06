@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"workbuddy2api/internal/configdata"
 )
@@ -39,6 +40,26 @@ type Schedule struct {
 	// 两者都 "0" = 关闭；min>max 在加载期报错。
 	IntraRequestJitterMin string `json:"intra_request_jitter_min"`
 	IntraRequestJitterMax string `json:"intra_request_jitter_max"`
+
+	// ── 遍历节奏（时长字符串；"0" = 关闭/不等）────────────────────────────
+	// 这些以前硬编码在 internal/scheduler 里，现在统一由 config.default.json 提供。
+	CheckinAccountDelay  string `json:"checkin_account_delay"`  // 签到相邻账号最小间隔（默认 3s）
+	TravelAccountDelay   string `json:"travel_account_delay"`   // 旅行相邻账号间隔（默认 800ms）
+	ActivityAccountDelay string `json:"activity_account_delay"` // 活跃上报相邻账号间隔（默认 800ms）
+	CheckinRefreshSkew   string `json:"checkin_refresh_skew"`   // 签到前多久判定 token 将过期（默认 10m）
+	WakeupGrace          string `json:"wakeup_grace"`           // 迟到唤醒补跑前的网络宽限（默认 5s）
+	CatchupWindow        string `json:"catchup_window"`         // 补跑窗口，超过则放弃老槽位（默认 24h）
+	// CheckinRetryDelays 签到遇到上游瞬时拒绝（5xx / code 10001）时的退避序列（默认 5s,15s,60s）。
+	CheckinRetryDelays []string `json:"checkin_retry_delays"`
+
+	// 以下为解析结果（json:"-"），供 scheduler 直接使用。
+	CheckinAccountDelayDur  time.Duration   `json:"-"`
+	TravelAccountDelayDur   time.Duration   `json:"-"`
+	ActivityAccountDelayDur time.Duration   `json:"-"`
+	CheckinRefreshSkewDur   time.Duration   `json:"-"`
+	WakeupGraceDur          time.Duration   `json:"-"`
+	CatchupWindowDur        time.Duration   `json:"-"`
+	CheckinRetryDelaysDur   []time.Duration `json:"-"`
 
 	// ── 六类任务的执行时刻 ────────────────────────────────────────────────
 	// 值形如 "09:30"（24 小时制，精确到分）；一个任务可配多个时刻。
@@ -239,6 +260,47 @@ func (s *Schedule) Normalize() error {
 			return err
 		}
 		*p.minutes = minutes
+	}
+
+	// 遍历节奏：解析 + 校验（负值无意义，一律报错；"0" 表示关闭/不等）。
+	durs := []struct {
+		key string
+		raw string
+		out *time.Duration
+	}{
+		{"checkin_account_delay", s.CheckinAccountDelay, &s.CheckinAccountDelayDur},
+		{"travel_account_delay", s.TravelAccountDelay, &s.TravelAccountDelayDur},
+		{"activity_account_delay", s.ActivityAccountDelay, &s.ActivityAccountDelayDur},
+		{"checkin_refresh_skew", s.CheckinRefreshSkew, &s.CheckinRefreshSkewDur},
+		{"wakeup_grace", s.WakeupGrace, &s.WakeupGraceDur},
+		{"catchup_window", s.CatchupWindow, &s.CatchupWindowDur},
+	}
+	for _, d := range durs {
+		if strings.TrimSpace(d.raw) == "" {
+			continue // 未配置：保持零值，由调用方兜底（正常路径不会走到：默认文件里有值）
+		}
+		v, err := time.ParseDuration(d.raw)
+		if err != nil {
+			return fmt.Errorf("schedule.%s: %w", d.key, err)
+		}
+		if v < 0 {
+			return fmt.Errorf("schedule.%s: 不能为负（关闭请写 0）", d.key)
+		}
+		*d.out = v
+	}
+	if len(s.CheckinRetryDelays) > 0 {
+		out := make([]time.Duration, 0, len(s.CheckinRetryDelays))
+		for i, raw := range s.CheckinRetryDelays {
+			v, err := time.ParseDuration(raw)
+			if err != nil {
+				return fmt.Errorf("schedule.checkin_retry_delays[%d]: %w", i, err)
+			}
+			if v < 0 {
+				return fmt.Errorf("schedule.checkin_retry_delays[%d]: 不能为负", i)
+			}
+			out = append(out, v)
+		}
+		s.CheckinRetryDelaysDur = out
 	}
 
 	// 0/负数 → 1 条（兼容旧行为：每号每天 1 条上报点亮连登）。

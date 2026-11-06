@@ -124,7 +124,7 @@ func New(cfg Config) *Scheduler {
 
 // checkinRefreshSkew 签到前判定"token 是否临近过期"的时间窗口（10 分钟）。
 // 长时间停机/容器长期停跑后 access token 往往已过期，不先刷新则签到必然 401 白跑。
-const checkinRefreshSkew = 10 * time.Minute
+var checkinRefreshSkew = schedDefaults().CheckinRefreshSkewDur
 
 // CheckinStatus 单账号签到结果状态。
 type CheckinStatus string
@@ -238,7 +238,7 @@ func (s *Scheduler) nextWake(now time.Time) (time.Time, []taskKind) {
 // Kernel-Power 507 standby exit ≤1s 重合），宽限 5s 覆盖 90%+ 唤醒场景。
 // 只对迟到补跑生效（准点触发零延迟），零配置（分析报告裁定全套配置不成比例）。
 // 测试可缩短（与 travelAccountDelay「测试可置 0」同口径）。
-var wakeupGraceDelay = 5 * time.Second
+var wakeupGraceDelay = schedDefaults().WakeupGraceDur
 
 // wakeupLateThreshold 迟到判定阈值：now 晚于槽位计划时刻超过 1s 才算迟到补跑。
 // 毫秒级抖动（timer 正常触发的偏移量级）不算，避免准点触发被误宽限。
@@ -276,7 +276,7 @@ var nowFunc = time.Now
 
 // catchupWindow 补跑窗口：早于 now-catchupWindow 的槽位不再补跑（关机几天后不该把
 // 几天的任务一次性全跑一遍）。
-const catchupWindow = 24 * time.Hour
+var catchupWindow = schedDefaults().CatchupWindowDur
 
 // waitForSlot 等到 planned（按**墙钟**判定）到点；ctx 取消返回 false。
 //
@@ -454,14 +454,14 @@ func (s *Scheduler) runCheckinNow(ctx context.Context) {
 // 把一轮 12 个号摊到 30 秒以上，远低于上游限流窗口。
 // 配置了 account-delay-min/max 的定时遍历会在此基础上再叠加随机抖动（accountGap）。
 // 测试可置 0。
-var checkinAccountDelay = 3 * time.Second
+var checkinAccountDelay = schedDefaults().CheckinAccountDelayDur
 
 // checkinRetryDelays 签到遇到上游瞬时拒绝时的退避序列（issue #256）。
 //
 // 只对 HTTP 5xx 与业务码 10001 生效；"今天已签到"（同样是 10001）在判定前已按
 // 幂等成功处理，不会走到这里。重试次数 = len(checkinRetryDelays)，全部失败才
 // 记 fail_checkin。测试可置空。
-var checkinRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 60 * time.Second}
+var checkinRetryDelays = schedDefaults().CheckinRetryDelaysDur
 
 // checkinRetryable 报告签到错误是否属于上游瞬时拒绝（值得退避重试）。
 // 单号手动签到都能成功而批量偶发失败，说明 10001 在这里表达的是"稍后重试"，
