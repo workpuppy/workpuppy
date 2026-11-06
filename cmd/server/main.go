@@ -338,6 +338,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen %s: %v", cfg.Listen, err)
 	}
+	log.Printf("配置来源: %s", cfg.SourcePath)
 	logScheduleMigration(&cfg.Schedule)
 	log.Printf("workbuddy2api listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
 	if cfg.Admin.Enabled {

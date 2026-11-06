@@ -8,6 +8,55 @@ import (
 	"time"
 )
 
+// Default() 完全来自内嵌的 config.example.json：这里钉几处关键默认值，防止
+// 「示例被改、程序没跟上」或「代码里又被塞回硬编码默认值」。
+func TestDefaultComesFromExampleConfig(t *testing.T) {
+	c := Default()
+	if c.Listen != ":7863" || c.AuthDir != "./auths" || c.StateFile != "./data/state.json" {
+		t.Errorf("基础默认值不来自示例：%q %q %q", c.Listen, c.AuthDir, c.StateFile)
+	}
+	if c.Pool.MaxInFlight != 3 || c.Pool.BreakerThreshold != 3 || c.Pool.ExpiringSoon != "168h" {
+		t.Errorf("池默认值不来自示例：%+v", c.Pool)
+	}
+	if c.Upstream.TimeoutSeconds != 120 || c.Upstream.ClientName != "WorkBuddy" {
+		t.Errorf("upstream 默认值不来自示例：%+v", c.Upstream)
+	}
+	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
+		t.Errorf("排程默认值不来自示例：%s", got)
+	}
+	if c.Schedule.SpreadWindow != "15m" || c.Schedule.IntraRequestJitterMin != "1s" {
+		t.Errorf("节奏默认值不来自示例：%+v", c.Schedule)
+	}
+	if c.SessionSticky.TTL != "30m" || !c.SessionSticky.Enabled {
+		t.Errorf("会话粘性默认值不来自示例：%+v", c.SessionSticky)
+	}
+}
+
+// normalize 对「纯默认配置」必须是空操作：示例里给的值就是最终生效值。
+// 若某处 normalize 里还留着与示例不一致的硬编码默认值，这里会暴露。
+func TestNormalizeIsNoOpOnDefaults(t *testing.T) {
+	c := Default()
+	before := *c
+	if err := c.normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if c.Listen != before.Listen || c.AuthDir != before.AuthDir || c.StateFile != before.StateFile {
+		t.Errorf("normalize 改了基础字段：%q → %q", before.Listen, c.Listen)
+	}
+	if c.Pool.MaxInFlight != before.Pool.MaxInFlight || c.Pool.ExpiringSoon != before.Pool.ExpiringSoon {
+		t.Errorf("normalize 改了池字段：%+v → %+v", before.Pool, c.Pool)
+	}
+	if c.Upstream.TimeoutSeconds != before.Upstream.TimeoutSeconds {
+		t.Errorf("normalize 改了超时：%d → %d", before.Upstream.TimeoutSeconds, c.Upstream.TimeoutSeconds)
+	}
+	if strings.Join(c.Schedule.CheckinTime, ",") != strings.Join(before.Schedule.CheckinTime, ",") {
+		t.Errorf("normalize 改了排程：%v → %v", before.Schedule.CheckinTime, c.Schedule.CheckinTime)
+	}
+	if c.SpreadWindowDur != 15*time.Minute || c.IntraJitterMinD != time.Second || c.IntraJitterMaxD != 3*time.Second {
+		t.Errorf("派生值不对：spread=%v jitter=%v~%v", c.SpreadWindowDur, c.IntraJitterMinD, c.IntraJitterMaxD)
+	}
+}
+
 func TestDefault(t *testing.T) {
 	c := Default()
 	if c.Listen != ":7863" {
@@ -727,9 +776,13 @@ func TestUpstreamVersionConfig(t *testing.T) {
 	if c.Upstream.ClientVersion != "6.0.0" || c.Upstream.CliVersion != "3.0.0" {
 		t.Errorf("client_version=%q cli_version=%q want 6.0.0/3.0.0", c.Upstream.ClientVersion, c.Upstream.CliVersion)
 	}
-	// 缺省为空（headers 层回落内置默认）。
-	if c2, err := Load(""); err != nil || c2.Upstream.ClientVersion != "" || c2.Upstream.CliVersion != "" {
-		t.Errorf("default versions=%q/%q want empty (err=%v)", c2.Upstream.ClientVersion, c2.Upstream.CliVersion, err)
+	// 缺省值来自内嵌的 config.example.json（默认值不再是源码里的空串）。
+	if c2, err := Load(""); err != nil || c2.Upstream.ClientVersion == "" || c2.Upstream.CliVersion == "" {
+		t.Errorf("default versions=%q/%q 应取自示例配置 (err=%v)",
+			c2.Upstream.ClientVersion, c2.Upstream.CliVersion, err)
+	} else if c2.Upstream.ClientVersion != "5.5.4" || c2.Upstream.CliVersion != "2.137.1" {
+		t.Errorf("示例配置的默认版本=%q/%q，若刚改过 config.example.json 请同步本断言",
+			c2.Upstream.ClientVersion, c2.Upstream.CliVersion)
 	}
 	// env 覆盖。
 	t.Setenv("WB2A_CLIENT_VERSION", "7.0.0")

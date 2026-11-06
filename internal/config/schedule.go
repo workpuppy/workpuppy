@@ -7,10 +7,13 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+
+	"workbuddy2api/internal/configdata"
 )
 
 // Schedule 排程配置段（对应 config.json 的 "schedule" 对象）。
@@ -88,24 +91,23 @@ type Schedule struct {
 	migrated []string
 }
 
-// DefaultSchedule 返回排程段的默认值。
+// DefaultSchedule 返回排程段的默认值 —— **直接取自内嵌的 config.example.json**。
 //
-// 开关「缺省 true」靠这里实现：调用方先取 DefaultSchedule 再用 json.Unmarshal 覆盖，
-// 键缺席（或为 null）时字段原样保留 true，只有显式 false 才关。
-// ActivityReportCount 默认 5：领猫前置需 5 次对话，5 连发刷满 chat_5。
+// 默认值只有一处权威来源（internal/configdata/config.example.json），这里不再写死任何
+// 数字：想改默认时刻/开关/上报条数，改那份 JSON 即可（根目录的 config.example.json 是
+// 它的对外副本，用 `go run ./cmd/example-config -write` 同步）。
+//
+// 开关「缺省 true」也来自示例里的 true：调用方先取 DefaultSchedule 再用 json.Unmarshal
+// 覆盖，键缺席（或为 null）时字段原样保留，只有显式 false 才关。
 func DefaultSchedule() Schedule {
-	// 时刻（*_time）**刻意留空**、由 Normalize 统一填默认值：
-	// 这样「旧 config 只写了 *_hours」时，Normalize 仍能识别出「*_time 未配置」并把旧键
-	// 折算过来；若这里预置了默认时刻，迁移分支永远走不到（默认值把空判断填满了）。
-	return Schedule{
-		CheckinEnabled:      true,
-		TravelEnabled:       true,
-		ActivityEnabled:     true,
-		KeepaliveEnabled:    true,
-		SchoolEnabled:       true,
-		CatEnabled:          true,
-		ActivityReportCount: 5, // 领猫前置需 5 次对话，5 连发刷满 chat_5
+	var wrapper struct {
+		Schedule Schedule `json:"schedule"`
 	}
+	if err := json.Unmarshal(configdata.Example(), &wrapper); err != nil {
+		// 内嵌文件在编译期就确定了：解析失败只能是构建问题，带病运行更难查。
+		panic("内置 config.example.json 的 schedule 段无法解析: " + err.Error())
+	}
+	return wrapper.Schedule
 }
 
 // MigratedFields 返回本次加载中被折算成 *_time 的旧字段名（用于启动日志提示）。
@@ -141,10 +143,84 @@ func FormatClock(min int) string {
 	return fmt.Sprintf("%02d:%02d", min/60, min%60)
 }
 
-// Normalize 归一化排程段：解析时刻、兼容旧的小时字段、补默认值、校验并排序。
+// schedulePairs 六类任务的字段对应关系（新 *_time / 旧 *_hours / 解析结果 *_At / 默认值）。
 //
-// 「空数组与 null 会覆盖 DefaultSchedule 的值（只有键缺席才保留）」，所以这里要为
-// 空值补默认；「禁用」一律走 *_enabled=false，与空值语义互不混淆。
+// 默认值只用于「显式写了 null 或空数组」这种边角情况；**主路径的默认值来自
+// config.example.json**（内嵌，见 DefaultSchedule/Default）。
+func (s *Schedule) schedulePairs() []struct {
+	field   string
+	times   *[]string
+	hours   *[]int
+	minutes *[]int
+	def     []string
+} {
+	return []struct {
+		field   string
+		times   *[]string
+		hours   *[]int
+		minutes *[]int
+		def     []string
+	}{
+		{"checkin", &s.CheckinTime, &s.CheckinHours, &s.CheckinAt, []string{"09:00", "21:00"}},
+		{"travel", &s.TravelTime, &s.TravelHours, &s.TravelAt, []string{"09:00", "21:00"}},
+		{"activity", &s.ActivityTime, &s.ActivityHours, &s.ActivityAt, []string{"10:00"}},
+		{"keepalive", &s.KeepaliveTime, &s.KeepaliveHours, &s.KeepaliveAt, []string{"22:00"}},
+		{"school", &s.SchoolTime, &s.SchoolHours, &s.SchoolAt, []string{"12:00"}},
+		{"cat", &s.CatTime, &s.CatHours, &s.CatAt, []string{"01:00"}},
+	}
+}
+
+// UnmarshalJSON 在**解析配置文件的当下**处理旧的小时写法。
+//
+// 为什么必须在反序列化时做、不能在 Normalize 里做：默认配置本身（内嵌 config.example.json）
+// 已经把 *_time 填好了，等到 Normalize 时根本无法区分「用户写了 *_time」与「这是默认值」。
+// 只有在这里（只看用户文件里真正出现的键）才能准确判断「用户只写了旧键」。
+//
+// 语义：
+//   - 同时出现 *_time 与 *_hours → 以 *_time 为准，旧键忽略（不记迁移）；
+//   - 只出现 *_hours → 折算成 "HH:00" 填进 *_time，并记入 MigratedFields（启动日志 WARN）；
+//   - 旧键越界 → 直接报错（带新写法的提示），不让它静默生效。
+func (s *Schedule) UnmarshalJSON(b []byte) error {
+	// 注意：反序列化到**已存在的值**上（而不是先清零）——上一层的默认配置（内嵌
+	// config.example.json）已经填好了各字段，用户文件里没写的键必须保持默认值，
+	// 否则「键缺席 = 回落默认」的语义会被本方法破坏。
+	type alias Schedule // 避免递归调用本方法
+	if err := json.Unmarshal(b, (*alias)(s)); err != nil {
+		return err
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(b, &present); err != nil {
+		return err
+	}
+	s.migrated = nil
+
+	for _, p := range s.schedulePairs() {
+		if _, hasTime := present[p.field+"_time"]; hasTime {
+			continue // 新写法优先
+		}
+		if _, hasHours := present[p.field+"_hours"]; !hasHours {
+			continue
+		}
+		converted := make([]string, 0, len(*p.hours))
+		for _, h := range *p.hours {
+			if h < 0 || h > 23 {
+				return fmt.Errorf("schedule.%s_hours: %d 不是合法小时（0-23）；"+
+					"新写法是 schedule.%s_time: [\"09:30\"]，要关任务请设 schedule.%s_enabled=false",
+					p.field, h, p.field, p.field)
+			}
+			converted = append(converted, FormatClock(h*60))
+		}
+		if len(converted) > 0 {
+			*p.times = converted
+			s.migrated = append(s.migrated, "schedule."+p.field+"_hours")
+		}
+	}
+	return nil
+}
+
+// Normalize 归一化排程段：补默认值、解析成分钟数、校验并排序。
+//
+// 「禁用」一律走 *_enabled=false，与空值语义互不混淆（空数组/缺省 = 回落默认）。
 func (s *Schedule) Normalize() error {
 	if s.AccountDelayMinSeconds < 0 || s.AccountDelayMaxSeconds > 600 ||
 		s.AccountDelayMaxSeconds < s.AccountDelayMinSeconds {
@@ -154,37 +230,7 @@ func (s *Schedule) Normalize() error {
 		return fmt.Errorf("schedule.random_delay_minutes must be between 0 and 60")
 	}
 
-	s.migrated = nil
-	type pair struct {
-		field   string
-		times   *[]string
-		hours   []int
-		minutes *[]int
-		def     []string
-	}
-	pairs := []pair{
-		{"checkin", &s.CheckinTime, s.CheckinHours, &s.CheckinAt, []string{"09:00", "21:00"}},
-		{"travel", &s.TravelTime, s.TravelHours, &s.TravelAt, []string{"09:00", "21:00"}},
-		{"activity", &s.ActivityTime, s.ActivityHours, &s.ActivityAt, []string{"10:00"}},
-		{"keepalive", &s.KeepaliveTime, s.KeepaliveHours, &s.KeepaliveAt, []string{"22:00"}},
-		{"school", &s.SchoolTime, s.SchoolHours, &s.SchoolAt, []string{"12:00"}},
-		{"cat", &s.CatTime, s.CatHours, &s.CatAt, []string{"01:00"}},
-	}
-	for _, p := range pairs {
-		// 旧字段 → 新字段（"9" → "09:00"）；只在 *_time 缺席时生效，两者并存以新值为准。
-		if len(*p.times) == 0 && len(p.hours) > 0 {
-			converted := make([]string, 0, len(p.hours))
-			for _, h := range p.hours {
-				if h < 0 || h > 23 {
-					return fmt.Errorf("schedule.%s_hours: %d 不是合法小时（0-23）；"+
-						"新写法是 schedule.%s_time: [\"09:30\"]，要关任务请设 schedule.%s_enabled=false",
-						p.field, h, p.field, p.field)
-				}
-				converted = append(converted, FormatClock(h*60))
-			}
-			*p.times = converted
-			s.migrated = append(s.migrated, "schedule."+p.field+"_hours")
-		}
+	for _, p := range s.schedulePairs() {
 		if len(*p.times) == 0 {
 			*p.times = p.def
 		}

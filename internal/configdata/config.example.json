@@ -1,0 +1,106 @@
+{
+  "listen": ":7863",
+  "api_key": "test_key",
+  "auth_dir": "./auths",
+  "state_file": "./data/state.json",
+  "proxies": null,
+  "reasoning_as_content": true,
+  "cooldown": {
+    "soft_rate": "600s",
+    "soft_rate_max": "2h",
+    "credit_exhausted": ""
+  },
+  "schedule": {
+    "checkin_time": [
+      "09:00",
+      "21:00"
+    ],
+    "travel_time": [
+      "09:00",
+      "21:00"
+    ],
+    "activity_time": [
+      "10:00"
+    ],
+    "keepalive_time": [
+      "22:00"
+    ],
+    "school_time": [
+      "12:00"
+    ],
+    "cat_time": [
+      "01:00"
+    ],
+    "checkin_enabled": true,
+    "travel_enabled": true,
+    "activity_enabled": true,
+    "keepalive_enabled": true,
+    "school_enabled": true,
+    "cat_enabled": true,
+    "activity_report_count": 5,
+    "spread_window": "15m",
+    "intra_request_jitter_min": "1s",
+    "intra_request_jitter_max": "3s",
+    "random_delay_minutes": 0,
+    "account_delay_min_seconds": 0,
+    "account_delay_max_seconds": 0
+  },
+  "admin": {
+    "enabled": false
+  },
+  "global": {
+    "enabled": true,
+    "chat_base": "",
+    "billing_base": ""
+  },
+  "upstream": {
+    "timeout_seconds": 120,
+    "header_timeout_seconds": 0,
+    "idle_timeout_seconds": 0,
+    "user_agent": "",
+    "client_version": "5.5.4",
+    "cli_version": "2.137.1",
+    "device_token": "",
+    "device_token_file": "",
+    "client_name": "WorkBuddy",
+    "passthrough_ip": false,
+    "gzip_body": true
+  },
+  "features": {
+    "sanitize_blacklist_fingerprints": true,
+    "sanitize_extra_features": null,
+    "sanitize_extra_rewrites": null
+  },
+  "prompt": {
+    "mode": "passthrough",
+    "file": ""
+  },
+  "upstash": {
+    "url": "",
+    "token": ""
+  },
+  "pool": {
+    "large_request_bytes": 0,
+    "large_request_cooldown": "",
+    "large_request_budget": 0,
+    "large_request_budget_window": "",
+    "credit_floor": 0,
+    "max_in_flight": 3,
+    "max_in_flight_global": 2,
+    "breaker_threshold": 3,
+    "breaker_cooldown": "30m",
+    "breaker_cooldown_max": "6h",
+    "degrade_threshold": 5,
+    "degrade_cooldown": "10m",
+    "degrade_cooldown_max": "2h",
+    "idle_weight_per_hour": 0.5,
+    "idle_weight_max": 5,
+    "expiring_soon": "168h",
+    "cost_explore_interval": "30m"
+  },
+  "session_sticky": {
+    "enabled": true,
+    "ttl": "30m",
+    "gc_interval": "5m"
+  }
+}

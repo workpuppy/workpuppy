@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"workbuddy2api/internal/config"
+	"workbuddy2api/internal/configdata"
 	"workbuddy2api/internal/prompt"
 )
 
@@ -212,81 +213,54 @@ type Config struct {
 	// SpreadWindowDur 定时任务账号随机分布窗口（schedule.spread_window 解析结果）。
 	// 0 = 关闭（回到"到点立刻 + 固定间隔"）。默认 15m。
 	SpreadWindowDur time.Duration `json:"-"`
+	// SourcePath 本次配置的实际来源（config.json / 回退的 config.example.json / 内嵌默认）。
+	// 只用于启动日志与排障，不参与 JSON 序列化。
+	SourcePath string `json:"-"`
 	// IntraJitterMinD/MaxD 同账号内连续请求的随机间隔区间
 	// （schedule.intra_request_jitter_min/max 解析结果）。默认 1s / 3s；都 0 = 关闭。
 	IntraJitterMinD time.Duration `json:"-"`
 	IntraJitterMaxD time.Duration `json:"-"`
 }
 
-// Default 默认配置。
+// Default 默认配置 —— **完全来自内嵌的 config.example.json**。
+//
+// 为什么这样做：默认值以前硬编码在这个函数里（listen、超时、池阈值、排程时刻……几十个），
+// 用户读 README 也拼不出"完整默认配置"，改默认值要翻 Go 代码。现在唯一的权威来源是
+// internal/configdata/config.example.json（随二进制内嵌）：
+//   - 想看/想改默认值 → 改那份 JSON（根目录的 config.example.json 是它的对外副本，
+//     用 `go run ./cmd/example-config -write` 同步，测试会强制两者一致）；
+//   - config.json 缺失时，Load 也回退到这份示例（见 internal/configdata.Resolve）。
+//
+// 需要指针语义的少数字段（如 ReasoningAsContent）由 JSON 里的 true/false 直接表达。
 func Default() *Config {
-	c := &Config{
-		Listen:    ":7863",
-		APIKey:    "",
-		AuthDir:   "./auths",
-		StateFile: "./data/state.json",
+	c := &Config{}
+	if err := json.Unmarshal(configdata.Example(), c); err != nil {
+		// 内嵌文件在编译期就固定了：解析失败只能是构建问题，带病启动更难查。
+		panic("内置 config.example.json 无法解析: " + err.Error())
 	}
-	c.Cooldown.SoftRate = "600s"
-	c.Cooldown.SoftRateMax = "2h"
-	// 排程段默认值由 internal/config 集中维护（cmd/server 与 cmd/activity 共用，
-	// 消除 issue #49 的默认值漂移）。
-	c.Schedule = config.DefaultSchedule()
-	c.Upstream.TimeoutSeconds = 120
-	// HeaderTimeoutSeconds/IdleTimeoutSeconds 默认 0（未设置态），回落见 normalize()。
-	c.Upstream.HeaderTimeoutSeconds = 0
-	c.Upstream.IdleTimeoutSeconds = 0
-	// Global.Enabled 缺省 true（纯 CN 行为不变：CN 账号恒判 cn，global base 不被使用）；
-	// ChatBase/BillingBase 缺省空（回落内置默认）。
-	c.Global.Enabled = true
-	// 出站指纹默认伪造官方 WorkBuddy 桌面端：UA 三段式 + X-IDE-* 头组
-	// （upstream.Client 的 attributionClientName 空值也回落 WorkBuddy，双保险）；
-	// 显式 client_name="SaaS" 还原旧行为。
-	c.Upstream.ClientName = "WorkBuddy"
-	// 大请求体压缩默认开：省的是本机出口带宽（issue #297 实测 1Mbps 出口下 3MB 差 20s+）。
-	c.Upstream.GzipBody = true
-	c.Features.SanitizeBlacklistFingerprints = true
-	reasoningFallback := true
-	c.ReasoningAsContent = &reasoningFallback
-	c.Prompt.Mode = "passthrough" // 缺省 passthrough：默认透传客户端原始 system；显式配置 custom 仍可覆盖回替换
-	c.Pool.MaxInFlight = 3
-	// MaxInFlightGlobal 缺省 2：global 域 WAF 风控更紧，压低单号并发（WAF 403
-	// 修复 P1-1）；0/负数 normalize 回落。显式 0 需配 -1 之外的方式关闭分档
-	// ——这里约定 0 = 未设置回落默认 2（与 max_in_flight 的 0=不限语义不同，
-	// 分档键的 0 没有合理语义，回退分档默认最稳）。
-	c.Pool.MaxInFlightGlobal = 2
-	c.Pool.BreakerThreshold = 3
-	c.Pool.BreakerCooldown = "30m"
-	c.Pool.BreakerCooldownMax = "6h"
-	c.Pool.DegradeThreshold = 5
-	c.Pool.DegradeCooldown = "10m"
-	c.Pool.DegradeCooldownMax = "2h"
-	c.Pool.IdleWeightPerHour = 0.5
-	c.Pool.IdleWeightMax = 5.0
-	c.Pool.ExpiringSoon = "168h" // 快过期窗口默认 7 天：官方活动奖励积分多在两周内过期
-	// costTier 探索默认 30m（issue #136：垄断破除 + 搭车改道零新增请求）；"0" 关停。
-	c.Pool.CostExploreInterval = "30m"
-	c.SessionSticky.Enabled = true
-	c.SessionSticky.TTL = "30m"
-	c.SessionSticky.GCInterval = "5m"
 	return c
 }
 
-// Load 从文件读，再用 WB2A_* env 覆盖。
+// Load 读取配置：文件名默认 config.json；**文件不存在时回退到示例配置**
+// （同目录 config.example.json → 内嵌副本，都会打 WARNING），再用 WB2A_* env 覆盖。
+//
+// 「默认值来自示例配置」的落地方式：先用内嵌示例反序列化出默认配置，再把用户文件覆盖上去。
+// 因此用户文件里没写的键，值就是 config.example.json 里的值——读那份文件即可知道全部默认。
 func Load(path string) (*Config, error) {
 	c := Default()
-	if path != "" {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read config: %w", err)
-		}
-		// 容忍 UTF-8 BOM：Windows 记事本 / PowerShell 5.1 的 `Set-Content -Encoding utf8`
-		// 默认会写 BOM，而 encoding/json 遇到 \ufeff 会直接报
-		// 「invalid character 'ï' looking for beginning of value」——
-		// 用户看到的是一句和配置文件内容毫不相干的解析错误。
-		raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
-		if err := json.Unmarshal(raw, c); err != nil {
-			return nil, fmt.Errorf("parse config: %w", err)
-		}
+
+	raw, source, err := configdata.Resolve(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	c.SourcePath = source
+	// 容忍 UTF-8 BOM：Windows 记事本 / PowerShell 5.1 的 `Set-Content -Encoding utf8`
+	// 默认会写 BOM，而 encoding/json 遇到 \ufeff 会直接报
+	// 「invalid character 'ï' looking for beginning of value」——
+	// 用户看到的是一句和配置文件内容毫不相干的解析错误。
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+	if err := json.Unmarshal(raw, c); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", source, err)
 	}
 	applyEnv(c)
 	if err := c.normalize(); err != nil {

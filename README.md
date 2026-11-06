@@ -219,6 +219,21 @@ cp config.example.json config.json
 
 编辑 `config.json`，**至少设置 `api_key`**（`留空 = 不鉴权`，公网部署务必设置）；要用 Web 管理后台再做 `"admin": {"enabled": true}`。示例中的 `test_key` 等均为占位符，`config.example.json` 不含任何真实密钥。
 
+> `config.example.json` 就是**全部默认值的权威来源**（随二进制内嵌）：`config.json` 里没写的键，
+> 生效值就是那份文件里的值。想改默认值改它，想核对某个键的默认值也看它。
+
+**如果忘了写 `config.json`**，程序不会崩，而是打 WARNING 后按下面的顺序回退：
+
+| 顺序 | 来源 | 日志 |
+|---|---|---|
+| 1 | 指定的 `config.json` | `配置来源: …/config.json` |
+| 2 | 同目录 / 工作目录 / 可执行文件目录的 `config.example.json` | `WARNING: 找不到配置文件 …，回退到示例配置` + `WARNING: 已改用 …/config.example.json` |
+| 3 | **编译进二进制的内嵌示例** | `WARNING: 未找到 config.example.json，使用编译进二进制的内置默认配置` |
+
+> 注意 `api_key` 此时是示例里的占位符 `test_key`——回退只是让服务能起来，不代表可以直接对外。
+> 另外：`docker compose` 挂载 `./config.json:/app/config.json:ro` 时若宿主机没有该文件，Docker 会
+> **创建一个同名目录**；程序会把「路径是目录」也按缺失处理，并在日志里点明这个坑。
+
 两种起法，按需选一种：
 
 ```bash
@@ -337,6 +352,10 @@ curl -s http://localhost:7863/v1/chat/completions \
 5. **不把归档目录与运行期数据入库**：`old/`（旧 Python/Next 面板）、`auths/`、`data/`、
    真实 `config.json` 一律由 `.gitignore` / `.dockerignore` 排除；凭据永远不进 git。
 6. **不重写已发布的历史**：只有尚未推送的提交才允许 `reset`/重排；推送过的历史只追加。
+7. **默认值只写在 `internal/configdata/config.example.json`**（随二进制内嵌，是所有默认值的
+   唯一权威来源）。要改默认值就改那份 JSON，**不要再往 Go 代码里塞字面量**；根目录的
+   `config.example.json` 是对外副本，改完执行 `go run ./cmd/example-config -write` 同步
+   （`go test ./internal/configdata` 会在两者不一致时报错）。
 
 ## CI：镜像构建（GitHub Actions）
 

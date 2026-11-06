@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -137,8 +138,12 @@ func TestNormalizeScheduleDedupAndSort(t *testing.T) {
 }
 
 // TestNormalizeScheduleLegacyHoursMigrated 旧的 *_hours 折算成 *_time（整点），并记入迁移列表。
+// 迁移发生在**反序列化**时（只有那里才知道用户到底写了哪些键），所以这里走 JSON。
 func TestNormalizeScheduleLegacyHoursMigrated(t *testing.T) {
-	s := Schedule{CheckinHours: []int{10, 14}, CatHours: []int{2}}
+	s := Schedule{}
+	if err := json.Unmarshal([]byte(`{"checkin_hours":[10,14],"cat_hours":[2]}`), &s); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if err := s.Normalize(); err != nil {
 		t.Fatalf("normalize: %v", err)
 	}
@@ -153,7 +158,10 @@ func TestNormalizeScheduleLegacyHoursMigrated(t *testing.T) {
 		t.Errorf("MigratedFields=%v", s.MigratedFields())
 	}
 	// 新字段优先：两者并存时以 *_time 为准，且不记迁移。
-	s2 := Schedule{CheckinTime: []string{"08:15"}, CheckinHours: []int{10}}
+	s2 := Schedule{}
+	if err := json.Unmarshal([]byte(`{"checkin_time":["08:15"],"checkin_hours":[10]}`), &s2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if err := s2.Normalize(); err != nil {
 		t.Fatalf("normalize: %v", err)
 	}
@@ -197,12 +205,37 @@ func TestNormalizeScheduleInvalidTime(t *testing.T) {
 
 // TestNormalizeScheduleInvalidLegacyHour 旧的 *_hours 越界同样快速失败（并提示新写法）。
 func TestNormalizeScheduleInvalidLegacyHour(t *testing.T) {
-	s := Schedule{CheckinHours: []int{25}}
-	err := s.Normalize()
+	s := Schedule{}
+	err := json.Unmarshal([]byte(`{"checkin_hours":[25]}`), &s)
 	if err == nil {
 		t.Fatal("want error")
 	}
 	if !strings.Contains(err.Error(), "checkin_hours") || !strings.Contains(err.Error(), "checkin_time") {
 		t.Errorf("错误信息应同时指出旧键与新写法：%v", err)
+	}
+}
+
+// TestScheduleDefaultsSurvivePartialUnmarshal 键缺席必须保留上一层的默认值
+// （默认配置来自内嵌 config.example.json；用户文件只写一部分键是常态）。
+func TestScheduleDefaultsSurvivePartialUnmarshal(t *testing.T) {
+	s := DefaultSchedule()
+	if err := json.Unmarshal([]byte(`{"checkin_time":["09:30"]}`), &s); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := strings.Join(s.CheckinTime, ","); got != "09:30" {
+		t.Errorf("checkin_time=%s want 09:30", got)
+	}
+	// 没写的键保持示例里的默认值。
+	if got := strings.Join(s.KeepaliveTime, ","); got != "22:00" {
+		t.Errorf("keepalive_time=%s want 22:00（未写的键应保留默认）", got)
+	}
+	if got := s.ActivityReportCount; got != 5 {
+		t.Errorf("activity_report_count=%d want 5（未写的键应保留默认）", got)
+	}
+	if got := s.SpreadWindow; got != "15m" {
+		t.Errorf("spread_window=%s want 15m（未写的键应保留默认）", got)
+	}
+	if !s.CheckinEnabled || !s.CatEnabled {
+		t.Errorf("开关默认应保留 true：%+v", s)
 	}
 }
