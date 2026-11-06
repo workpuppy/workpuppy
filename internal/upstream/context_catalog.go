@@ -24,7 +24,7 @@ package upstream
 
 // DefaultContextWindow 知识表也未收录的模型的 context_length 兜底：1M。
 // 上游多数大窗口模型的实际量级；高估优于低估（见文件头）。
-const DefaultContextWindow int64 = 1000000
+var DefaultContextWindow int64 = 1000000
 
 // contextCap 一个模型的上下文能力（字段级兜底条目）。
 // context 必为正（否则条目无意义，直接走 1M 兜底）；

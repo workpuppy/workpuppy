@@ -25,14 +25,14 @@ import (
 
 // passwordLen 生成密码的长度。20 个字符、58 个字符的字母表 ≈ 117 bit 熵：
 // 在线爆破不可能成功，也不至于长到没法手输/复制。
-const passwordLen = 20
+var passwordLen = 20
 
 // alphabet 去掉了容易看错的字符（0/O/1/l/I），便于从日志里抄进浏览器。
 const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 // minOverrideLen 外部固定密码（env/config）的最短长度。太短的密码会让"只认
 // 内存凭据"这套设计失去意义，所以宁可启动即报错也不接受弱口令。
-const minOverrideLen = 8
+var minOverrideLen = 8
 
 // Store 内存中的管理密码。并发安全（HTTP 处理与启动日志都会读）。
 type Store struct {

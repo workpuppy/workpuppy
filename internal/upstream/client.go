@@ -451,7 +451,7 @@ var retryAfterHeaderCandidates = []string{"Retry-After", "Retry-After-Ms", "X-Ra
 
 // retryAfterSanity 解析结果的上限（超过视为上游异常值丢弃，回落本地计算），
 // 与 pool 的 softRateMax 默认 2h 同量级（上游不该明示比冷却封顶更长的等待）。
-const retryAfterSanity = 2 * time.Hour
+var retryAfterSanity = 2 * time.Hour
 
 // ParseRetryAfter 从限流/拦截响应头解析上游明示的等待时长（P1-2）：
 // 依次尝试 Retry-After（整数秒）→ retry-after-ms（整数毫秒）→
@@ -1084,7 +1084,7 @@ func (c *Client) doJSON(a *auth.Auth, req *http.Request) (json.RawMessage, error
 // refreshIOTimeout 单次 refresh 网络调用的总时长上限。
 // 远小于 HTTP.Client.Timeout(120s)：refresh 持锁窗口内做网络 I/O，超时越短，
 // 单账号 hang 对该账号相关操作的阻塞越短（issue:持锁 120s I/O → 池级停滞）。
-const refreshIOTimeout = 30 * time.Second
+var refreshIOTimeout = 30 * time.Second
 
 // refreshTokenExpiresInMax refresh 响应 expiresIn 的量级上限（10 年，纯防御值：
 // 实测 R-D 响应恒 5184000=60d）。超限视为上游脏数据，不写 ExpiresAt（保留旧值），
@@ -1448,7 +1448,7 @@ func (c *Client) ChatStreamContext(ctx context.Context, a *auth.Auth, body []byt
 // 64KB 的依据：小请求压了只多一次分配与 CPU，省下的带宽可以忽略；而长上下文
 // 请求体在 1MB 以上（实测 4.2 字节/token，78 万 token ≈ 3.3MB），服务器出口
 // 只有 ~1Mbps 时首字节要等 20-30 秒 —— 压到 1/4.5 就是实打实的提速。
-const gzipBodyThreshold = 64 << 10
+var gzipBodyThreshold = 64 << 10
 
 // channelBlockTTL 渠道校验命中后「优先走 /console」的时长（issue #296）。
 // 10 分钟覆盖一轮长对话；过短会反复撞 /v2，过长则上游策略变化后迟迟不切回。

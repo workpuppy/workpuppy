@@ -33,7 +33,7 @@ import (
 var uidPattern = regexp.MustCompile(`^[0-9A-Za-z_-]{1,80}$`)
 
 // adminBodyLimit 管理端小接口的请求体上限（只需一个短 JSON）。
-const adminBodyLimit = 8 << 10
+var adminBodyLimit int64 = 8 << 10
 
 // adminAccount 管理面账号视图 = 池运行态（内嵌 pool.Status，字段全量透出）+ 凭证侧元信息。
 //

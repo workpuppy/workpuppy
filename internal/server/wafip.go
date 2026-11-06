@@ -32,7 +32,7 @@ var wafIPWindow = 60 * time.Second
 // 定义：单号反复 403 永不触发（账号级偶发归软冷却管），两个不同号在 60s 内接连
 // 被拦（同一出口 IP）已是 IP 级证据（BulidH 实测 3 号 1s 全拦，阈值 2 更早止损，
 // 少放大一次轮转）。
-const wafIPThreshold = 2
+var wafIPThreshold = 2
 
 // wafIPGate WAF IP 级拦截状态机（Handler 内嵌，零值可用）。
 type wafIPGate struct {

@@ -19,11 +19,11 @@ import (
 )
 
 // keyTTL 粘性会话镜像 + 状态快照的默认 TTL（redis 侧兜底，防脏数据长期滞留）。
-const keyTTL = 7 * 24 * time.Hour
+var keyTTL = 7 * 24 * time.Hour
 
 // writeConcurrencyLimit fire-and-forget 异步写的在途上限（发现 4：写 goroutine
 // 无信号量限制，高写入速率下可瞬时堆积）。超过的排队不丢弃——写语义不变（见 goWrite）。
-const writeConcurrencyLimit = 8
+var writeConcurrencyLimit = 8
 
 // Store 只放本期需要的方法。上下文由实现内部构造（读操作配短超时，写操作 fire-and-forget）。
 type Store interface {

@@ -96,7 +96,7 @@ type Config struct {
 // 与 SoftCooldown 分流的原因：404 是上游**偶发**路径缺失，不是"本账号在限流"，
 // 若共用 soft_rate（600s 起 + 指数升级），一次偶发 404 会把好账号罚 10 分钟并逐次加倍。
 // 故固定 60s 防雪崩即可，不随 soft_rate 配置、也不参与软退避指数。
-const notFoundCooldown = 60 * time.Second
+var notFoundCooldown = 60 * time.Second
 
 // wafCooldownBase WAF 403 软冷却基数（任务书 P0-1 建议 60s 起；抖动 ±25% 后落
 // [45s,75s]，实际进入 CooldownSoftRate 后再按 softStreak 指数、封顶 soft_rate_max）。
@@ -104,12 +104,12 @@ const notFoundCooldown = 60 * time.Second
 // 429「账号级限流」轻（账号本身健康、直连 200 实证），但比 404 重（带粘性会连环）；
 // 60s 级的快速避让已足够让频控窗口滑过，指数升级由 CooldownSoftRate 既有机制接管。
 // 抖动复用 backoff.go jitterDur（单一来源，不重复造轮子）。
-const wafCooldownBase = 60 * time.Second
+var wafCooldownBase = 60 * time.Second
 
 // upstreamRestrictionCooldown 上游「账号异常行为」风控限制的软冷却时长。
 // 这类限制可申诉、会自行解除（现场观测同一账号数小时后恢复 200），
 // 而凭证本身有效 —— 因此只把它移出轮换，不 Disable、不清凭证。
-const upstreamRestrictionCooldown = 45 * time.Minute
+var upstreamRestrictionCooldown = 45 * time.Minute
 
 // forceAccountHeader 内部头：管理面测试台（/admin/playground/chat?uid=）用它指定账号。
 // 用头而不是 query 参数，是为了让「指定账号」这件事只发生在一处（选号前的统一入口），
@@ -124,7 +124,7 @@ const ServiceName = "workbuddy2api"
 // dumpReqMinBytes WB2A_DUMP_REQ 调试落盘的"大请求"固定阈值（4MB）。原判断是
 // 「超过 max_body_mb 上限一半」，max_body_mb 移除后改为固定值，语义不变：
 // 小探针（{"input":"hi"} 之类）不落盘，避免覆盖真正要看的对话请求。
-const dumpReqMinBytes = 4 << 20
+var dumpReqMinBytes = 4 << 20
 
 // Handler 主路由。
 type Handler struct {

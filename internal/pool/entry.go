@@ -495,7 +495,7 @@ const (
 // 12153 会被临时性触发（网络抖动/上游闪断/refresh 竞态），一次失败即禁用的旧行为
 // 会误杀健康账号（P0-1：13 个 disabled 号全是误判）。3 次连续才判死：容忍偶发抖动，
 // 又不会让真正的死 session 留在池里反复被选中。
-const sessionDeadThreshold = 3
+var sessionDeadThreshold = 3
 
 // 连败降权（issue #114「累计错误率高/连续失败 N 次的账号移出候选池一段时间」）
 // 的默认参数，与熔断器参数族同风格（SetDegrade 注入，默认值在此）。

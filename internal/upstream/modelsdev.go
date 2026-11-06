@@ -34,15 +34,15 @@ import (
 const ModelsDevURL = "https://models.dev/api.json"
 
 // modelsDevTimeout 单次拉取超时：兜底的兜底，不值得等（任务书 §2：如 5s）。
-const modelsDevTimeout = 5 * time.Second
+var modelsDevTimeout = 5 * time.Second
 
 // modelsDevFetchCooldown 拉取节流（进程级）：文档是全量聚合体，5min 内不重拉
 // （同模型 24h 负缓存之外的整体节流，防短窗反复打 models.dev）。
-const modelsDevFetchCooldown = 5 * time.Minute
+var modelsDevFetchCooldown = 5 * time.Minute
 
 // modelsDevNegativeTTL 同模型负缓存：查不到的模型 24h 内不重查
 // （任务书 §2：如同模型 24h 内不重查，查不到的模型负缓存防反复打）。
-const modelsDevNegativeTTL = 24 * time.Hour
+var modelsDevNegativeTTL = 24 * time.Hour
 
 // modelsDevNegativesSoftCap 负缓存 map 的软上限：规模超过它时才做一次过期条目淘汰
 // 扫描。分批摊销是为避免每次 lookup 都做 O(n) 全扫——第 4 级触发点在 /v1/models 里

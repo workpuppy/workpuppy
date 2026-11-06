@@ -20,7 +20,7 @@ import (
 )
 
 // metricsCap 模型键容量上限。上游目录规模远小于此值；上限只为兜底异常模型名。
-const metricsCap = 512
+var metricsCap = 512
 
 // modelMetrics 单模型的累加器（全字段原子性由 metricsMu 保证，无需 atomic）。
 type modelMetrics struct {

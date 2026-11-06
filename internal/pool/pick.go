@@ -312,7 +312,7 @@ type weighted struct {
 // expiringWeight 快过期积分占比的权重系数（三因子之一，issue:积分过期）。
 // 取 8：略低于 credits 总量项（×10），足以在"快过期多"与"总量相近"的号之间拉开差距，
 // 又不至于压过总量项让"总量大但快过期少"的号被完全饿死。
-const expiringWeight = 8.0
+var expiringWeight = 8.0
 
 // pickWeighted 三因子加权随机（claude-api selectWeightedRandom 参考口径）：
 //

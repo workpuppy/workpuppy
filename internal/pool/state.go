@@ -225,7 +225,7 @@ func (p *Pool) NoteModelCost(uid, model string, credit float64, tokens int) {
 	if e.modelCost == nil {
 		e.modelCost = make(map[string]modelCostEntry)
 	}
-	const alpha = 0.3
+	var alpha = 0.3
 	prev, seen := e.modelCost[model]
 	if !seen {
 		e.modelCost[model] = modelCostEntry{CostPer1k: per1k, LastSeen: time.Now(), Samples: 1}

@@ -18,11 +18,11 @@ var errDeviceTokenTooLarge = errors.New("device token file too large")
 
 // deviceTokenFile 文件读取缓存 TTL（秒）。桌面端 SDK 自身也有缓存，这里再兜一层
 // 避免每次出站请求都 stat+read 文件。
-const deviceTokenFileTTL = 5 * time.Minute
+var deviceTokenFileTTL = 5 * time.Minute
 
 // deviceTokenFileMaxLen token 文件最大字节数。token 通常几百字节；超过 1KB
 // 视为异常（非 token 内容 / 文件被误用），忽略不注入。
-const deviceTokenFileMaxLen = 1024
+var deviceTokenFileMaxLen = 1024
 
 // deviceTokenFileCache 缓存 device token 文件读取结果（path → token+读取时刻）。
 type deviceTokenFileCache struct {
