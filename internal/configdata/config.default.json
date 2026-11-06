@@ -8,7 +8,10 @@
   "cooldown": {
     "soft_rate": "600s",
     "soft_rate_max": "2h",
-    "credit_exhausted": ""
+    "credit_exhausted": "",
+    "not_found": "60s",
+    "waf_base": "60s",
+    "upstream_restriction": "45m"
   },
   "schedule": {
     "checkin_time": [
@@ -57,7 +60,10 @@
     "account_delay_max_seconds": 0
   },
   "admin": {
-    "enabled": false
+    "enabled": false,
+    "body_limit_bytes": 8192,
+    "password_length": 20,
+    "min_password_length": 8
   },
   "global": {
     "enabled": true,
@@ -75,7 +81,12 @@
     "device_token_file": "",
     "client_name": "WorkBuddy",
     "passthrough_ip": false,
-    "gzip_body": true
+    "gzip_body": true,
+    "retry_after_max": "2h",
+    "gzip_threshold_bytes": 65536,
+    "refresh_io_timeout": "30s",
+    "device_token_ttl": "5m",
+    "device_token_max_len": 1024
   },
   "features": {
     "sanitize_blacklist_fingerprints": true,
@@ -88,7 +99,9 @@
   },
   "upstash": {
     "url": "",
-    "token": ""
+    "token": "",
+    "key_ttl": "168h",
+    "write_concurrency": 8
   },
   "pool": {
     "large_request_bytes": 0,
@@ -107,7 +120,33 @@
     "idle_weight_per_hour": 0.5,
     "idle_weight_max": 5,
     "expiring_soon": "168h",
-    "cost_explore_interval": "30m"
+    "cost_explore_interval": "30m",
+    "min_pick_gap": "100ms",
+    "session_dead_threshold": 3,
+    "rotate_backoff_base": "500ms",
+    "expiring_weight": 8
+  },
+  "auths": {
+    "watch_interval": "5s"
+  },
+  "state": {
+    "flush_interval": "5s"
+  },
+  "risk": {
+    "waf_window": "60s",
+    "waf_threshold": 2
+  },
+  "metrics": {
+    "capacity": 512
+  },
+  "debug": {
+    "dump_min_bytes": 4194304
+  },
+  "models": {
+    "default_context": 1000000,
+    "catalog_timeout": "5s",
+    "catalog_refresh_cooldown": "5m",
+    "catalog_negative_ttl": "24h"
   },
   "session_sticky": {
     "enabled": true,

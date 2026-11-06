@@ -12,9 +12,14 @@ import (
 	"sync"
 	"time"
 
+	"workbuddy2api/internal/adminauth"
 	"workbuddy2api/internal/config"
 	"workbuddy2api/internal/configdata"
+	"workbuddy2api/internal/pool"
 	"workbuddy2api/internal/prompt"
+	"workbuddy2api/internal/redisstore"
+	"workbuddy2api/internal/server"
+	"workbuddy2api/internal/upstream"
 )
 
 // defaultCfg/defaultCfgOnce 缓存"纯默认配置"，供 normalize 的兜底取值使用。
@@ -60,6 +65,10 @@ type Config struct {
 		// CreditExhausted 积分耗尽后的冷却时长（如 "10m"）。空 = 旧行为：硬冷却到次日 04:00
 		// （等签到恢复）。配了就只退出这一小段，到期回到候选池（issue #78）。
 		CreditExhausted string `json:"credit_exhausted"`
+		// NotFound / WafBase / UpstreamRestriction 各类冷却时长（默认值见 config.default.json）。
+		NotFound            string `json:"not_found"`            // 404/未知模型后的冷却，默认 "60s"
+		WafBase             string `json:"waf_base"`             // WAF 403 基础冷却，默认 "60s"
+		UpstreamRestriction string `json:"upstream_restriction"` // 上游限制类错误冷却，默认 "45m"
 	} `json:"cooldown"`
 
 	Schedule config.Schedule `json:"schedule"`
@@ -70,6 +79,12 @@ type Config struct {
 	// （withAuth + 同一个 api_key，不另立管理密钥）。
 	Admin struct {
 		Enabled bool `json:"enabled"` // 默认 false
+		// BodyLimitBytes 管理面请求体上限（默认 8192）。
+		BodyLimitBytes int `json:"body_limit_bytes"`
+		// PasswordLength 启动时随机生成的管理密码长度（默认 20）。
+		PasswordLength int `json:"password_length"`
+		// MinPasswordLength 用 WB2A_ADMIN_PASSWORD 固定密码时的最小长度（默认 8）。
+		MinPasswordLength int `json:"min_password_length"`
 	} `json:"admin"`
 
 	Global struct {
@@ -113,6 +128,15 @@ type Config struct {
 		// DeviceTokenFile 宿主落盘的 device token 文件路径（可选，空 = 不读文件）。
 		// 读取频率限 5 分钟一次缓存，>1KB 或读失败则忽略（优雅降级不注入）。
 		DeviceTokenFile string `json:"device_token_file"`
+		// RetryAfterMax 上游 Retry-After 的合理上限（超出视为脏数据），默认 "2h"。
+		RetryAfterMax string `json:"retry_after_max"`
+		// GzipThresholdBytes 请求体超过该字节数才压缩（0 = 不压缩），默认 65536。
+		GzipThresholdBytes int `json:"gzip_threshold_bytes"`
+		// RefreshIOTimeout token 刷新的单独超时，默认 "30s"。
+		RefreshIOTimeout string `json:"refresh_io_timeout"`
+		// DeviceTokenTTL / DeviceTokenMaxLen device_token 文件缓存有效期与最大长度。
+		DeviceTokenTTL    string `json:"device_token_ttl"`     // 默认 "5m"
+		DeviceTokenMaxLen int    `json:"device_token_max_len"` // 默认 1024
 		// ClientName 用量归属头 X-Product/X-IDE-Name/X-IDE-Type 的取值。
 		// 空（缺省）= "WorkBuddy"：伪造官方桌面端指纹（X-IDE-* 四头 + X-Agent-Purpose，
 		// 上游用量归因不再出现 client/agentPurpose 为空的网关特征）。
@@ -156,6 +180,9 @@ type Config struct {
 	Upstash struct {
 		URL   string `json:"url"`   // 空 = 纯内存模式；支持完整 rediss:// URL 或 https://xxx.upstash.io host
 		Token string `json:"token"` // url 非完整连接串时用于组装 rediss://default:<token>@<host>:6379
+		// KeyTTL 会话镜像 key 的存活时间（默认 "168h"）；WriteConcurrency 并发写入上限（默认 8）。
+		KeyTTL           string `json:"key_ttl"`
+		WriteConcurrency int    `json:"write_concurrency"`
 	} `json:"upstash"`
 
 	Pool struct {
@@ -194,7 +221,49 @@ type Config struct {
 		// 错误策略）。默认 "30m"（≤48 次/天/模型）；"0" 关停（完全回到现状行为）；
 		// 空值回落默认。
 		CostExploreInterval string `json:"cost_explore_interval"`
+		// MinPickGap 选号防惊群间隔（跳过刚被选中的号），默认 "100ms"。
+		MinPickGap string `json:"min_pick_gap"`
+		// SessionDeadThreshold 连续多少次 12153 session dead 才禁用账号，默认 3。
+		SessionDeadThreshold int `json:"session_dead_threshold"`
+		// RotateBackoffBase 转退避基数（对齐官方 CLI），默认 "500ms"。
+		RotateBackoffBase string `json:"rotate_backoff_base"`
+		// ExpiringWeight 快过期积分在选号权重里的倍数，默认 8。
+		ExpiringWeight float64 `json:"expiring_weight"`
 	} `json:"pool"`
+
+	// Auths auths 目录热加载（默认 "5s"）。
+	Auths struct {
+		WatchInterval string `json:"watch_interval"`
+	} `json:"auths"`
+
+	// State 状态落盘（默认 "5s"）。
+	State struct {
+		FlushInterval string `json:"flush_interval"`
+	} `json:"state"`
+
+	// Risk 风控阈值：单 IP 在窗口内命中 WAF 多少次进入风险暂停。
+	Risk struct {
+		WafWindow    string `json:"waf_window"`    // 默认 "60s"
+		WafThreshold int    `json:"waf_threshold"` // 默认 2
+	} `json:"risk"`
+
+	// Metrics 指标环形缓冲容量（默认 512）。
+	Metrics struct {
+		Capacity int `json:"capacity"`
+	} `json:"metrics"`
+
+	// Debug 排障开关：请求体落盘的最小字节数（0 = 关闭，默认 4194304）。
+	Debug struct {
+		DumpMinBytes int `json:"dump_min_bytes"`
+	} `json:"debug"`
+
+	// Models 模型目录与上下文窗口默认值。
+	Models struct {
+		DefaultContext         int64  `json:"default_context"`          // 默认 1000000
+		CatalogTimeout         string `json:"catalog_timeout"`          // 默认 "5s"
+		CatalogRefreshCooldown string `json:"catalog_refresh_cooldown"` // 默认 "5m"
+		CatalogNegativeTTL     string `json:"catalog_negative_ttl"`     // 默认 "24h"
+	} `json:"models"`
 
 	SessionSticky struct {
 		Enabled    bool   `json:"enabled"`     // 默认 true
@@ -227,6 +296,23 @@ type Config struct {
 	// （schedule.intra_request_jitter_min/max 解析结果）。默认 1s / 3s；都 0 = 关闭。
 	IntraJitterMinD time.Duration `json:"-"`
 	IntraJitterMaxD time.Duration `json:"-"`
+
+	// A 组运行期阈值的解析结果（json:"-"）；解析后注入各包的 Configure。
+	CooldownNotFoundDur            time.Duration `json:"-"`
+	CooldownWafBaseDur             time.Duration `json:"-"`
+	CooldownUpstreamRestrictionDur time.Duration `json:"-"`
+	MinPickGapDur                  time.Duration `json:"-"`
+	RotateBackoffBaseDur           time.Duration `json:"-"`
+	RetryAfterMaxDur               time.Duration `json:"-"`
+	RefreshIOTimeoutDur            time.Duration `json:"-"`
+	DeviceTokenTTLDur              time.Duration `json:"-"`
+	AuthsWatchIntervalDur          time.Duration `json:"-"`
+	StateFlushIntervalDur          time.Duration `json:"-"`
+	RiskWafWindowDur               time.Duration `json:"-"`
+	ModelsCatalogTimeoutDur        time.Duration `json:"-"`
+	ModelsCatalogRefreshDur        time.Duration `json:"-"`
+	ModelsCatalogNegativeDur       time.Duration `json:"-"`
+	UpstashKeyTTLDur               time.Duration `json:"-"`
 }
 
 // Default 默认配置 —— **完全来自内嵌的 config.default.json**（唯一权威来源）。
@@ -284,7 +370,99 @@ func Load(path string) (*Config, error) {
 	if err := c.normalize(); err != nil {
 		return nil, err
 	}
+	if err := c.wireTunings(); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// wireTunings 解析 A 组运行期阈值并注入各包（默认值全部来自 config.default.json）。
+//
+// 为什么单独一步：这些阈值是**进程级**参数，散在 pool/server/upstream/redisstore/adminauth
+// 五个包里；统一在这里解析+注入，配置面（JSON 键）与实现面（包级变量）就能一一对上，
+// 也便于测试断言"默认值确实来自默认配置文件"。
+func (c *Config) wireTunings() error {
+	parseDur := func(key, raw string) (time.Duration, error) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return 0, nil
+		}
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", key, err)
+		}
+		if d < 0 {
+			return 0, fmt.Errorf("%s: 不能为负（关闭请写 0）", key)
+		}
+		return d, nil
+	}
+	items := []struct {
+		key string
+		raw string
+		dst *time.Duration
+	}{
+		{"cooldown.not_found", c.Cooldown.NotFound, &c.CooldownNotFoundDur},
+		{"cooldown.waf_base", c.Cooldown.WafBase, &c.CooldownWafBaseDur},
+		{"cooldown.upstream_restriction", c.Cooldown.UpstreamRestriction, &c.CooldownUpstreamRestrictionDur},
+		{"pool.min_pick_gap", c.Pool.MinPickGap, &c.MinPickGapDur},
+		{"pool.rotate_backoff_base", c.Pool.RotateBackoffBase, &c.RotateBackoffBaseDur},
+		{"upstream.retry_after_max", c.Upstream.RetryAfterMax, &c.RetryAfterMaxDur},
+		{"upstream.refresh_io_timeout", c.Upstream.RefreshIOTimeout, &c.RefreshIOTimeoutDur},
+		{"upstream.device_token_ttl", c.Upstream.DeviceTokenTTL, &c.DeviceTokenTTLDur},
+		{"auths.watch_interval", c.Auths.WatchInterval, &c.AuthsWatchIntervalDur},
+		{"state.flush_interval", c.State.FlushInterval, &c.StateFlushIntervalDur},
+		{"risk.waf_window", c.Risk.WafWindow, &c.RiskWafWindowDur},
+		{"models.catalog_timeout", c.Models.CatalogTimeout, &c.ModelsCatalogTimeoutDur},
+		{"models.catalog_refresh_cooldown", c.Models.CatalogRefreshCooldown, &c.ModelsCatalogRefreshDur},
+		{"models.catalog_negative_ttl", c.Models.CatalogNegativeTTL, &c.ModelsCatalogNegativeDur},
+		{"upstash.key_ttl", c.Upstash.KeyTTL, &c.UpstashKeyTTLDur},
+	}
+	for _, it := range items {
+		d, err := parseDur(it.key, it.raw)
+		if err != nil {
+			return err
+		}
+		*it.dst = d
+	}
+
+	adminauth.Configure(adminauth.Options{
+		PasswordLength:    c.Admin.PasswordLength,
+		MinOverrideLength: c.Admin.MinPasswordLength,
+	})
+	pool.Configure(pool.Options{
+		MinPickGap:           c.MinPickGapDur,
+		SessionDeadThreshold: c.Pool.SessionDeadThreshold,
+		ExpiringWeight:       c.Pool.ExpiringWeight,
+		WatchInterval:        c.AuthsWatchIntervalDur,
+		FlushInterval:        c.StateFlushIntervalDur,
+	})
+	server.Configure(server.Options{
+		NotFoundCooldown:            c.CooldownNotFoundDur,
+		WafCooldownBase:             c.CooldownWafBaseDur,
+		UpstreamRestrictionCooldown: c.CooldownUpstreamRestrictionDur,
+		RotateBackoffBase:           c.RotateBackoffBaseDur,
+		WafIPWindow:                 c.RiskWafWindowDur,
+		WafIPThreshold:              c.Risk.WafThreshold,
+		DumpReqMinBytes:             c.Debug.DumpMinBytes,
+		MetricsCap:                  c.Metrics.Capacity,
+		AdminBodyLimit:              int64(c.Admin.BodyLimitBytes),
+	})
+	upstream.Configure(upstream.Options{
+		RetryAfterMax:          c.RetryAfterMaxDur,
+		RefreshIOTimeout:       c.RefreshIOTimeoutDur,
+		GzipThresholdBytes:     c.Upstream.GzipThresholdBytes,
+		DeviceTokenFileTTL:     c.DeviceTokenTTLDur,
+		DeviceTokenFileMaxLen:  c.Upstream.DeviceTokenMaxLen,
+		DefaultContextWindow:   c.Models.DefaultContext,
+		CatalogTimeout:         c.ModelsCatalogTimeoutDur,
+		CatalogRefreshCooldown: c.ModelsCatalogRefreshDur,
+		CatalogNegativeTTL:     c.ModelsCatalogNegativeDur,
+	})
+	redisstore.Configure(redisstore.Options{
+		KeyTTL:           c.UpstashKeyTTLDur,
+		WriteConcurrency: c.Upstash.WriteConcurrency,
+	})
+	return nil
 }
 
 // stripNulls 递归剔除 JSON 对象里值为 null 的键，让"显式 null"等同于"未定义"，
