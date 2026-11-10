@@ -101,9 +101,10 @@ type Config struct {
 	} `json:"global"`
 
 	Upstream struct {
-		// TimeoutSeconds 短 RPC（refresh/checkin/balance/FetchModels）总时长上限，默认 120。
-		TimeoutSeconds int `json:"timeout_seconds"`
-		// HeaderTimeoutSeconds 聊天 SSE 首字节前（响应头）上限；<=0 回落 TimeoutSeconds。
+		// RPCTimeoutSeconds **短 RPC**（refresh/checkin/balance/FetchModels）总时长上限，默认 120。
+		// 聊天流不受它约束：聊天走的 SSE 另有 header/idle 两个超时。
+		RPCTimeoutSeconds int `json:"rpc_timeout_seconds"`
+		// HeaderTimeoutSeconds 聊天 SSE 首字节前（响应头）上限；<=0 回落 RPCTimeoutSeconds。
 		HeaderTimeoutSeconds int `json:"header_timeout_seconds"`
 		// IdleTimeoutSeconds 聊天 SSE 流中空闲上限（活跃吐数据续命不掐）；<=0 回落默认 300。
 		IdleTimeoutSeconds int `json:"idle_timeout_seconds"`
@@ -215,8 +216,6 @@ type Config struct {
 		// ExpiringSoonWindow 快过期积分**窗口**（如 "168h"=7天）：签到查余额时，到期时间在此窗口内
 		// 的积分被标记为"快过期"，选号优先消耗（issue:积分过期）。空/0 = 禁用分桶。
 		ExpiringSoonWindow string `json:"expiring_soon_window"`
-		// ExpiringSoon 已弃用别名：等价于 expiring_soon_window（只写旧键时生效，并打 WARN）。
-		ExpiringSoon string `json:"expiring_soon"`
 		// CostExploreInterval costTier 条件探索窗口（issue #136 方案 a′）：tier 0
 		// 垄断层存在且 tier 1 有成员时，距上次探索 ≥ 窗口则本次 pick 生效层切
 		// tier 1-only（探索=搭车改道，零新增上游请求；成功即毕业，失败走既有
@@ -227,8 +226,8 @@ type Config struct {
 		MinPickGap string `json:"min_pick_gap"`
 		// SessionDeadThreshold 连续多少次 12153 session dead 才禁用账号，默认 3。
 		SessionDeadThreshold int `json:"session_dead_threshold"`
-		// RotateBackoffBase 转退避基数（对齐官方 CLI），默认 "500ms"。
-		RotateBackoffBase string `json:"rotate_backoff_base"`
+		// RotationBackoffBase 轮换（换号）退避基数：上游失败后隔多久才换下一个号，默认 "500ms"。
+		RotationBackoffBase string `json:"rotation_backoff_base"`
 		// ExpiringWeight 快过期积分在选号权重里的倍数，默认 8。
 		ExpiringWeight float64 `json:"expiring_weight"`
 	} `json:"pool"`
@@ -262,7 +261,6 @@ type Config struct {
 	// Models 模型目录与上下文窗口默认值。
 	Models struct {
 		DefaultContextWindow   int64  `json:"default_context_window"`   // 默认 1000000（token 数）
-		DefaultContext         int64  `json:"default_context"`          // 已弃用别名（只写旧键时生效）
 		CatalogTimeout         string `json:"catalog_timeout"`          // 默认 "5s"
 		CatalogRefreshCooldown string `json:"catalog_refresh_cooldown"` // 默认 "5m"
 		CatalogNegativeTTL     string `json:"catalog_negative_ttl"`     // 默认 "24h"
@@ -301,8 +299,8 @@ type Config struct {
 	// loginsvc 判 state 过期，后台把二维码标成"已失效"。
 	QRCodeTTL string `json:"qrcode_ttl"`
 
-	// legacyKeys 本次加载里用到的已弃用键（→ 新键），启动日志会打 WARN 提示迁移。
-	legacyKeys []string
+	// unknownKeys 配置里"默认配置没有"的键（拼错或旧版键名），启动日志会打 WARN。
+	unknownKeys []string
 
 	SourcePath string `json:"-"`
 	// IntraJitterMinD/MaxD 同账号内连续请求的随机间隔区间
@@ -315,7 +313,7 @@ type Config struct {
 	CooldownWafBaseDur             time.Duration `json:"-"`
 	CooldownUpstreamRestrictionDur time.Duration `json:"-"`
 	MinPickGapDur                  time.Duration `json:"-"`
-	RotateBackoffBaseDur           time.Duration `json:"-"`
+	RotationBackoffBaseDur         time.Duration `json:"-"`
 	RetryAfterMaxDur               time.Duration `json:"-"`
 	RefreshIOTimeoutDur            time.Duration `json:"-"`
 	DeviceTokenTTLDur              time.Duration `json:"-"`
@@ -329,8 +327,8 @@ type Config struct {
 	QRCodeTTLDur                   time.Duration `json:"-"`
 }
 
-// LegacyKeys 返回本次加载中用到的已弃用配置键（供启动日志提示迁移）。
-func (c *Config) LegacyKeys() []string { return c.legacyKeys }
+// UnknownKeys 返回配置里的未知键（供启动日志提示）。
+func (c *Config) UnknownKeys() []string { return c.unknownKeys }
 
 // Default 默认配置 —— **完全来自内嵌的 config.default.json**（唯一权威来源）。
 //
@@ -383,8 +381,8 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(raw, c); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", source, err)
 	}
-	// 旧键别名：按原始 JSON 的键集合判断（默认值已填满新字段，不能靠"字段为空"识别）。
-	c.applyLegacyAliases(raw)
+	// 未知键（拼错/旧版键名）会被 JSON 静默忽略：记下来，启动时打 WARN。
+	c.unknownKeys = unknownKeys(raw)
 	applyEnv(c)
 	if err := c.normalize(); err != nil {
 		return nil, err
@@ -424,7 +422,7 @@ func (c *Config) wireTunings() error {
 		{"cooldown.waf_base", c.Cooldown.WafBase, &c.CooldownWafBaseDur},
 		{"cooldown.upstream_restriction", c.Cooldown.UpstreamRestriction, &c.CooldownUpstreamRestrictionDur},
 		{"pool.min_pick_gap", c.Pool.MinPickGap, &c.MinPickGapDur},
-		{"pool.rotate_backoff_base", c.Pool.RotateBackoffBase, &c.RotateBackoffBaseDur},
+		{"pool.rotation_backoff_base", c.Pool.RotationBackoffBase, &c.RotationBackoffBaseDur},
 		{"upstream.retry_after_max", c.Upstream.RetryAfterMax, &c.RetryAfterMaxDur},
 		{"upstream.refresh_io_timeout", c.Upstream.RefreshIOTimeout, &c.RefreshIOTimeoutDur},
 		{"upstream.device_token_ttl", c.Upstream.DeviceTokenTTL, &c.DeviceTokenTTLDur},
@@ -460,7 +458,7 @@ func (c *Config) wireTunings() error {
 		NotFoundCooldown:            c.CooldownNotFoundDur,
 		WafCooldownBase:             c.CooldownWafBaseDur,
 		UpstreamRestrictionCooldown: c.CooldownUpstreamRestrictionDur,
-		RotateBackoffBase:           c.RotateBackoffBaseDur,
+		RotationBackoffBase:         c.RotationBackoffBaseDur,
 		WafIPWindow:                 c.RiskWafWindowDur,
 		WafIPThreshold:              c.Risk.WafThreshold,
 		DumpReqMinBytes:             c.Debug.DumpMinBytes,
@@ -569,7 +567,7 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("WP_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
-			c.Upstream.TimeoutSeconds = n
+			c.Upstream.RPCTimeoutSeconds = n
 		}
 	}
 	if v := os.Getenv("WP_HEADER_TIMEOUT_SECONDS"); v != "" {
@@ -621,12 +619,8 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("WP_PROMPT_FILE"); v != "" {
 		c.Prompt.File = v
 	}
-	// 新名优先；旧名 WP_EXPIRING_SOON 仍接受（与配置文件里的旧键同口径）。
 	if v := os.Getenv("WP_EXPIRING_SOON_WINDOW"); v != "" {
 		c.Pool.ExpiringSoonWindow = v
-	} else if v := os.Getenv("WP_EXPIRING_SOON"); v != "" {
-		c.Pool.ExpiringSoonWindow = v
-		c.legacyKeys = append(c.legacyKeys, "环境变量 WP_EXPIRING_SOON → WP_EXPIRING_SOON_WINDOW")
 	}
 	if v := os.Getenv("WP_ADMIN_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -788,7 +782,6 @@ func (c *Config) normalize() error {
 			c.IntraJitterMaxD, c.IntraJitterMinD)
 	}
 	// 快过期窗口：空值回落默认 168h（Default 已置；此兜底覆盖显式 ""）；显式 "0"/负值 = 禁用分桶。
-	// expiring_soon_window 是**窗口**（时长）；旧键 pool.expiring_soon 的搬运见 legacy_keys.go。
 	if c.Pool.ExpiringSoonWindow == "" {
 		c.Pool.ExpiringSoonWindow = defaults().Pool.ExpiringSoonWindow
 	}
@@ -810,13 +803,13 @@ func (c *Config) normalize() error {
 	if c.CostExploreIntervalDur < 0 {
 		c.CostExploreIntervalDur = 0
 	}
-	if c.Upstream.TimeoutSeconds <= 0 {
-		c.Upstream.TimeoutSeconds = 120
+	if c.Upstream.RPCTimeoutSeconds <= 0 {
+		c.Upstream.RPCTimeoutSeconds = 120
 	}
 	// header 缺省回落 timeout（保"首字节前换号"既有语义）；idle 缺省走内置大值。
 	// 任务书约定：0 一律视为"未设置"走默认，真正的"禁用"留待后续（避免歧义）。
 	if c.Upstream.HeaderTimeoutSeconds <= 0 {
-		c.Upstream.HeaderTimeoutSeconds = c.Upstream.TimeoutSeconds
+		c.Upstream.HeaderTimeoutSeconds = c.Upstream.RPCTimeoutSeconds
 	}
 	if c.Upstream.IdleTimeoutSeconds <= 0 {
 		c.Upstream.IdleTimeoutSeconds = defaults().Upstream.IdleTimeoutSeconds
@@ -833,7 +826,6 @@ func (c *Config) normalize() error {
 	}
 	// 排程段归一（空数组回落默认、ActivityReportCount 归一、小时范围校验）
 	// 由 internal/config 统一实现，cmd/server 与 cmd/activity 共用同一份语义。
-	// 旧键 models.default_context 的搬运见 legacy_keys.go（按原始 JSON 键集合判断）。
 	if c.Models.DefaultContextWindow == 0 {
 		c.Models.DefaultContextWindow = defaults().Models.DefaultContextWindow
 	}

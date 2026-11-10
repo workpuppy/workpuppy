@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,7 +26,7 @@ func TestTuningsDefaultsComeFromDefaultConfig(t *testing.T) {
 		{"cooldown.waf_base", c.CooldownWafBaseDur, 60 * time.Second},
 		{"cooldown.upstream_restriction", c.CooldownUpstreamRestrictionDur, 45 * time.Minute},
 		{"pool.min_pick_gap", c.MinPickGapDur, 100 * time.Millisecond},
-		{"pool.rotate_backoff_base", c.RotateBackoffBaseDur, 500 * time.Millisecond},
+		{"pool.rotation_backoff_base", c.RotationBackoffBaseDur, 500 * time.Millisecond},
 		{"upstream.retry_after_max", c.RetryAfterMaxDur, 2 * time.Hour},
 		{"upstream.refresh_io_timeout", c.RefreshIOTimeoutDur, 30 * time.Second},
 		{"upstream.device_token_ttl", c.DeviceTokenTTLDur, 5 * time.Minute},
@@ -168,10 +169,6 @@ func TestRenamedKeysEffective(t *testing.T) {
 	if c.Models.DefaultContextWindow != 64000 {
 		t.Errorf("default_context_window=%d want 64000", c.Models.DefaultContextWindow)
 	}
-	if len(c.LegacyKeys()) != 0 {
-		t.Errorf("用了新键不应记 legacy：%v", c.LegacyKeys())
-	}
-
 	// 旧的 admin.login_ttl 已被删除：写了也不生效（回落到默认 15m）。
 	fp2 := filepath.Join(dir, "old.json")
 	if err := os.WriteFile(fp2, []byte(`{"admin":{"login_ttl":"1m"}}`), 0o600); err != nil {
@@ -186,46 +183,47 @@ func TestRenamedKeysEffective(t *testing.T) {
 	}
 }
 
-// 旧键仍被接受（打 WARN 提示迁移），且新键优先。
-func TestLegacyKeysStillAcceptedWithWarning(t *testing.T) {
+// 未知键（拼错 / 旧版键名）要被列出来，而不是静默忽略。
+func TestUnknownKeysReported(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
 	body := `{
-	  "pool": {"expiring_soon": "24h"},
-	  "models": {"default_context": 32000}
+	  "listen": ":7863",
+	  "schedule": {"checkin_hours": [10, 14], "checkin_time": ["09:30"]},
+	  "pool": {"expiring_soon": "24h", "max_in_flight": 4},
+	  "proxies": {"hk": "http://127.0.0.1:7890"},
+	  "typo_key": 1
 	}`
 	if err := os.WriteFile(fp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c, err := Load(fp)
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("未知键不应导致加载失败: %v", err)
 	}
-	if c.ExpiringSoonDur != 24*time.Hour {
-		t.Errorf("旧键 expiring_soon 应被接受：%v", c.ExpiringSoonDur)
+	got := c.UnknownKeys()
+	want := map[string]bool{
+		"schedule.checkin_hours": true,
+		"pool.expiring_soon":     true,
+		"typo_key":               true,
 	}
-	if c.Models.DefaultContextWindow != 32000 {
-		t.Errorf("旧键 default_context 应被接受：%d", c.Models.DefaultContextWindow)
+	for _, k := range got {
+		if !want[k] {
+			t.Errorf("不应把 %q 判为未知键", k)
+		}
+		delete(want, k)
 	}
-	keys := c.LegacyKeys()
-	if len(keys) != 2 {
-		t.Fatalf("应记录 2 个旧键，实际 %v", keys)
+	if len(want) > 0 {
+		t.Fatalf("漏报未知键：%v（实际 %v）", want, got)
 	}
-
-	// 新旧并存 → 新键优先，且不记 legacy
-	fp2 := filepath.Join(dir, "both.json")
-	body2 := `{"pool":{"expiring_soon":"24h","expiring_soon_window":"12h"}}`
-	if err := os.WriteFile(fp2, []byte(body2), 0o600); err != nil {
-		t.Fatal(err)
+	// proxies 是自由结构（线路名由用户定义），不能误报
+	for _, k := range got {
+		if strings.HasPrefix(k, "proxies") {
+			t.Errorf("proxies 不应参与未知键检查：%q", k)
+		}
 	}
-	c2, err := Load(fp2)
-	if err != nil {
-		t.Fatalf("load both: %v", err)
-	}
-	if c2.ExpiringSoonDur != 12*time.Hour {
-		t.Errorf("新键应优先：%v want 12h", c2.ExpiringSoonDur)
-	}
-	if len(c2.LegacyKeys()) != 0 {
-		t.Errorf("新旧并存时不该记 legacy：%v", c2.LegacyKeys())
+	// 正常键不误报
+	if w := unknownKeysWarning(nil); w != "" {
+		t.Errorf("无未知键时不应有告警：%q", w)
 	}
 }

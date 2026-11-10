@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// rotateBackoffBase 轮转退避基数（对齐官方 intl CLI computeRequestRetryDelayMs
+// rotationBackoffBase 换号前的退避基数（对齐官方 intl CLI computeRequestRetryDelayMs
 // 的 500ms 形态，WAF 403 并发研究报告 §2.1/§6 P0-2）。测试可置 0 跳过等待
 // （TestMain 已置 0 加速轮转测试；退避界断言测试临时恢复）。
-var rotateBackoffBase = 500 * time.Millisecond
+var rotationBackoffBase = 500 * time.Millisecond
 
 const (
 	// rotateBackoffCap 轮转退避封顶（报告 P0-2 建议 8s：轮转上限默认 3 次，
@@ -41,7 +41,7 @@ func jitterDur(d time.Duration) time.Duration {
 // base·2^n 封顶 rotateBackoffCap，再施加 ±25% 抖动。base 置 0（测试）时恒 0。
 // 用逐次翻倍而非位移：base 调整后无需同步维护移位上限，溢出由封顶比较兜底。
 func backoffAfter(n int) time.Duration {
-	d := rotateBackoffBase
+	d := rotationBackoffBase
 	if d <= 0 {
 		return 0
 	}

@@ -72,7 +72,7 @@
     "billing_base": ""
   },
   "upstream": {
-    "timeout_seconds": 120,
+    "rpc_timeout_seconds": 120,
     "header_timeout_seconds": 0,
     "idle_timeout_seconds": 300,
     "user_agent": "",
@@ -124,7 +124,7 @@
     "cost_explore_interval": "30m",
     "min_pick_gap": "100ms",
     "session_dead_threshold": 3,
-    "rotate_backoff_base": "500ms",
+    "rotation_backoff_base": "500ms",
     "expiring_weight": 8
   },
   "auths": {

@@ -16,7 +16,7 @@ type Options struct {
 	DumpReqMinBytes             int           // 请求体落盘的最小字节数（0 = 关闭）
 	MetricsCap                  int           // 指标环形缓冲容量
 	AdminBodyLimit              int64         // 管理面请求体上限
-	RotateBackoffBase           time.Duration // 轮换失败的基础退避
+	RotationBackoffBase         time.Duration // 换号前的基础退避
 }
 
 // Configure 用生效配置覆盖包级阈值（cmd/server 启动时调用一次）。
@@ -45,7 +45,7 @@ func Configure(o Options) {
 	if o.AdminBodyLimit > 0 {
 		adminBodyLimit = o.AdminBodyLimit
 	}
-	if o.RotateBackoffBase > 0 {
-		rotateBackoffBase = o.RotateBackoffBase
+	if o.RotationBackoffBase > 0 {
+		rotationBackoffBase = o.RotationBackoffBase
 	}
 }

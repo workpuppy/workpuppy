@@ -16,8 +16,7 @@ func TestDefaultScheduleActivityCount(t *testing.T) {
 	if !s.CheckinEnabled || !s.TravelEnabled || !s.ActivityEnabled || !s.KeepaliveEnabled {
 		t.Errorf("all switches must default true: %+v", s)
 	}
-	// 时刻**刻意不在 DefaultSchedule 里预置**（否则"旧 *_hours 迁移"分支永远走不到），
-	// 由 Normalize 统一填默认值 —— 这里先归一化再断言。
+	// 时刻由 Normalize 统一填默认值 —— 这里先归一化再断言。
 	if err := s.Normalize(); err != nil {
 		t.Fatalf("normalize: %v", err)
 	}
@@ -137,42 +136,6 @@ func TestNormalizeScheduleDedupAndSort(t *testing.T) {
 	}
 }
 
-// TestNormalizeScheduleLegacyHoursMigrated 旧的 *_hours 折算成 *_time（整点），并记入迁移列表。
-// 迁移发生在**反序列化**时（只有那里才知道用户到底写了哪些键），所以这里走 JSON。
-func TestNormalizeScheduleLegacyHoursMigrated(t *testing.T) {
-	s := Schedule{}
-	if err := json.Unmarshal([]byte(`{"checkin_hours":[10,14],"cat_hours":[2]}`), &s); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if err := s.Normalize(); err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if strings.Join(s.CheckinTime, ",") != "10:00,14:00" {
-		t.Errorf("checkin_time=%v want [10:00 14:00]", s.CheckinTime)
-	}
-	if len(s.CheckinAt) != 2 || s.CheckinAt[0] != 600 || s.CheckinAt[1] != 840 {
-		t.Errorf("checkin_at=%v want [600 840]", s.CheckinAt)
-	}
-	migrated := strings.Join(s.MigratedFields(), ",")
-	if !strings.Contains(migrated, "schedule.checkin_hours") || !strings.Contains(migrated, "schedule.cat_hours") {
-		t.Errorf("MigratedFields=%v", s.MigratedFields())
-	}
-	// 新字段优先：两者并存时以 *_time 为准，且不记迁移。
-	s2 := Schedule{}
-	if err := json.Unmarshal([]byte(`{"checkin_time":["08:15"],"checkin_hours":[10]}`), &s2); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if err := s2.Normalize(); err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if len(s2.CheckinAt) != 1 || s2.CheckinAt[0] != 8*60+15 {
-		t.Errorf("新字段应优先：%v", s2.CheckinAt)
-	}
-	if len(s2.MigratedFields()) != 0 {
-		t.Errorf("并存时不应记迁移：%v", s2.MigratedFields())
-	}
-}
-
 // TestNormalizeScheduleInvalidTime 非法时刻快速失败，错误信息指向字段与正确开关。
 func TestNormalizeScheduleInvalidTime(t *testing.T) {
 	cases := []struct {
@@ -200,18 +163,6 @@ func TestNormalizeScheduleInvalidTime(t *testing.T) {
 		if !strings.Contains(err.Error(), "_enabled") {
 			t.Errorf("error %q should point at the _enabled switch", err.Error())
 		}
-	}
-}
-
-// TestNormalizeScheduleInvalidLegacyHour 旧的 *_hours 越界同样快速失败（并提示新写法）。
-func TestNormalizeScheduleInvalidLegacyHour(t *testing.T) {
-	s := Schedule{}
-	err := json.Unmarshal([]byte(`{"checkin_hours":[25]}`), &s)
-	if err == nil {
-		t.Fatal("want error")
-	}
-	if !strings.Contains(err.Error(), "checkin_hours") || !strings.Contains(err.Error(), "checkin_time") {
-		t.Errorf("错误信息应同时指出旧键与新写法：%v", err)
 	}
 }
 

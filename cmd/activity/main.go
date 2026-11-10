@@ -12,7 +12,7 @@
 //	# 单号模式（实测/消耗类先 1 个号）：uid 前缀过滤，只跑命中账号
 //	go run ./cmd/activity 00e26541
 //
-// 读取工作目录的 config.json（auth_dir / state_file / schedule / upstream.timeout_seconds），
+// 读取工作目录的 config.json（auth_dir / state_file / schedule / upstream.rpc_timeout_seconds），
 // 加载 auths 后构建 pool + upstream，调用 scheduler.RunActivityNow 立即执行一次。
 //
 // schedule 段复用 internal/config 的同一份 Schedule 结构 + 默认值（issue #49）：
@@ -40,7 +40,7 @@ type cfgFile struct {
 	StateFile string          `json:"state_file"`
 	Schedule  config.Schedule `json:"schedule"`
 	Upstream  struct {
-		TimeoutSeconds int `json:"timeout_seconds"`
+		RPCTimeoutSeconds int `json:"rpc_timeout_seconds"`
 	} `json:"upstream"`
 }
 
@@ -121,8 +121,8 @@ func newUpstream(c *cfgFile) *upstream.Client {
 	upstream.LoadRoutesAndLog(log.Printf)
 	up := upstream.New()
 	up.GlobalEnabled = true
-	if c.Upstream.TimeoutSeconds > 0 {
-		up.HTTP.Timeout = time.Duration(c.Upstream.TimeoutSeconds) * time.Second
+	if c.Upstream.RPCTimeoutSeconds > 0 {
+		up.HTTP.Timeout = time.Duration(c.Upstream.RPCTimeoutSeconds) * time.Second
 	}
 	return up
 }

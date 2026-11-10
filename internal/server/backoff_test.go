@@ -9,8 +9,8 @@ import (
 // withRotateBackoff 恢复退避基数并在测试结束后归零（TestMain 置 0 加速轮转测试）。
 func withRotateBackoff(t *testing.T, base time.Duration) {
 	t.Helper()
-	rotateBackoffBase = base
-	t.Cleanup(func() { rotateBackoffBase = 0 })
+	rotationBackoffBase = base
+	t.Cleanup(func() { rotationBackoffBase = 0 })
 }
 
 // TestBackoffAfterBounds 轮转退避的次数与抖动界（任务书 P0-2 验收点）：

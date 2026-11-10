@@ -18,7 +18,7 @@ func TestDefaultComesFromExampleConfig(t *testing.T) {
 	if c.Pool.MaxInFlight != 3 || c.Pool.BreakerThreshold != 3 || c.Pool.ExpiringSoonWindow != "168h" {
 		t.Errorf("池默认值不来自示例：%+v", c.Pool)
 	}
-	if c.Upstream.TimeoutSeconds != 120 || c.Upstream.ClientName != "WorkBuddy" {
+	if c.Upstream.RPCTimeoutSeconds != 120 || c.Upstream.ClientName != "WorkBuddy" {
 		t.Errorf("upstream 默认值不来自示例：%+v", c.Upstream)
 	}
 	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
@@ -46,14 +46,32 @@ func TestNormalizeIsNoOpOnDefaults(t *testing.T) {
 	if c.Pool.MaxInFlight != before.Pool.MaxInFlight || c.Pool.ExpiringSoonWindow != before.Pool.ExpiringSoonWindow {
 		t.Errorf("normalize 改了池字段：%+v → %+v", before.Pool, c.Pool)
 	}
-	if c.Upstream.TimeoutSeconds != before.Upstream.TimeoutSeconds {
-		t.Errorf("normalize 改了超时：%d → %d", before.Upstream.TimeoutSeconds, c.Upstream.TimeoutSeconds)
+	if c.Upstream.RPCTimeoutSeconds != before.Upstream.RPCTimeoutSeconds {
+		t.Errorf("normalize 改了超时：%d → %d", before.Upstream.RPCTimeoutSeconds, c.Upstream.RPCTimeoutSeconds)
 	}
 	if strings.Join(c.Schedule.CheckinTime, ",") != strings.Join(before.Schedule.CheckinTime, ",") {
 		t.Errorf("normalize 改了排程：%v → %v", before.Schedule.CheckinTime, c.Schedule.CheckinTime)
 	}
 	if c.SpreadWindowDur != 15*time.Minute || c.IntraJitterMinD != time.Second || c.IntraJitterMaxD != 3*time.Second {
 		t.Errorf("派生值不对：spread=%v jitter=%v~%v", c.SpreadWindowDur, c.IntraJitterMinD, c.IntraJitterMaxD)
+	}
+}
+
+// 旧的 *_hours 整数小时写法已被移除：作为未知字段被静默忽略（不报错），
+// 时刻回落默认值。这条测试钉住"删掉兼容垫片"后的行为，避免有人以为旧键还能用。
+func TestLegacyHoursKeysIgnored(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	os.WriteFile(fp, []byte(`{"schedule":{"checkin_hours":[10,14],"cat_hours":[2]}}`), 0o600)
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatalf("未知字段不应导致加载失败: %v", err)
+	}
+	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
+		t.Errorf("旧键不应生效，应回落默认：checkin_time=%s", got)
+	}
+	if got := strings.Join(c.Schedule.CatTime, ","); got != "01:00" {
+		t.Errorf("旧键不应生效，应回落默认：cat_time=%s", got)
 	}
 }
 
@@ -365,8 +383,8 @@ func TestUpstreamTimeoutDefaults(t *testing.T) {
 	if err := c.normalize(); err != nil {
 		t.Fatalf("normalize: %v", err)
 	}
-	if c.Upstream.TimeoutSeconds != 120 {
-		t.Errorf("timeout_seconds=%d want 120", c.Upstream.TimeoutSeconds)
+	if c.Upstream.RPCTimeoutSeconds != 120 {
+		t.Errorf("timeout_seconds=%d want 120", c.Upstream.RPCTimeoutSeconds)
 	}
 	if c.Upstream.HeaderTimeoutSeconds != 120 {
 		t.Errorf("header_timeout_seconds=%d want fallback 120", c.Upstream.HeaderTimeoutSeconds)
@@ -380,7 +398,7 @@ func TestUpstreamHeaderFallsBackToTimeout(t *testing.T) {
 	// 只设 timeout_seconds：header 回落同值，idle 回落 300。
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"upstream":{"timeout_seconds":60}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"upstream":{"rpc_timeout_seconds":60}}`), 0o600)
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatal(err)
@@ -428,14 +446,13 @@ func TestUpstreamEnvOverride(t *testing.T) {
 func TestRetiredTravelIntervalKeyIgnored(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	// 旧写法 checkin_hours 仍可用（折算成 09:00），退役键不报错。
-	os.WriteFile(fp, []byte(`{"schedule":{"travel_interval_minutes":15,"checkin_hours":[9]}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"schedule":{"travel_interval_minutes":15,"checkin_time":["09:00"]}}`), 0o600)
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatalf("retired key should not fail load: %v", err)
 	}
-	if strings.Join(c.Schedule.CheckinTime, ",") != "09:00" {
-		t.Errorf("checkin_time=%v want [09:00]（旧 checkin_hours 折算）", c.Schedule.CheckinTime)
+	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00" {
+		t.Errorf("checkin_time=%v want [09:00]（同段其余键照常生效）", c.Schedule.CheckinTime)
 	}
 }
 
@@ -473,41 +490,6 @@ func TestScheduleEnabledByDefault(t *testing.T) {
 	if !c.Schedule.SchoolEnabled || !c.Schedule.CatEnabled {
 		t.Errorf("school/cat enabled defaults want true/true, got %v/%v",
 			c.Schedule.SchoolEnabled, c.Schedule.CatEnabled)
-	}
-}
-
-// TestScheduleLegacyConfigKeepsRunning 老 config（只写 *_hours 数组）加载后：
-// 开关仍为启用、旧小时折算成 "HH:00"、未写的时刻回落默认。
-func TestScheduleLegacyConfigKeepsRunning(t *testing.T) {
-	dir := t.TempDir()
-	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"schedule":{"checkin_hours":[9,21],"keepalive_hours":[22]}}`), 0o600)
-	c, err := Load(fp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.Schedule.CheckinEnabled || !c.Schedule.KeepaliveEnabled {
-		t.Errorf("legacy config must stay enabled: %+v", c.Schedule)
-	}
-	if !c.Schedule.TravelEnabled || !c.Schedule.ActivityEnabled {
-		t.Errorf("new switches must default true on legacy config: %+v", c.Schedule)
-	}
-	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
-		t.Errorf("checkin_time=%s want 09:00,21:00（旧数组折算）", got)
-	}
-	if got := strings.Join(c.Schedule.KeepaliveTime, ","); got != "22:00" {
-		t.Errorf("keepalive_time=%s want 22:00", got)
-	}
-	// 未配置的时刻回落默认。
-	if got := strings.Join(c.Schedule.TravelTime, ","); got != "09:00,21:00" {
-		t.Errorf("travel_time=%s want default 09:00,21:00", got)
-	}
-	if got := strings.Join(c.Schedule.ActivityTime, ","); got != "10:00" {
-		t.Errorf("activity_time=%s want default 10:00", got)
-	}
-	// 迁移提示：旧键被记录，供启动日志 WARN。
-	if len(c.Schedule.MigratedFields()) == 0 {
-		t.Error("旧 *_hours 应被记入迁移列表")
 	}
 }
 
@@ -561,9 +543,6 @@ func TestScheduleTravelActivityExplicitDisable(t *testing.T) {
 // 新旧两种写法都要拦（旧的小时越界、新的 HH:MM 畸形）。
 func TestScheduleInvalidTimesRejected(t *testing.T) {
 	cases := []struct{ body, wantSwitch string }{
-		{`{"schedule":{"travel_hours":[25]}}`, "travel_enabled"},
-		{`{"schedule":{"travel_hours":[-1]}}`, "travel_enabled"},
-		{`{"schedule":{"activity_hours":[24]}}`, "activity_enabled"},
 		{`{"schedule":{"checkin_time":["25:00"]}}`, "checkin_enabled"},
 		{`{"schedule":{"keepalive_time":["22:60"]}}`, "keepalive_enabled"},
 		{`{"schedule":{"school_time":["12"]}}`, "school_enabled"},
@@ -659,28 +638,6 @@ func TestScheduleEmptyTimesFallsBackToDefault(t *testing.T) {
 				t.Errorf("empty times must not imply disabled: %+v", c.Schedule)
 			}
 		})
-	}
-}
-
-// TestScheduleInvalidHourRejected 非法小时快速失败：指向正确的禁用开关，避免用户
-// 猜测哨兵值（[-1] 之类）被静默当成"改到别的整点"。
-func TestScheduleInvalidHourRejected(t *testing.T) {
-	cases := []struct{ body, wantSwitch string }{
-		{`{"schedule":{"checkin_hours":[25]}}`, "checkin_enabled"},
-		{`{"schedule":{"checkin_hours":[-1]}}`, "checkin_enabled"},
-		{`{"schedule":{"keepalive_hours":[-1]}}`, "keepalive_enabled"},
-	}
-	for _, tc := range cases {
-		dir := t.TempDir()
-		fp := filepath.Join(dir, "c.json")
-		os.WriteFile(fp, []byte(tc.body), 0o600)
-		_, err := Load(fp)
-		if err == nil {
-			t.Fatalf("want error for %s", tc.body)
-		}
-		if !strings.Contains(err.Error(), tc.wantSwitch) {
-			t.Errorf("error for %s should point at schedule.%s: %v", tc.body, tc.wantSwitch, err)
-		}
 	}
 }
 

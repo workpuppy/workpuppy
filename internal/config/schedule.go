@@ -72,16 +72,6 @@ type Schedule struct {
 	SchoolTime    []string `json:"school_time"`
 	CatTime       []string `json:"cat_time"`
 
-	// ── 旧字段：整数小时（checkin_hours: [9, 21]）──────────────────────────
-	// 仅为**兼容存量 config.json** 保留：Normalize 会把它们折算成 "HH:00" 并写进
-	// 上面的 *_time（并打一条迁移提示）。新配置请直接用 *_time。
-	CheckinHours   []int `json:"checkin_hours,omitempty"`
-	TravelHours    []int `json:"travel_hours,omitempty"`
-	ActivityHours  []int `json:"activity_hours,omitempty"`
-	KeepaliveHours []int `json:"keepalive_hours,omitempty"`
-	SchoolHours    []int `json:"school_hours,omitempty"`
-	CatHours       []int `json:"cat_hours,omitempty"`
-
 	// ── 解析结果：自 00:00 起的分钟数（0..1439），升序去重 ──────────────────
 	// 由 Normalize 填充，供 scheduler 直接使用（避免运行期反复解析字符串）。
 	CheckinAt   []int `json:"-"`
@@ -107,9 +97,6 @@ type Schedule struct {
 	// ActivityReportCount 每号每次活跃上报的条数：领猫前置需 5 次对话，
 	// 默认 5 条把 chat_5 刷满；0/缺省=1 兼容旧行为。
 	ActivityReportCount int `json:"activity_report_count"`
-
-	// migrated 记录本次加载里哪些旧字段被折算（供启动日志提示迁移）。
-	migrated []string
 }
 
 // DefaultSchedule 返回排程段的默认值 —— **直接取自内嵌的 config.default.json**。
@@ -130,9 +117,6 @@ func DefaultSchedule() Schedule {
 	}
 	return wrapper.Schedule
 }
-
-// MigratedFields 返回本次加载中被折算成 *_time 的旧字段名（用于启动日志提示）。
-func (s *Schedule) MigratedFields() []string { return s.migrated }
 
 // ParseClock 解析 "HH:MM"（也接受 "H:MM"）为自 00:00 起的分钟数。
 func ParseClock(v string) (int, error) {
@@ -164,79 +148,29 @@ func FormatClock(min int) string {
 	return fmt.Sprintf("%02d:%02d", min/60, min%60)
 }
 
-// schedulePairs 六类任务的字段对应关系（新 *_time / 旧 *_hours / 解析结果 *_At / 默认值）。
+// schedulePairs 六类任务的字段对应关系（时刻 *_time / 解析结果 *_At / 默认值）。
 //
 // 默认值只用于「显式写了 null 或空数组」这种边角情况；**主路径的默认值来自
 // config.default.json**（内嵌，见 DefaultSchedule/Default）。
 func (s *Schedule) schedulePairs() []struct {
 	field   string
 	times   *[]string
-	hours   *[]int
 	minutes *[]int
 	def     []string
 } {
 	return []struct {
 		field   string
 		times   *[]string
-		hours   *[]int
 		minutes *[]int
 		def     []string
 	}{
-		{"checkin", &s.CheckinTime, &s.CheckinHours, &s.CheckinAt, []string{"09:00", "21:00"}},
-		{"travel", &s.TravelTime, &s.TravelHours, &s.TravelAt, []string{"09:00", "21:00"}},
-		{"activity", &s.ActivityTime, &s.ActivityHours, &s.ActivityAt, []string{"10:00"}},
-		{"keepalive", &s.KeepaliveTime, &s.KeepaliveHours, &s.KeepaliveAt, []string{"22:00"}},
-		{"school", &s.SchoolTime, &s.SchoolHours, &s.SchoolAt, []string{"12:00"}},
-		{"cat", &s.CatTime, &s.CatHours, &s.CatAt, []string{"01:00"}},
+		{"checkin", &s.CheckinTime, &s.CheckinAt, []string{"09:00", "21:00"}},
+		{"travel", &s.TravelTime, &s.TravelAt, []string{"09:00", "21:00"}},
+		{"activity", &s.ActivityTime, &s.ActivityAt, []string{"10:00"}},
+		{"keepalive", &s.KeepaliveTime, &s.KeepaliveAt, []string{"22:00"}},
+		{"school", &s.SchoolTime, &s.SchoolAt, []string{"12:00"}},
+		{"cat", &s.CatTime, &s.CatAt, []string{"01:00"}},
 	}
-}
-
-// UnmarshalJSON 在**解析配置文件的当下**处理旧的小时写法。
-//
-// 为什么必须在反序列化时做、不能在 Normalize 里做：默认配置本身（内嵌 config.default.json）
-// 已经把 *_time 填好了，等到 Normalize 时根本无法区分「用户写了 *_time」与「这是默认值」。
-// 只有在这里（只看用户文件里真正出现的键）才能准确判断「用户只写了旧键」。
-//
-// 语义：
-//   - 同时出现 *_time 与 *_hours → 以 *_time 为准，旧键忽略（不记迁移）；
-//   - 只出现 *_hours → 折算成 "HH:00" 填进 *_time，并记入 MigratedFields（启动日志 WARN）；
-//   - 旧键越界 → 直接报错（带新写法的提示），不让它静默生效。
-func (s *Schedule) UnmarshalJSON(b []byte) error {
-	// 注意：反序列化到**已存在的值**上（而不是先清零）——上一层的默认配置（内嵌
-	// config.default.json）已经填好了各字段，用户文件里没写的键必须保持默认值，
-	// 否则「键缺席 = 回落默认」的语义会被本方法破坏。
-	type alias Schedule // 避免递归调用本方法
-	if err := json.Unmarshal(b, (*alias)(s)); err != nil {
-		return err
-	}
-	var present map[string]json.RawMessage
-	if err := json.Unmarshal(b, &present); err != nil {
-		return err
-	}
-	s.migrated = nil
-
-	for _, p := range s.schedulePairs() {
-		if _, hasTime := present[p.field+"_time"]; hasTime {
-			continue // 新写法优先
-		}
-		if _, hasHours := present[p.field+"_hours"]; !hasHours {
-			continue
-		}
-		converted := make([]string, 0, len(*p.hours))
-		for _, h := range *p.hours {
-			if h < 0 || h > 23 {
-				return fmt.Errorf("schedule.%s_hours: %d 不是合法小时（0-23）；"+
-					"新写法是 schedule.%s_time: [\"09:30\"]，要关任务请设 schedule.%s_enabled=false",
-					p.field, h, p.field, p.field)
-			}
-			converted = append(converted, FormatClock(h*60))
-		}
-		if len(converted) > 0 {
-			*p.times = converted
-			s.migrated = append(s.migrated, "schedule."+p.field+"_hours")
-		}
-	}
-	return nil
 }
 
 // Normalize 归一化排程段：补默认值、解析成分钟数、校验并排序。

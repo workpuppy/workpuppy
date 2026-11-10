@@ -30,7 +30,7 @@ import (
 // 对 models.dev 发起真实网络请求。
 func TestMain(m *testing.M) {
 	chatLogEnabled = false
-	rotateBackoffBase = 0
+	rotationBackoffBase = 0
 	upstream.ResetLookupChainForTest()
 	os.Exit(m.Run())
 }

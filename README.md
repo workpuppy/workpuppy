@@ -138,6 +138,14 @@ curl -s http://127.0.0.1:7863/healthz
 
 ## 配置说明
 
+> **不保留旧键兼容**：本项目尚未正式上线，配置键按"语义无歧义"直接演进，旧键不再被识别。
+> 写了旧键不会报错，但**启动日志会点名列出来**，避免"以为配了其实没生效"：
+>
+> ```
+> WARN: 配置里有未知键（会被忽略，多半是拼错或旧版键名）：pool.expiring_soon, schedule.checkin_hours；
+>       全部可用键见 config.default.json
+> ```
+
 配置模板是 [`config.default.json`](config.default.json)，**它就是全部默认值的权威来源**
 （编译进二进制；仓库根目录那份是同步副本，改完执行 `go run ./cmd/config-default -write`）。
 
@@ -248,8 +256,8 @@ curl -s http://127.0.0.1:7863/healthz
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `timeout_seconds` | `120` | 短 RPC（refresh / 签到 / 查余额 / 拉模型）总时长上限 |
-| `header_timeout_seconds` | `0` | 聊天 SSE **响应头**上限；`<=0` 回落 `timeout_seconds` |
+| `rpc_timeout_seconds` | `120` | **短 RPC**（refresh / 签到 / 查余额 / 拉模型）总时长上限；聊天流不受它约束 |
+| `header_timeout_seconds` | `0` | 聊天 SSE **响应头**上限；`<=0` 回落 `rpc_timeout_seconds` |
 | `idle_timeout_seconds` | `0` | 聊天 SSE **流中空闲**上限（活跃吐数据会续命）；`<=0` 回落 300 秒 |
 | `user_agent` | `""` | 固定 UA；空 = 由 `client_version` + `cli_version` 拼出官方形态 |
 | `client_version` | `"5.5.4"` | 伪造的客户端版本（进 UA 与 `X-IDE-*` 头） |
@@ -304,11 +312,11 @@ curl -s http://127.0.0.1:7863/healthz
 | `degrade_cooldown_max` | `"2h"` | 降权时长上限钳制 |
 | `idle_weight_per_hour` | `0.5` | 闲置补偿：每小时未使用 +0.5 权重 |
 | `idle_weight_max` | `5` | 闲置补偿权重封顶 |
-| `expiring_soon_window` | `"168h"` | 快过期积分**窗口**：到期时间在窗口内的积分优先消耗（旧键 `expiring_soon` 仍接受并打 WARN） |
+| `expiring_soon_window` | `"168h"` | 快过期积分**窗口**：到期时间在窗口内的积分优先消耗 |
 | `expiring_weight` | `8` | 快过期积分在选号权重里的倍数 |
 | `min_pick_gap` | `"100ms"` | 选号防惊群：跳过刚被选中的账号 |
 | `session_dead_threshold` | `3` | 连续多少次 `12153 session dead` 才禁用账号 |
-| `rotate_backoff_base` | `"500ms"` | 轮换失败的基础退避（对齐官方 CLI） |
+| `rotation_backoff_base` | `"500ms"` | 换号前的退避基数（对齐官方 CLI） |
 | `cost_explore_interval` | `"30m"` | costTier 探索窗口（破除单一账号垄断）；`"0"` 关停 |
 | `large_request_bytes` | `2097152` | 大上下文请求阈值（字节，默认 2 MiB） |
 | `large_request_cooldown` | `"0s"` | 大请求逐请求轮换的冷却窗口；`"0s"` = 关闭该机制 |
@@ -325,7 +333,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `risk.waf_threshold` | `2` | 窗口内命中多少次进入"风险暂停"（暂停期间不刷新 token、不跑任务） |
 | `metrics.capacity` | `512` | 请求指标环形缓冲容量 |
 | `debug.dump_min_bytes` | `4194304` | 请求体落盘排障的最小字节数（`0` = 关闭） |
-| `models.default_context_window` | `1000000` | 模型未声明上下文窗口时的兜底值（单位 token；旧键 `default_context` 仍接受并打 WARN） |
+| `models.default_context_window` | `1000000` | 模型未声明上下文窗口时的兜底值（单位 token） |
 | `models.catalog_timeout` | `"5s"` | 上游模型目录抓取超时 |
 | `models.catalog_refresh_cooldown` | `"5m"` | 模型目录抓取冷却 |
 | `models.catalog_negative_ttl` | `"24h"` | 抓取失败的负缓存 TTL |
@@ -354,7 +362,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `WP_PASSTHROUGH_IP` / `WP_GZIP_BODY` | 透传 IP / 压缩 |
 | `WP_PROMPT_MODE` / `WP_PROMPT_FILE` | `prompt.*` |
 | `WP_SANITIZE_FINGERPRINTS` | `features.sanitize_blacklist_fingerprints` |
-| `WP_EXPIRING_SOON_WINDOW`（旧名 `WP_EXPIRING_SOON` 仍接受） | `pool.expiring_soon_window` |
+| `WP_EXPIRING_SOON_WINDOW` | `pool.expiring_soon_window` |
 | `WP_ADMIN_ENABLED` | `admin.enabled` |
 | `WP_ADMIN_PASSWORD` | 固定管理密码（替代启动时随机生成） |
 | `WP_TASK_SPREAD` | 临时覆盖 `schedule.spread_window`（`"0"` 关闭），排障用 |

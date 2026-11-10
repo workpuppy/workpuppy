@@ -21,7 +21,7 @@ func TestRandomScheduleConfigDefaultAndBounds(t *testing.T) {
 		}
 	}
 	s := DefaultSchedule()
-	if err := json.Unmarshal([]byte(`{"checkin_hours":[9,21]}`), &s); err != nil {
+	if err := json.Unmarshal([]byte(`{"checkin_time":["09:00","21:00"]}`), &s); err != nil {
 		t.Fatal(err)
 	}
 	if s.RandomDelayMinutes != 0 {

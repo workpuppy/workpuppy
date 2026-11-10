@@ -17,13 +17,13 @@ func TestNewUpstreamGlobalEnabled(t *testing.T) {
 	}
 }
 
-// TestNewUpstreamAppliesTimeout 配置的 upstream.timeout_seconds 仍生效（接线抽出不破坏原行为）。
+// TestNewUpstreamAppliesTimeout 配置的 upstream.rpc_timeout_seconds 仍生效（接线抽出不破坏原行为）。
 func TestNewUpstreamAppliesTimeout(t *testing.T) {
 	c := &cfgFile{Schedule: config.DefaultSchedule()}
-	c.Upstream.TimeoutSeconds = 7
+	c.Upstream.RPCTimeoutSeconds = 7
 	up := newUpstream(c)
 	if up.HTTP.Timeout == 0 {
-		t.Fatal("HTTP.Timeout should be set when timeout_seconds > 0")
+		t.Fatal("HTTP.Timeout should be set when rpc_timeout_seconds > 0")
 	}
 	if up.HTTP.Timeout.String() != "7s" {
 		t.Errorf("HTTP.Timeout=%v want 7s", up.HTTP.Timeout)

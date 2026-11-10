@@ -144,7 +144,7 @@ func main() {
 	up.OnRefreshRateLimit = func(uid string, retryAfter time.Duration) { p.PauseRefreshRateLimited(uid, retryAfter) }
 	up.OnRefreshSuccess = p.NoteRefreshSuccess
 	// 短 RPC 总时长上限（refresh/checkin/balance/FetchModels），语义不变。
-	up.HTTP.Timeout = time.Duration(cfg.Upstream.TimeoutSeconds) * time.Second
+	up.HTTP.Timeout = time.Duration(cfg.Upstream.RPCTimeoutSeconds) * time.Second
 	// 聊天 SSE 首字节前（响应头）上限：cfg 已 normalize（缺省回落 timeout_seconds）。
 	up.HeaderTimeout = time.Duration(cfg.Upstream.HeaderTimeoutSeconds) * time.Second
 	if tr, ok := up.ChatHTTP.Transport.(*http.Transport); ok {
@@ -349,12 +349,10 @@ func main() {
 		log.Fatalf("listen %s: %v", cfg.Listen, err)
 	}
 	log.Printf("配置来源: %s", cfg.SourcePath)
-	if keys := cfg.LegacyKeys(); len(keys) > 0 {
-		log.Printf("WARN: 配置里用了已弃用的键（%s），请改用新键名；旧键后续版本会移除",
-			strings.Join(keys, ", "))
+	if w := unknownKeysWarning(cfg.UnknownKeys()); w != "" {
+		log.Printf("WARN: %s", w)
 	}
 	log.Printf("扫码二维码有效期：%v（qrcode_ttl）", cfg.QRCodeTTLDur)
-	logScheduleMigration(&cfg.Schedule)
 	log.Printf("wp listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
 	if cfg.Admin.Enabled {
 		printAdminBanner(adminStore, ln.Addr().String())
