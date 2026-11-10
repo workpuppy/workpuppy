@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"workbuddy2api/internal/adminauth"
-	"workbuddy2api/internal/auth"
+	"wp/internal/adminauth"
+	"wp/internal/auth"
 )
 
 func TestRefreshRiskAdminAuthAndIndependentRecovery(t *testing.T) {

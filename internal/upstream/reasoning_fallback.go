@@ -15,7 +15,7 @@ import (
 //
 // 已知代价：同时渲染 reasoning_content 与 content 的客户端（如 DeepSeek 自家
 // 客户端）会把同一段话显示两遍。默认开启（空回复比重复更难接受），需要时可用
-// 配置 `reasoning_as_content: false` 或环境变量 `WB2A_REASONING_AS_CONTENT=0` 关掉。
+// 配置 `reasoning_as_content: false` 或环境变量 `WP_REASONING_AS_CONTENT=0` 关掉。
 //
 // 用 atomic 而不是普通变量：读发生在每个请求的流处理 goroutine 里，测试会并发
 // 跑；启动后只写一次，读多写一，atomic 足够且免锁。

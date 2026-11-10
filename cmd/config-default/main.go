@@ -14,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"workbuddy2api/internal/configdata"
+	"wp/internal/configdata"
 )
 
 func main() {

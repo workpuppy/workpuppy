@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // errReadBody 模拟读 body 时连接中断/空闲掐流：返回部分数据 + 读错误。

@@ -4,7 +4,7 @@ package pool
 import (
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // PickExcludingForRealm 按 realm 过滤的轮换选号：候选仅限 Realm()==realm 的账号。

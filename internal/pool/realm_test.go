@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // realmPool 构造一个含 cn/global 账号的池，并确保 globalEnabled 开关开启（缺省）。

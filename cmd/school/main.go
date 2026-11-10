@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"workbuddy2api/internal/growth"
+	"wp/internal/growth"
 )
 
 // valueFlags 需要额外吃一个值的选项名（用于 argv 重排）。

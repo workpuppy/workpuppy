@@ -27,10 +27,10 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 func init() {
@@ -54,7 +54,7 @@ func e2eChatClient() *upstream.Client {
 // 文件同策略，独立实现避免跨包依赖）。
 func findSSEGlobalAuthFile(t *testing.T) string {
 	t.Helper()
-	dirs := []string{"../auths", "../../auths", "../../../auths", "/root/workbuddy2api/auths"}
+	dirs := []string{"../auths", "../../auths", "../../../auths", "/root/wp/auths"}
 	for _, dir := range dirs {
 		files, err := filepath.Glob(filepath.Join(dir, "workbuddy*.json"))
 		if err != nil {

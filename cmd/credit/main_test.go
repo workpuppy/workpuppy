@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // fakeUpstreamCredit 构造一个记录每个账号出站 host/path 的 fake upstream。

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // modelsBodyCLI 构造 /enterprises/personal/models 形态响应（models + cli agent），

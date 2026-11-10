@@ -37,7 +37,7 @@ import (
 	"strconv"
 	"strings"
 
-	"workbuddy2api/internal/growth"
+	"wp/internal/growth"
 )
 
 const usage = `task_runner —— 成长任务一体机：查询 → 完成(点亮) → 领取

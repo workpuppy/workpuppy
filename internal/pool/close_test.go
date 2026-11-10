@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestCloseStopsFlusher Close 应停止后台落盘 goroutine(否则每次 New 泄漏一个)。

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // TestModelListNameFieldDynamicCN 动态分支：上游下发的 name（显示名）透出到 /v1/models；

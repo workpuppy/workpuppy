@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // rewardStub 模拟 growth 奖励/抽奖端点。默认：streak days=8（7d 已可达），

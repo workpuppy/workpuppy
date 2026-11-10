@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // watchInterval 目录轮询周期。5s 与池状态落盘周期（flushInterval）同量级：

@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // waitCalls 轮询等待计数达到 want（deadline 内），超时返回 false。

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // handler_prompt_too_long_test.go 11115 prompt too long 端到端验收（任务书

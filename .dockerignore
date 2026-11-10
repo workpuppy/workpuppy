@@ -14,7 +14,7 @@ old/
 # 根目录二进制产物（构建阶段自己编译，不需要带进去）
 /login
 /credit
-/wb2api
+/wp
 /signin_bin
 /wbctl
 /trial_bin

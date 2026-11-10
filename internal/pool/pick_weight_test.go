@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // 手写权重（issue #187）只缩放抽签概率，不改变候选资格。

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // chatHeadersReq 构造一个 chat 请求并应用 ChatHeaders，发到测试 server，

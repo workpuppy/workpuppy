@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // v3Fixture /v3/config 响应（对象形态）：3 个模型，hy4-preview 带 v3 口径 credits

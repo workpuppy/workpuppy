@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"workbuddy2api/internal/config"
+	"wp/internal/config"
 )
 
 // scheduleTimes 把 ["09:00","21:00"] 渲染成 "09:00, 21:00"（空则 "（默认）"）。

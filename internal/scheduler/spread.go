@@ -14,8 +14,8 @@
 // 窗口由**设置项**给定：`config.json` 的 `schedule.spread_window`（时长字符串，
 // 如 "15m"；"0" 表示关闭）。排障时也可用环境变量临时覆盖：
 //
-//	WB2A_TASK_SPREAD=20m   # 临时改窗口
-//	WB2A_TASK_SPREAD=0     # 临时关闭
+//	WP_TASK_SPREAD=20m   # 临时改窗口
+//	WP_TASK_SPREAD=0     # 临时关闭
 //
 // 只对**定时触发**生效：手动点「全部签到」时用户正等着结果，不能把它摊成十几分钟。
 package scheduler
@@ -43,9 +43,9 @@ var spreadRandInt63n = func(n int64) int64 {
 }
 
 // spreadWindow 返回当前生效的窗口；0 表示关闭（回到「到点立刻 + 固定间隔」）。
-// 优先级：WB2A_TASK_SPREAD（临时覆盖/排障）> schedule.spread_window（设置项）。
+// 优先级：WP_TASK_SPREAD（临时覆盖/排障）> schedule.spread_window（设置项）。
 func (s *Scheduler) spreadWindow() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("WB2A_TASK_SPREAD")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("WP_TASK_SPREAD")); v != "" {
 		switch strings.ToLower(v) {
 		case "0", "off", "false", "no":
 			return 0

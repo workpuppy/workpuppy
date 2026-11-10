@@ -38,7 +38,7 @@ func installFakeExec(t *testing.T) *fakeScriptExec {
 }
 
 // installTaskBins 造一个临时目录，放入名为 bins 的可执行占位文件，并把
-// WB2A_TASK_BIN_DIR 指过去（taskBin 的第一优先级）。
+// WP_TASK_BIN_DIR 指过去（taskBin 的第一优先级）。
 func installTaskBins(t *testing.T, bins ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -51,7 +51,7 @@ func installTaskBins(t *testing.T, bins ...string) string {
 			t.Fatalf("chmod %s: %v", p, err)
 		}
 	}
-	t.Setenv("WB2A_TASK_BIN_DIR", dir)
+	t.Setenv("WP_TASK_BIN_DIR", dir)
 	return dir
 }
 
@@ -165,7 +165,7 @@ func TestRunCatNowBuildsCommand(t *testing.T) {
 
 // TestTaskBinMissingWarnsOnly 二进制缺失时只记 WARN、不 panic、不执行任何命令。
 func TestTaskBinMissingWarnsOnly(t *testing.T) {
-	t.Setenv("WB2A_TASK_BIN_DIR", t.TempDir()) // 空目录
+	t.Setenv("WP_TASK_BIN_DIR", t.TempDir()) // 空目录
 	f := installFakeExec(t)
 
 	var buf bytes.Buffer
@@ -219,12 +219,12 @@ func TestDispatchSchoolCatAndFailureWarnsOnly(t *testing.T) {
 	}
 }
 
-// TestTaskBinPrefersEnvDir taskBin 的第一优先级是 WB2A_TASK_BIN_DIR。
+// TestTaskBinPrefersEnvDir taskBin 的第一优先级是 WP_TASK_BIN_DIR。
 func TestTaskBinPrefersEnvDir(t *testing.T) {
 	dir := installTaskBins(t, TaskBinSchool)
 	got, ok := taskBin(TaskBinSchool)
 	if !ok {
-		t.Fatal("应能找到 WB2A_TASK_BIN_DIR 下的二进制")
+		t.Fatal("应能找到 WP_TASK_BIN_DIR 下的二进制")
 	}
 	if got != filepath.Join(dir, TaskBinSchool) {
 		t.Errorf("taskBin=%q want %q", got, filepath.Join(dir, TaskBinSchool))

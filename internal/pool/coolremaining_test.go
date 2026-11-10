@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // P1-5（发现 5）：CoolRemaining 口径补 breakerUntil。

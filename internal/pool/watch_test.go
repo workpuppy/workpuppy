@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // writeAuthFile 落一个最小可用凭证文件（字段与 internal/auth 读取格式一致）。

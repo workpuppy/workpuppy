@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 func TestRefreshRetryAfterBounded(t *testing.T) {

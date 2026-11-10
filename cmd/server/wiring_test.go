@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
+	"wp/internal/auth"
+	"wp/internal/pool"
 )
 
 // realmPool 构造含 cn/global 账号的池并确保 global 开关开启（缺省）。

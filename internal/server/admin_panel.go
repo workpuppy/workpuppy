@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // uidPattern auth 文件名里的 uid 白名单：uid 会直接拼进文件名，不校验等于开放

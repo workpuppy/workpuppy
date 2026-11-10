@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 var flushInterval = 5 * time.Second

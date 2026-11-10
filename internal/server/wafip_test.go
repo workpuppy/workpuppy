@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
+	"wp/internal/auth"
+	"wp/internal/pool"
 )
 
 // withWafIPWindow 注入短 IP 级判定窗（生产恒 60s；测试用 200ms 加速窗口过期验证）。

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // 渠道校验的处置：**换路径兜底 + 绝不禁用**（2026-10-17 用户报告）。

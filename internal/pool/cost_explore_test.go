@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // exploreKey 构造探索 timer 的键（realm + "\x1f" + model，语义契约第 3 条）。

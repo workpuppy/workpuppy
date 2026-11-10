@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"workbuddy2api/internal/configdata"
+	"wp/internal/configdata"
 )
 
 // Schedule 排程配置段（对应 config.json 的 "schedule" 对象）。

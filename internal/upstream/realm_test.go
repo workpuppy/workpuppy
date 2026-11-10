@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // globalTestClient 构造带 global 配置的 Client（GlobalEnabled=true + global base 指向 httptest 两段

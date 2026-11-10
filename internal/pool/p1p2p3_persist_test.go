@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // breakerRetryCount 曝露 entry.retryCount 供测试断言（包内私有 helper）。

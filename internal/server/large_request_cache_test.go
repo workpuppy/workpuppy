@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/session"
+	"wp/internal/auth"
+	"wp/internal/session"
 )
 
 // largeBodyWith 组装一个超过 large_request_bytes 默认阈值（2 MiB）的请求体。

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/adminauth"
-	"workbuddy2api/internal/auth"
+	"wp/internal/adminauth"
+	"wp/internal/auth"
 )
 
 // adminResp 与 adminState 同构（测试侧独立声明，避免测试跟着实现改字段名）。

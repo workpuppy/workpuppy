@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Sliverkiss/workbuddy2api.git"
+    "url": "git+https://github.com/Sliverkiss/wp.git"
   },
   "keywords": [
     "github",
@@ -22,7 +22,7 @@
     "spam",
     "canonical"
   ],
-  "author": "workbuddy2api contributors (基于 JohnsonRan/nomore-spam)",
+  "author": "wp contributors (基于 JohnsonRan/nomore-spam)",
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^2.0.3",

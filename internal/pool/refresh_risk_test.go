@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 func TestRefreshRiskBoundsExpiryAndIndependence(t *testing.T) {

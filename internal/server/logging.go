@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"workbuddy2api/internal/logfmt"
+	"wp/internal/logfmt"
 )
 
 // chatSeq 进程级请求序号。

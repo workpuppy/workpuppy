@@ -87,11 +87,11 @@ func UIDPrefixFromFile(base string) string {
 	return string(r)
 }
 
-// AuthsDir 账号目录：WB2A_AUTHS > 可执行文件旁的 auths/ > ./auths > /root/workbuddy2api/auths。
+// AuthsDir 账号目录：WP_AUTHS > 可执行文件旁的 auths/ > ./auths > /root/wp/auths。
 //
 // 与脚本的三级回退保持同一顺序；多出来的 ./auths 只是让「在工作目录直接跑」也能用。
 func AuthsDir() string {
-	if v := strings.TrimSpace(os.Getenv("WB2A_AUTHS")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("WP_AUTHS")); v != "" {
 		return v
 	}
 	if exe, err := os.Executable(); err == nil {
@@ -103,7 +103,7 @@ func AuthsDir() string {
 	if fi, err := os.Stat("./auths"); err == nil && fi.IsDir() {
 		return "./auths"
 	}
-	return "/root/workbuddy2api/auths"
+	return "/root/wp/auths"
 }
 
 // LoadAuth 加载账号：uidOrFile 可以是 auths 文件名/绝对路径，也可以是 uid **前缀**

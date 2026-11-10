@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 func TestClassify(t *testing.T) {

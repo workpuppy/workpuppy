@@ -20,9 +20,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // TestKeepaliveSkipsAccountWithoutRefreshToken 守卫的既有语义不能因改走访问器而漂移：

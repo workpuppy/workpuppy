@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // 11151「对话里有空消息」→ **400 透传**，不是 503（issue #203）。

@@ -127,8 +127,8 @@ func TestLoadFile(t *testing.T) {
 }
 
 func TestEnvOverride(t *testing.T) {
-	t.Setenv("WB2A_LISTEN", ":7777")
-	t.Setenv("WB2A_API_KEY", "envkey")
+	t.Setenv("WP_LISTEN", ":7777")
+	t.Setenv("WP_API_KEY", "envkey")
 	c, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -410,8 +410,8 @@ func TestUpstreamExplicitHeaderIdle(t *testing.T) {
 }
 
 func TestUpstreamEnvOverride(t *testing.T) {
-	t.Setenv("WB2A_HEADER_TIMEOUT_SECONDS", "45")
-	t.Setenv("WB2A_IDLE_TIMEOUT_SECONDS", "900")
+	t.Setenv("WP_HEADER_TIMEOUT_SECONDS", "45")
+	t.Setenv("WP_IDLE_TIMEOUT_SECONDS", "900")
 	c, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -779,7 +779,7 @@ func TestPromptFileOverride(t *testing.T) {
 
 // TestPromptEnvOverride env 覆盖 prompt.mode 与 prompt.file。
 func TestPromptEnvOverride(t *testing.T) {
-	t.Setenv("WB2A_PROMPT_MODE", "passthrough")
+	t.Setenv("WP_PROMPT_MODE", "passthrough")
 	c, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -807,7 +807,7 @@ func TestPromptLegacyConfigNoImpact(t *testing.T) {
 }
 
 // TestUpstreamVersionConfig 配置 upstream.client_version / cli_version 与 env
-// WB2A_CLIENT_VERSION / WB2A_CLI_VERSION 均生效；缺省空串 = headers 层回落内置默认。
+// WP_CLIENT_VERSION / WP_CLI_VERSION 均生效；缺省空串 = headers 层回落内置默认。
 func TestUpstreamVersionConfig(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
@@ -828,8 +828,8 @@ func TestUpstreamVersionConfig(t *testing.T) {
 			c2.Upstream.ClientVersion, c2.Upstream.CliVersion)
 	}
 	// env 覆盖。
-	t.Setenv("WB2A_CLIENT_VERSION", "7.0.0")
-	t.Setenv("WB2A_CLI_VERSION", "4.0.0")
+	t.Setenv("WP_CLIENT_VERSION", "7.0.0")
+	t.Setenv("WP_CLI_VERSION", "4.0.0")
 	c3, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -839,7 +839,7 @@ func TestUpstreamVersionConfig(t *testing.T) {
 	}
 }
 
-// TestUpstreamUserAgentConfig 配置 upstream.user_agent 与 env WB2A_USER_AGENT 均生效，
+// TestUpstreamUserAgentConfig 配置 upstream.user_agent 与 env WP_USER_AGENT 均生效，
 // 缺省空串保持现状（headers 层回落到 clientUA）。
 func TestUpstreamUserAgentConfig(t *testing.T) {
 	// JSON 配置
@@ -858,7 +858,7 @@ func TestUpstreamUserAgentConfig(t *testing.T) {
 		t.Errorf("default user_agent=%q want empty (err=%v)", c2.Upstream.UserAgent, err)
 	}
 	// env 覆盖
-	t.Setenv("WB2A_USER_AGENT", "EnvAgent/9")
+	t.Setenv("WP_USER_AGENT", "EnvAgent/9")
 	c3, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -952,7 +952,7 @@ func TestReasoningAsContentDefaultAndOverride(t *testing.T) {
 		t.Fatalf("JSON 显式 false 应生效，实际 %v", c.ReasoningAsContent)
 	}
 
-	t.Setenv("WB2A_REASONING_AS_CONTENT", "1")
+	t.Setenv("WP_REASONING_AS_CONTENT", "1")
 	c, err = Load(fp)
 	if err != nil {
 		t.Fatal(err)
@@ -961,7 +961,7 @@ func TestReasoningAsContentDefaultAndOverride(t *testing.T) {
 		t.Fatalf("环境变量应覆盖 JSON，实际 %v", c.ReasoningAsContent)
 	}
 
-	t.Setenv("WB2A_REASONING_AS_CONTENT", "0")
+	t.Setenv("WP_REASONING_AS_CONTENT", "0")
 	c, err = Load("")
 	if err != nil {
 		t.Fatal(err)

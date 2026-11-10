@@ -17,8 +17,8 @@
 # 依赖: go（需要时构建/重编 signin_bin）、curl、jq（jq 缺失时 /status 头部降级为原始 JSON）
 #
 # 环境变量:
-#   WB2A_CONFIG  配置文件路径（默认 ./config.json，读取端口与 api_key）
-#   WB2A_URL     直接指定服务地址（如 http://1.2.3.4:7863），设置后忽略配置文件
+#   WP_CONFIG  配置文件路径（默认 ./config.json，读取端口与 api_key）
+#   WP_URL     直接指定服务地址（如 http://1.2.3.4:7863），设置后忽略配置文件
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -43,8 +43,8 @@ fi
 HAS_JQ=1
 command -v jq >/dev/null 2>&1 || HAS_JQ=0
 
-# ─── 解析服务地址与密钥：优先 WB2A_URL，其次 config.json ──────────────────────
-CFG=${WB2A_CONFIG:-config.json}
+# ─── 解析服务地址与密钥：优先 WP_URL，其次 config.json ──────────────────────
+CFG=${WP_CONFIG:-config.json}
 PORT=7863
 KEY=""
 if [[ -f "$CFG" ]] && [[ "$HAS_JQ" == "1" ]]; then
@@ -53,7 +53,7 @@ if [[ -f "$CFG" ]] && [[ "$HAS_JQ" == "1" ]]; then
     KEY=$(jq -r '.api_key // ""' "$CFG")
 fi
 PORT=${PORT:-7863}
-BASE=${WB2A_URL:-http://localhost:$PORT}
+BASE=${WP_URL:-http://localhost:$PORT}
 
 AUTH=()
 [[ -n "$KEY" ]] && AUTH=(-H "Authorization: Bearer $KEY")

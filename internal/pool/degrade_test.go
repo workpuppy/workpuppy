@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // consecutiveStateOf 曝露 entry 的连败计数与降权截止（包内私有 helper）。

@@ -3,8 +3,8 @@
 // 用法（部署后手动触发）：
 //
 //	# 容器内：先 cp 进去再 exec
-//	docker cp activity-run workbuddy2api:/tmp/activity-run
-//	docker exec -w /app workbuddy2api /tmp/activity-run
+//	docker cp activity-run wp:/tmp/activity-run
+//	docker exec -w /app wp /tmp/activity-run
 //
 //	# 本地：在项目根目录（需 config.json + auths/ + data/）直接 run
 //	go run ./cmd/activity
@@ -26,11 +26,11 @@ import (
 	"strings"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/config"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/scheduler"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/config"
+	"wp/internal/pool"
+	"wp/internal/scheduler"
+	"wp/internal/upstream"
 )
 
 // cfgFile 只取本工具需要的字段；Schedule 段直接用 internal/config.Schedule

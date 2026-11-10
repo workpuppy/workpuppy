@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // rewardStub 模拟 growth 连登奖励/抽奖端点，记录 redeem/draw 的 client_token 且每次响应唯一。

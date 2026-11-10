@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 type CoolKind int

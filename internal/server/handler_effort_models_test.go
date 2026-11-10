@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // TestModelListEffortFieldsNoCNEmpty 无 CN 健康号触发动态拉取失败 → /v1/models CN 面空列表

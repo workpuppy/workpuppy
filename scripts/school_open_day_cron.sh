@@ -10,15 +10,15 @@
 #                  非窗口期打印 skip 正常退出）。
 #
 # 推荐 crontab（系统时区即 CST 时直接照抄）：
-#   0 12 * * *  root /root/workbuddy2api/scripts/school_open_day_cron.sh school
-#   0  1 * * *  root /root/workbuddy2api/scripts/school_open_day_cron.sh cat
+#   0 12 * * *  root /root/wp/scripts/school_open_day_cron.sh school
+#   0  1 * * *  root /root/wp/scripts/school_open_day_cron.sh cat
 #
 # 说明：**日常不需要 crontab** —— 网关调度器已按 schedule.school_hours /
 # schedule.cat_hours 内置执行（到点起子进程）。这个脚本留给「临时补跑」与
 # 仍想用系统 cron 的部署。
 #
 # 为什么不再有 python：任务实现已 Go 化（internal/growth → school_bin / task_runner），
-# 二进制与 wb2api 同目录（镜像里都平铺在 /app），源码模式则在仓库根。
+# 二进制与 wp 同目录（镜像里都平铺在 /app），源码模式则在仓库根。
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,15 +38,15 @@ case "$MODE" in
         ;;
 esac
 
-# ---- 二进制解析：WB2A_TASK_BIN_DIR > 仓库根 > PATH ----
-if [[ -n "${WB2A_TASK_BIN_DIR:-}" && -x "$WB2A_TASK_BIN_DIR/$BIN_NAME" ]]; then
-    BIN="$WB2A_TASK_BIN_DIR/$BIN_NAME"
+# ---- 二进制解析：WP_TASK_BIN_DIR > 仓库根 > PATH ----
+if [[ -n "${WP_TASK_BIN_DIR:-}" && -x "$WP_TASK_BIN_DIR/$BIN_NAME" ]]; then
+    BIN="$WP_TASK_BIN_DIR/$BIN_NAME"
 elif [[ -x "$REPO_ROOT/$BIN_NAME" ]]; then
     BIN="$REPO_ROOT/$BIN_NAME"
 elif command -v "$BIN_NAME" >/dev/null 2>&1; then
     BIN="$(command -v "$BIN_NAME")"
 else
-    echo "[$(date '+%F %T')] ERROR: 找不到 $BIN_NAME（应与 wb2api 同目录，或设 WB2A_TASK_BIN_DIR）" >&2
+    echo "[$(date '+%F %T')] ERROR: 找不到 $BIN_NAME（应与 wp 同目录，或设 WP_TASK_BIN_DIR）" >&2
     echo "  构建：CGO_ENABLED=0 go build -o $BIN_NAME ./cmd/$([[ $BIN_NAME == school_bin ]] && echo school || echo taskrunner)" >&2
     exit 1
 fi

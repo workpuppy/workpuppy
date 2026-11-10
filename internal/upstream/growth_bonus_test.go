@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // bonusStub 模拟补签卡 + 礼包/补偿端点（growth 域走 chatBase、billing 域走 billingBase）。

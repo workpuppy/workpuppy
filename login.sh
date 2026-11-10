@@ -14,7 +14,7 @@
 #   3. 你在浏览器打开 URL 完成登录
 #   4. 回到这里按 y → poll 拿 token+uid+nickname
 #   5. `login save` 完成剩余全部工作（首次签到 / 原子落盘 / 国际版注册地区+trial）
-#   6. 重启 workbuddy2api 容器加载新账号
+#   6. 重启 wp 容器加载新账号
 #
 # 为什么脚本里不再有 Python：镜像已不装 python3（目标形态是单镜像 + Go 二进制），
 # 原来用 python 做的 JSON 解析、签到、落盘、地区完善都搬进了 `login` 二进制的
@@ -23,7 +23,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 AUTH_DIR="./auths"
-CONTAINER="workbuddy2api"
+CONTAINER="wp"
 
 mkdir -p "$AUTH_DIR" 2>/dev/null || true
 # ─── auths/ 可写性预检（issue #160）：chown -R 10001 后 host 侧 uid 无写权限，
@@ -31,7 +31,7 @@ mkdir -p "$AUTH_DIR" 2>/dev/null || true
 if ! [[ -w "$AUTH_DIR" ]]; then
     echo "❌ 无法写入 $AUTH_DIR（auths/ 已归属容器 uid 10001？）" >&2
     echo "    请在容器内登录（无需 chown 回滚，属主自动正确）：" >&2
-    echo "    docker compose exec -it wb2api bash -c './login.sh' && docker compose restart wb2api" >&2
+    echo "    docker compose exec -it wp bash -c './login.sh' && docker compose restart wp" >&2
     exit 1
 fi
 
@@ -102,7 +102,7 @@ RESULT=$("$LOGIN_BIN" "--realm=$REALM" poll) || {
 # ─── 落盘 + 首次签到 + 国际版注册地区/trial（全部在 Go 侧）─────────────
 # 凭据从 stdin 传入（不落 argv：token 出现在进程列表里等于泄露）。
 # 失败即中止：auth 文件没写成，重启容器也没有意义。
-if ! printf '%s' "$RESULT" | WB2A_AUTH_DIR="$AUTH_DIR" "$LOGIN_BIN" "--realm=$REALM" save; then
+if ! printf '%s' "$RESULT" | WP_AUTH_DIR="$AUTH_DIR" "$LOGIN_BIN" "--realm=$REALM" save; then
     echo "" >&2
     echo "落盘失败，见上方提示（auth 文件未写入）" >&2
     exit 1

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // TestModelListContextLengthThreeLevelLookup CN 动态分支 context_length/max_output_tokens

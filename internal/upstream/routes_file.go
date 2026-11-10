@@ -24,9 +24,9 @@ const defaultConfigPath = "/app/conf/config.json"
 
 // ConfigPathFromEnv 返回独立二进制应读取的 config.json 路径（不保证文件存在）。
 //
-// 解析顺序：$WB2A_CONFIG → 当前目录 config.json → /app/conf/config.json。
+// 解析顺序：$WP_CONFIG → 当前目录 config.json → /app/conf/config.json。
 func ConfigPathFromEnv() string {
-	if v := strings.TrimSpace(os.Getenv("WB2A_CONFIG")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("WP_CONFIG")); v != "" {
 		return v
 	}
 	if _, err := os.Stat("config.json"); err == nil {

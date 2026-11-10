@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // fullFieldsModelsBody CN /console 动态目录全字段样本（任务书 hy3 抓取样本逐字，

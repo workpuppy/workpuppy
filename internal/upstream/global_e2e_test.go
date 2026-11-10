@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 func init() {
@@ -50,7 +50,7 @@ func globalE2EClient() *Client {
 // findGlobalAuthFile 在候选路径里找 realm=global 的 auth 文件并返回绝对路径。
 func findGlobalAuthFile(t *testing.T) string {
 	t.Helper()
-	dirs := []string{"auths", "../auths", "../../auths", "/root/workbuddy2api/auths"}
+	dirs := []string{"auths", "../auths", "../../auths", "/root/wp/auths"}
 	for _, dir := range dirs {
 		files, err := filepath.Glob(filepath.Join(dir, "workbuddy*.json"))
 		if err != nil {
@@ -566,7 +566,7 @@ type gatewayConfig struct {
 
 func loadGatewayConfig() gatewayConfig {
 	gc := gatewayConfig{Listen: ":7863", APIKey: "test-key"}
-	for _, cand := range []string{"config.json", "../config.json", "../../config.json", "/root/workbuddy2api/config.json"} {
+	for _, cand := range []string{"config.json", "../config.json", "../../config.json", "/root/wp/config.json"} {
 		if raw, err := os.ReadFile(cand); err == nil {
 			if err := json.Unmarshal(raw, &gc); err == nil {
 				break

@@ -73,10 +73,10 @@ func TestLoadRoutesFromFileBadJSON(t *testing.T) {
 	}
 }
 
-// $WB2A_CONFIG 优先级最高（面板/容器可覆盖默认路径）。
+// $WP_CONFIG 优先级最高（面板/容器可覆盖默认路径）。
 func TestConfigPathFromEnvPrefersEnv(t *testing.T) {
-	t.Setenv("WB2A_CONFIG", "/tmp/wb2a-explicit.json")
-	if got := ConfigPathFromEnv(); got != "/tmp/wb2a-explicit.json" {
+	t.Setenv("WP_CONFIG", "/tmp/wp-explicit.json")
+	if got := ConfigPathFromEnv(); got != "/tmp/wp-explicit.json" {
 		t.Fatalf("ConfigPathFromEnv() = %q", got)
 	}
 }
@@ -84,7 +84,7 @@ func TestConfigPathFromEnvPrefersEnv(t *testing.T) {
 // LoadRoutesAndLog 三种结局都要留痕（配了没生效 / 没配 / 读不到）。
 func TestLoadRoutesAndLogSpeaks(t *testing.T) {
 	p := writeJSON(t, "config.json", `{"proxies":{"route-a":"socks5://u:p@127.0.0.1:1080"}}`)
-	t.Setenv("WB2A_CONFIG", p)
+	t.Setenv("WP_CONFIG", p)
 	t.Cleanup(func() { ConfigureProxies(nil) })
 
 	var lines []string

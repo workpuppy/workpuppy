@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestParseGlobalModelNamesEfforts 对象形态：reasoning.supportedEfforts/defaultEffort 解析进桶。

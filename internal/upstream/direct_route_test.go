@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // 账号级强制直连（issue #223）：proxy=__direct__ 必须绕过进程级环境代理，

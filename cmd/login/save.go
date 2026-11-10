@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/region"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/region"
+	"wp/internal/upstream"
 )
 
 // saveInput poll 输出的字段（键名与 buildLoginOutput 一致）。
@@ -97,14 +97,14 @@ func runSave(realm, regionCode string) {
 		if !dirWritable(dir) {
 			fmt.Fprintf(os.Stderr, "    目录 %s 不可写（权限不足）\n", dir)
 			fmt.Fprintf(os.Stderr, "    请执行：chown -R %d:%d %s\n", containerUID, containerUID, dir)
-			fmt.Fprintf(os.Stderr, "    或在容器内登录：docker compose exec -it wb2api bash -c './login.sh'\n\n")
+			fmt.Fprintf(os.Stderr, "    或在容器内登录：docker compose exec -it wp bash -c './login.sh'\n\n")
 		}
 		os.Exit(1)
 	}
 	if uid, ok := fileUID(file); ok && uid != containerUID {
 		fmt.Printf("\n⚠️  权限警告：%s 属主 uid=%d，容器内 app(uid=%d) 可能读不到\n", file, uid, containerUID)
 		fmt.Printf("    请执行：chown -R %d:%d ./auths\n", containerUID, containerUID)
-		fmt.Printf("    或在容器内登录（属主自动正确）：docker compose exec -it wb2api bash -c './login.sh'\n\n")
+		fmt.Printf("    或在容器内登录（属主自动正确）：docker compose exec -it wp bash -c './login.sh'\n\n")
 	}
 	fmt.Printf("已保存（%s）: %s\n", action, file)
 
@@ -205,7 +205,7 @@ func finishRegion(a *auth.Auth, token, regionCode string) {
 func runAccounts() {
 	key, addr := readConfigKeyAndAddr()
 	url := strings.TrimRight(addr, "/") + "/status"
-	if v := strings.TrimSpace(os.Getenv("WB2A_STATUS_URL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("WP_STATUS_URL")); v != "" {
 		url = v
 	}
 	n, err := statusAccountCount(url, key)
@@ -224,9 +224,9 @@ func expiresInOrDefault(v int64) int64 {
 	return v
 }
 
-// authDir 账号目录：优先 WB2A_AUTH_DIR，其次 WB2A_LOGIN_AUTH_DIR，最后 ./auths。
+// authDir 账号目录：优先 WP_AUTH_DIR，其次 WP_LOGIN_AUTH_DIR，最后 ./auths。
 func authDir() string {
-	for _, k := range []string{"WB2A_AUTH_DIR", "WB2A_LOGIN_AUTH_DIR"} {
+	for _, k := range []string{"WP_AUTH_DIR", "WP_LOGIN_AUTH_DIR"} {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 			return v
 		}
@@ -254,7 +254,7 @@ func prefix(s string, n int) string {
 
 // readConfigKeyAndAddr 读 config.json 的 api_key 与 listen（BOM 容忍）。
 func readConfigKeyAndAddr() (key, addr string) {
-	path := strings.TrimSpace(os.Getenv("WB2A_CONFIG"))
+	path := strings.TrimSpace(os.Getenv("WP_CONFIG"))
 	if path == "" {
 		path = "config.json"
 	}

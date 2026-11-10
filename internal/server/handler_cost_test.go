@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
+	"wp/internal/auth"
+	"wp/internal/pool"
 )
 
 // sseWithCredit 末帧带 usage.credit 的流式响应：2.0 credit / 2000 token。

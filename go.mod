@@ -1,4 +1,4 @@
-module workbuddy2api
+module wp
 
 go 1.22.5
 

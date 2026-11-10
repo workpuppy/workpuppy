@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // newFakeUpstreamHeaders 同 newFakeUpstream，但可按 Authorization 决定响应头

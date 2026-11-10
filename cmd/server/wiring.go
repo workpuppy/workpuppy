@@ -1,8 +1,8 @@
 package main
 
 import (
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/server"
+	"wp/internal/pool"
+	"wp/internal/server"
 )
 
 // realmAwareAvailableForModel 构造会话粘性路由按模型可用口径的 realm 感知闭包。

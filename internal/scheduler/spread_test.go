@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
+	"wp/internal/auth"
+	"wp/internal/pool"
 )
 
 // withScheduled 模拟定时触发的 ctx（dispatch 会给它塞 scheduledAccountKey）。
@@ -22,30 +22,30 @@ func withScheduled(ctx context.Context) context.Context {
 func TestSpreadWindowResolution(t *testing.T) {
 	s := New(Config{SpreadWindow: 10 * time.Minute})
 
-	os.Unsetenv("WB2A_TASK_SPREAD")
+	os.Unsetenv("WP_TASK_SPREAD")
 	if got := s.spreadWindow(); got != 10*time.Minute {
 		t.Fatalf("未设环境变量时应取设置项 10m，实际 %v", got)
 	}
 
-	t.Setenv("WB2A_TASK_SPREAD", "3m")
+	t.Setenv("WP_TASK_SPREAD", "3m")
 	if got := s.spreadWindow(); got != 3*time.Minute {
 		t.Fatalf("环境变量应覆盖设置项，实际 %v", got)
 	}
 
 	for _, off := range []string{"0", "off", "OFF", "false"} {
-		t.Setenv("WB2A_TASK_SPREAD", off)
+		t.Setenv("WP_TASK_SPREAD", off)
 		if got := s.spreadWindow(); got != 0 {
 			t.Fatalf("环境变量 %q 应关闭摊开，实际 %v", off, got)
 		}
 	}
 
-	t.Setenv("WB2A_TASK_SPREAD", "not-a-duration")
+	t.Setenv("WP_TASK_SPREAD", "not-a-duration")
 	if got := s.spreadWindow(); got != 10*time.Minute {
 		t.Fatalf("环境变量非法应回落设置项，实际 %v", got)
 	}
 
 	// 设置项为 0（未配置/显式关闭）时就是关闭。
-	os.Unsetenv("WB2A_TASK_SPREAD")
+	os.Unsetenv("WP_TASK_SPREAD")
 	if got := New(Config{}).spreadWindow(); got != 0 {
 		t.Fatalf("设置项为空应视为关闭，实际 %v", got)
 	}

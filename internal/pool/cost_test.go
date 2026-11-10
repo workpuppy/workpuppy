@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestNoteModelCostAndPreferFree 成本账本的核心验收：同一模型上已实测免费的号

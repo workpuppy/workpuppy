@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
 )
 
 // ErrKind 错误分类，pool 据此决定冷却时长。

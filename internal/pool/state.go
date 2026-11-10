@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
 )
 
 // Disable 永久禁用（session 死亡 / 账号级授权封禁），需人工重登后手工恢复或文件替换。

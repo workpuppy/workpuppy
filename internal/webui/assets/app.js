@@ -2,7 +2,7 @@
 //
 // 认证模型（与 /v1 完全分离）：
 //   * 管理面只认**管理密码**：服务每次启动随机生成、只存服务器内存、打印在容器日志里；
-//   * 本页面把密码存在 localStorage['wb2a.adminPassword']，之后每个请求带
+//   * 本页面把密码存在 localStorage['wp.adminPassword']，之后每个请求带
 //     `Authorization: Bearer <密码>`；没有用户名、没有会话 Cookie（因此也没有 CSRF 面）；
 //   * 任何 401（密码错/服务重启换了密码）→ **清掉本地存储并跳回登录页**，
 //     绝不留在空白面板上让人误以为"数据没了"。
@@ -14,8 +14,8 @@
 
 'use strict';
 
-const PW_STORE = 'wb2a.adminPassword';
-const THEME_STORE = 'wb2a.theme';
+const PW_STORE = 'wp.adminPassword';
+const THEME_STORE = 'wp.theme';
 
 const state = {
   password: localStorage.getItem(PW_STORE) || '',

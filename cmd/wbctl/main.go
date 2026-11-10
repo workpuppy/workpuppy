@@ -1,4 +1,4 @@
-// Command wbctl 是 workbuddy2api 管理面的命令行客户端。
+// Command wbctl 是 wp 管理面的命令行客户端。
 //
 // 为什么有它：轻量版刻意不做 Web 界面，管理动作就落在两种人手上 ——
 // 脚本（curl / CI）与运维（命令行）。wbctl 是后者的入口：读同一份 config.json，
@@ -40,7 +40,7 @@ type cfgFile struct {
 // client 管理面客户端。
 //
 // 凭据是**管理密码**（服务启动时随机生成、打印在容器日志里），不是 /v1 的 api_key：
-// 两者已彻底分离，拿 api_key 调 /admin/* 会被 401。密码来源：-password > WB2A_ADMIN_PASSWORD。
+// 两者已彻底分离，拿 api_key 调 /admin/* 会被 401。密码来源：-password > WP_ADMIN_PASSWORD。
 type client struct {
 	base     string
 	password string
@@ -51,7 +51,7 @@ func main() {
 	var (
 		cfgPath  = flag.String("config", "config.json", "服务端配置文件（读 listen）")
 		server   = flag.String("server", "", "覆盖服务地址，如 http://127.0.0.1:7863")
-		password = flag.String("password", "", "管理密码（默认取环境变量 WB2A_ADMIN_PASSWORD）")
+		password = flag.String("password", "", "管理密码（默认取环境变量 WP_ADMIN_PASSWORD）")
 		asJSON   = flag.Bool("json", false, "输出原始 JSON")
 	)
 	flag.Usage = usage
@@ -111,7 +111,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `wbctl —— workbuddy2api 管理面命令行
+	fmt.Fprintf(os.Stderr, `wbctl —— wp 管理面命令行
 
 用法: wbctl [-config config.json] [-server URL] [-password PW] [-json] <命令> [参数]
 
@@ -129,7 +129,7 @@ func usage() {
   revive <uid>                     解除系统自动禁用（封号救不回）
 
 前置条件：服务端 config.json 里 admin.enabled=true；密码取服务启动日志里的「登录密码」，
-           也可用 -password 或环境变量 WB2A_ADMIN_PASSWORD 直接给。
+           也可用 -password 或环境变量 WP_ADMIN_PASSWORD 直接给。
 `)
 }
 
@@ -158,7 +158,7 @@ func newClient(cfgPath, server, password string) *client {
 		server = "http://" + listen
 	}
 	if password == "" {
-		password = strings.TrimSpace(os.Getenv("WB2A_ADMIN_PASSWORD"))
+		password = strings.TrimSpace(os.Getenv("WP_ADMIN_PASSWORD"))
 	}
 	return &client{
 		base:     strings.TrimRight(server, "/"),

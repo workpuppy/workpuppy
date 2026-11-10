@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestChatStreamContextCancelPropagates 客户端 ctx 取消应立即中断在途 SSE 流。

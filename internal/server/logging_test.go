@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
 )
 
 // captureStdout 重定向 os.Stdout 并捕获 fn 期间的全部输出。

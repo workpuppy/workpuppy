@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // authStub 测试用最小账号（CN realm 缺省）。

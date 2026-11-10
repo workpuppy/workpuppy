@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestModelListCarriesMagpieCompatFields /v1/models 要能同时喂第三方目录客户端

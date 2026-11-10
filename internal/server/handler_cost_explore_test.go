@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestStatusCostExploreExposed 探索发生后 /status 应透出累计事件数与

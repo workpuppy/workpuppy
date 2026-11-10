@@ -10,7 +10,7 @@
 // 本工具只做渲染 —— 无状态、无依赖、用完即退，不像常驻面板那样占内存。
 //
 // 配置解析与网关侧其它工具一致：读 config.json 的 listen（取端口）与 api_key；
-// 可用 WB2A_URL 直接指定地址、WB2A_CONFIG 指定配置文件路径。
+// 可用 WP_URL 直接指定地址、WP_CONFIG 指定配置文件路径。
 package main
 
 import (
@@ -156,13 +156,13 @@ func validateFlags(watch time.Duration, jsonOut bool, sortKey string) error {
 
 // resolveGateway 决定网关地址与 api_key。
 //
-// 优先级（地址）：-server flag > WB2A_URL > config.json 的 listen。
-// key 来源：WB2A_API_KEY > config.json 的 api_key。
+// 优先级（地址）：-server flag > WP_URL > config.json 的 listen。
+// key 来源：WP_API_KEY > config.json 的 api_key。
 //
 // 与 cmd/acct 的 resolveTarget 同口径：-server 只覆盖**地址**，key 仍从配置文件读
 // ——否则「只想指定地址」的用户会意外丢掉鉴权（实测 401）。
 func resolveGateway(serverOverride string) (baseURL, apiKey string, err error) {
-	cfgPath := os.Getenv("WB2A_CONFIG")
+	cfgPath := os.Getenv("WP_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "config.json"
 	}
@@ -177,27 +177,27 @@ func resolveGateway(serverOverride string) (baseURL, apiKey string, err error) {
 		}
 		// 环境变量优先于文件（与 cmd/acct 一致）。
 		apiKey = cfg.APIKey
-		if k := os.Getenv("WB2A_API_KEY"); k != "" {
+		if k := os.Getenv("WP_API_KEY"); k != "" {
 			apiKey = k
 		}
 		if s := strings.TrimSpace(serverOverride); s != "" {
 			return strings.TrimRight(s, "/"), apiKey, nil
 		}
-		if u := os.Getenv("WB2A_URL"); u != "" {
+		if u := os.Getenv("WP_URL"); u != "" {
 			return strings.TrimRight(u, "/"), apiKey, nil
 		}
 		return normalizeListen(cfg.Listen), apiKey, nil
 	}
 
 	// 无配置文件：仅当地址可由 flag/env 提供时才继续（否则无从连接）。
-	apiKey = os.Getenv("WB2A_API_KEY")
+	apiKey = os.Getenv("WP_API_KEY")
 	if s := strings.TrimSpace(serverOverride); s != "" {
 		return strings.TrimRight(s, "/"), apiKey, nil
 	}
-	if u := os.Getenv("WB2A_URL"); u != "" {
+	if u := os.Getenv("WP_URL"); u != "" {
 		return strings.TrimRight(u, "/"), apiKey, nil
 	}
-	return "", "", fmt.Errorf("读取 %s 失败（可用 -server 或 WB2A_URL 直接指定网关地址）: %w", cfgPath, rerr)
+	return "", "", fmt.Errorf("读取 %s 失败（可用 -server 或 WP_URL 直接指定网关地址）: %w", cfgPath, rerr)
 }
 
 // normalizeListen 把配置里的 listen（":7863" / "0.0.0.0:7863" / "127.0.0.1:7863"）
@@ -453,7 +453,7 @@ func columns(modelBudget int, now time.Time) []col {
 
 // fago 把 last_seen 渲染成相对当前时刻的简短表达（"42s前" / "17m前" / "22.0h前"）。
 //
-// 用网关响应里的 now 而非 time.Now()：网关可能是远程的（WB2A_URL），以它的
+// 用网关响应里的 now 而非 time.Now()：网关可能是远程的（WP_URL），以它的
 // 时钟为准才不会因两端时钟偏差算出负数；同时也让渲染完全确定、可测。
 //
 // 解析失败、字段缺失或 now 为零值时回落 "-"，绝不 panic —— 旧版网关可能没有
@@ -874,7 +874,7 @@ func fitLine(s string, width int) string {
 
 // frameNow 取渲染"最后活动"列所用的当前时刻。
 //
-// 优先用网关响应里的 now：网关可能是远程的（WB2A_URL），以它的时钟为准才不会
+// 优先用网关响应里的 now：网关可能是远程的（WP_URL），以它的时钟为准才不会
 // 因两端时钟偏差把"刚刚发生"算成负数或离谱值。字段缺失或解析失败时回落到本机
 // 时间 —— 总比不显示强。
 func frameNow(st *statsResponse) time.Time {

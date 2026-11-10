@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestChatStreamEmptyUpstreamLogged502 RED：上游 200 + 空流（0 有效帧）时，

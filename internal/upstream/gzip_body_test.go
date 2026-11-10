@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestOutboundBodyGzipThreshold 小于阈值不压、超过阈值压且可解回原文。

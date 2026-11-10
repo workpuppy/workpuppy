@@ -8,8 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
 )
 
 // Pick 单一选号入口（无请求级轮换、无 realm 过滤，模型感知）。

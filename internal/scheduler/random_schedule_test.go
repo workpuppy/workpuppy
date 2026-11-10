@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 func TestScheduledAccountGapBoundsAndManualBypass(t *testing.T) {

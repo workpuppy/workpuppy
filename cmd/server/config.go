@@ -12,14 +12,14 @@ import (
 	"sync"
 	"time"
 
-	"workbuddy2api/internal/adminauth"
-	"workbuddy2api/internal/config"
-	"workbuddy2api/internal/configdata"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/prompt"
-	"workbuddy2api/internal/redisstore"
-	"workbuddy2api/internal/server"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/adminauth"
+	"wp/internal/config"
+	"wp/internal/configdata"
+	"wp/internal/pool"
+	"wp/internal/prompt"
+	"wp/internal/redisstore"
+	"wp/internal/server"
+	"wp/internal/upstream"
 )
 
 // defaultCfg/defaultCfgOnce 缓存"纯默认配置"，供 normalize 的兜底取值使用。
@@ -49,7 +49,7 @@ type Config struct {
 	//
 	// 默认 true（空回复比重复更难接受）。代价：同时渲染两个字段的客户端会把同一
 	// 段话显示两遍 —— 遇到就设 `"reasoning_as_content": false`，或环境变量
-	// WB2A_REASONING_AS_CONTENT=0。指针类型用于区分「没写」与「显式 false」。
+	// WP_REASONING_AS_CONTENT=0。指针类型用于区分「没写」与「显式 false」。
 	ReasoningAsContent *bool `json:"reasoning_as_content"`
 
 	Server struct{} `json:"server"` // 已退役段：max_body_mb 移除后无字段；旧配置该段下任意键因 JSON 未知字段而自然忽略
@@ -83,7 +83,7 @@ type Config struct {
 		BodyLimitBytes int `json:"body_limit_bytes"`
 		// PasswordLength 启动时随机生成的管理密码长度（默认 20）。
 		PasswordLength int `json:"password_length"`
-		// MinPasswordLength 用 WB2A_ADMIN_PASSWORD 固定密码时的最小长度（默认 8）。
+		// MinPasswordLength 用 WP_ADMIN_PASSWORD 固定密码时的最小长度（默认 8）。
 		MinPasswordLength int `json:"min_password_length"`
 	} `json:"admin"`
 
@@ -343,7 +343,7 @@ func Default() *Config {
 //   - config.json 存在但**某个属性没写** → 该属性取 config.default.json 里的值；
 //   - 属性**写成 null** 也按"未定义"处理（回退到默认值），而不是清成零值——
 //     JSON 里 `"ttl": null` 的直觉含义就是"没设"；
-//   - 最终再用 WB2A_* 环境变量覆盖（最高优先级）。
+//   - 最终再用 WP_* 环境变量覆盖（最高优先级）。
 func Load(path string) (*Config, error) {
 	c := Default()
 
@@ -516,95 +516,95 @@ func defaults() *Config {
 }
 
 func applyEnv(c *Config) {
-	if v := os.Getenv("WB2A_LISTEN"); v != "" {
+	if v := os.Getenv("WP_LISTEN"); v != "" {
 		c.Listen = v
 	}
-	if v := os.Getenv("WB2A_API_KEY"); v != "" {
+	if v := os.Getenv("WP_API_KEY"); v != "" {
 		c.APIKey = v
 	}
-	if v := os.Getenv("WB2A_AUTH_DIR"); v != "" {
+	if v := os.Getenv("WP_AUTH_DIR"); v != "" {
 		c.AuthDir = v
 	}
-	if v := os.Getenv("WB2A_STATE_FILE"); v != "" {
+	if v := os.Getenv("WP_STATE_FILE"); v != "" {
 		c.StateFile = v
 	}
-	if v := os.Getenv("WB2A_SOFT_RATE"); v != "" {
+	if v := os.Getenv("WP_SOFT_RATE"); v != "" {
 		c.Cooldown.SoftRate = v
 	}
-	if v := os.Getenv("WB2A_SOFT_RATE_MAX"); v != "" {
+	if v := os.Getenv("WP_SOFT_RATE_MAX"); v != "" {
 		c.Cooldown.SoftRateMax = v
 	}
-	if v := os.Getenv("WB2A_CREDIT_EXHAUSTED"); v != "" {
+	if v := os.Getenv("WP_CREDIT_EXHAUSTED"); v != "" {
 		c.Cooldown.CreditExhausted = v
 	}
-	if v := strings.TrimSpace(os.Getenv("WB2A_REASONING_AS_CONTENT")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("WP_REASONING_AS_CONTENT")); v != "" {
 		on := !(v == "0" || strings.EqualFold(v, "false") || strings.EqualFold(v, "off"))
 		c.ReasoningAsContent = &on
 	}
-	if v := strings.TrimSpace(os.Getenv("WB2A_PROXIES")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("WP_PROXIES")); v != "" {
 		var table map[string]string
 		if err := json.Unmarshal([]byte(v), &table); err == nil {
 			c.Proxies = table
 		}
 	}
-	if v := os.Getenv("WB2A_TIMEOUT_SECONDS"); v != "" {
+	if v := os.Getenv("WP_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Upstream.TimeoutSeconds = n
 		}
 	}
-	if v := os.Getenv("WB2A_HEADER_TIMEOUT_SECONDS"); v != "" {
+	if v := os.Getenv("WP_HEADER_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Upstream.HeaderTimeoutSeconds = n
 		}
 	}
-	if v := os.Getenv("WB2A_IDLE_TIMEOUT_SECONDS"); v != "" {
+	if v := os.Getenv("WP_IDLE_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Upstream.IdleTimeoutSeconds = n
 		}
 	}
-	if v := os.Getenv("WB2A_USER_AGENT"); v != "" {
+	if v := os.Getenv("WP_USER_AGENT"); v != "" {
 		c.Upstream.UserAgent = v
 	}
-	if v := os.Getenv("WB2A_DEVICE_TOKEN"); v != "" {
+	if v := os.Getenv("WP_DEVICE_TOKEN"); v != "" {
 		c.Upstream.DeviceToken = v
 	}
-	if v := os.Getenv("WB2A_DEVICE_TOKEN_FILE"); v != "" {
+	if v := os.Getenv("WP_DEVICE_TOKEN_FILE"); v != "" {
 		c.Upstream.DeviceTokenFile = v
 	}
-	if v := os.Getenv("WB2A_CLIENT_NAME"); v != "" {
+	if v := os.Getenv("WP_CLIENT_NAME"); v != "" {
 		c.Upstream.ClientName = v
 	}
-	if v := os.Getenv("WB2A_CLIENT_VERSION"); v != "" {
+	if v := os.Getenv("WP_CLIENT_VERSION"); v != "" {
 		c.Upstream.ClientVersion = v
 	}
-	if v := os.Getenv("WB2A_CLI_VERSION"); v != "" {
+	if v := os.Getenv("WP_CLI_VERSION"); v != "" {
 		c.Upstream.CliVersion = v
 	}
-	if v := os.Getenv("WB2A_PASSTHROUGH_IP"); v != "" {
+	if v := os.Getenv("WP_PASSTHROUGH_IP"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.Upstream.PassthroughIP = b
 		}
 	}
-	if v := os.Getenv("WB2A_GZIP_BODY"); v != "" {
+	if v := os.Getenv("WP_GZIP_BODY"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.Upstream.GzipBody = b
 		}
 	}
-	if v := os.Getenv("WB2A_SANITIZE_FINGERPRINTS"); v != "" {
+	if v := os.Getenv("WP_SANITIZE_FINGERPRINTS"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.Features.SanitizeBlacklistFingerprints = b
 		}
 	}
-	if v := os.Getenv("WB2A_PROMPT_MODE"); v != "" {
+	if v := os.Getenv("WP_PROMPT_MODE"); v != "" {
 		c.Prompt.Mode = v
 	}
-	if v := os.Getenv("WB2A_PROMPT_FILE"); v != "" {
+	if v := os.Getenv("WP_PROMPT_FILE"); v != "" {
 		c.Prompt.File = v
 	}
-	if v := os.Getenv("WB2A_EXPIRING_SOON"); v != "" {
+	if v := os.Getenv("WP_EXPIRING_SOON"); v != "" {
 		c.Pool.ExpiringSoon = v
 	}
-	if v := os.Getenv("WB2A_ADMIN_ENABLED"); v != "" {
+	if v := os.Getenv("WP_ADMIN_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.Admin.Enabled = b
 		}
@@ -801,7 +801,7 @@ func (c *Config) normalize() error {
 	}
 	// fail-fast（设计 supplement §4.1）：admin.enabled=true 且 api_key 为空 = 未鉴权的
 	// mutation 端点（disable/revive 是可用性操作，风险高于 /status 读泄漏），拒绝启动。
-	// 校验放 applyEnv 之后：env 覆盖（WB2A_ADMIN_ENABLED / WB2A_API_KEY）与 config
+	// 校验放 applyEnv 之后：env 覆盖（WP_ADMIN_ENABLED / WP_API_KEY）与 config
 	// 两条入口最终状态一致拦截。
 	if c.Admin.Enabled && strings.TrimSpace(c.APIKey) == "" {
 		return fmt.Errorf("admin.enabled=true 但 api_key 为空：请设置 api_key 或将 admin.enabled 置 false")

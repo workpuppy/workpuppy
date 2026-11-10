@@ -3,7 +3,7 @@ package upstream
 import (
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestCommonHeadersCodeBuddyRequest 所有出站请求统一注入

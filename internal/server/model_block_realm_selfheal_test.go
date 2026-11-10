@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // issue #332：自愈的判据必须与选号**同一个 realm 维度**。

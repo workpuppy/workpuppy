@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // TestChatRotationReusesConversationRequestID 轮转失败（全部账号 402）场景：

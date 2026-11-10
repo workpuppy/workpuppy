@@ -43,35 +43,35 @@ func TestAdminDisabledWithoutKeyOK(t *testing.T) {
 	}
 }
 
-// TestAdminEnvOverride WB2A_ADMIN_ENABLED env 覆盖（对齐 WB2A_PASSTHROUGH_IP 风格：
+// TestAdminEnvOverride WP_ADMIN_ENABLED env 覆盖（对齐 WP_PASSTHROUGH_IP 风格：
 // ParseBool，非法值忽略不报错）。
 func TestAdminEnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
 	os.WriteFile(fp, []byte(`{"api_key":"k","admin":{"enabled":false}}`), 0o600)
 
-	t.Setenv("WB2A_ADMIN_ENABLED", "true")
+	t.Setenv("WP_ADMIN_ENABLED", "true")
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !c.Admin.Enabled {
-		t.Error("WB2A_ADMIN_ENABLED=true 应开启 admin")
+		t.Error("WP_ADMIN_ENABLED=true 应开启 admin")
 	}
 
 	// env 关闭覆盖 config 的 true
 	os.WriteFile(fp, []byte(`{"api_key":"k","admin":{"enabled":true}}`), 0o600)
-	t.Setenv("WB2A_ADMIN_ENABLED", "false")
+	t.Setenv("WP_ADMIN_ENABLED", "false")
 	c, err = Load(fp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Admin.Enabled {
-		t.Error("WB2A_ADMIN_ENABLED=false 应覆盖 config 的 true")
+		t.Error("WP_ADMIN_ENABLED=false 应覆盖 config 的 true")
 	}
 
 	// 非法值忽略：config 的 true 保持
-	t.Setenv("WB2A_ADMIN_ENABLED", "yes-please")
+	t.Setenv("WP_ADMIN_ENABLED", "yes-please")
 	c, err = Load(fp)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestAdminEnvOverrideFailsFastWhenNoKey(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
 	os.WriteFile(fp, []byte(`{"api_key":"","admin":{"enabled":false}}`), 0o600)
-	t.Setenv("WB2A_ADMIN_ENABLED", "1")
+	t.Setenv("WP_ADMIN_ENABLED", "1")
 	if _, err := Load(fp); err == nil {
 		t.Fatal("env 开启 admin + 空 api_key 也应 fail-fast")
 	}

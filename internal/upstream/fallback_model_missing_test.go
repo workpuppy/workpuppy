@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // issue #245：/v2 判渠道校验、回退 /console 之后拿到的 11102 不能升级成 model_blocked。

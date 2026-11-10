@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // globalUAString global realm 默认出站 UA：第二段 platform 品牌为官方国际版

@@ -1,18 +1,18 @@
 services:
-  wb2api:
+  wp:
     # 两种用法都支持：
     #   docker compose pull      → 拉已发布的多架构镜像（latest 会自动选本机架构）
     #   docker compose up -d --build → 用本地源码构建（改代码时用）
     image: ghcr.io/workpuppy/workpuppy:latest
     build: .
-    container_name: workbuddy2api
+    container_name: wp
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
       # 管理后台密码默认**每次启动随机生成**并打印在容器日志里：
-      #   docker logs workbuddy2api | grep 登录密码
+      #   docker logs wp | grep 登录密码
       # 开发/自动化想固定密码再取消下面一行（≥8 字符）：
-      # - WB2A_ADMIN_PASSWORD=please-change-me
+      # - WP_ADMIN_PASSWORD=please-change-me
     ports:
       - "7863:7863"
     volumes:
@@ -23,7 +23,7 @@ services:
       #   chown -R 10001:10001 ./auths
       # 之后新增账号建议进容器登录（app 自身落盘，属主即 10001，免反复 chown；容器内无
       # docker CLI，完成后回宿主机重启）：
-      #   docker compose exec -it wb2api bash -c './login.sh' && docker compose restart wb2api
+      #   docker compose exec -it wp bash -c './login.sh' && docker compose restart wp
       - ./auths:/app/auths
       # data 保持 bind mount（本地映射，与旧版本一致）。
       # 若容器内 app(uid 10001) 写 state.json 报 permission denied，宿主机执行：

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestCooldownAccountingConcurrent 冷却记账热点并发压力（任务书点名）：

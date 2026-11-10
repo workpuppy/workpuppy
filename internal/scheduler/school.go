@@ -54,12 +54,12 @@ var newScriptCmd = func(program string, args ...string) scriptRunner {
 
 // taskBin 解析任务二进制的绝对路径。
 //
-// 顺序：WB2A_TASK_BIN_DIR → 与本进程同一目录 → 当前工作目录 → PATH。
+// 顺序：WP_TASK_BIN_DIR → 与本进程同一目录 → 当前工作目录 → PATH。
 // 为什么先看「本进程所在目录」：镜像里全部二进制平铺在 /app，容器以 /app 为
 // WORKDIR 启动，这条命中率最高；源码模式下 `go run ./cmd/server` 的临时二进制
 // 目录里没有它们，于是落到 cwd——所以 cwd 必须是仓库根（dev.sh 就是这么跑的）。
 func taskBin(name string) (string, bool) {
-	if dir := strings.TrimSpace(os.Getenv("WB2A_TASK_BIN_DIR")); dir != "" {
+	if dir := strings.TrimSpace(os.Getenv("WP_TASK_BIN_DIR")); dir != "" {
 		p := filepath.Join(dir, name)
 		if isExecutable(p) {
 			return p, true
@@ -143,7 +143,7 @@ func (s *Scheduler) runSchool(ctx context.Context) {
 	}
 	bin, ok := taskBin(TaskBinSchool)
 	if !ok {
-		log.Printf("WARN: 开学季任务跳过：找不到 %s（应与 wb2api 同目录，或用 WB2A_TASK_BIN_DIR 指定）", TaskBinSchool)
+		log.Printf("WARN: 开学季任务跳过：找不到 %s（应与 wp 同目录，或用 WP_TASK_BIN_DIR 指定）", TaskBinSchool)
 		return
 	}
 	s.runScriptTask(ctx, "school", bin, []string{"--run", "--yes"}, taskSchool)
@@ -160,7 +160,7 @@ func (s *Scheduler) runCat(ctx context.Context) {
 	}
 	bin, ok := taskBin(TaskBinRunner)
 	if !ok {
-		log.Printf("WARN: 夜猫子任务跳过：找不到 %s（应与 wb2api 同目录，或用 WB2A_TASK_BIN_DIR 指定）", TaskBinRunner)
+		log.Printf("WARN: 夜猫子任务跳过：找不到 %s（应与 wp 同目录，或用 WP_TASK_BIN_DIR 指定）", TaskBinRunner)
 		return
 	}
 	s.runScriptTask(ctx, "cat", bin, []string{"--yes", "--only", "black_cat"}, taskCat)
@@ -215,7 +215,7 @@ func (s *Scheduler) runScriptTask(ctx context.Context, name, bin string, args []
 }
 
 // workDir 子进程的工作目录：用当前进程的 cwd。
-// 任务二进制自己解析账号目录（WB2A_AUTHS 优先），所以这里不需要「仓库根」这种概念了。
+// 任务二进制自己解析账号目录（WP_AUTHS 优先），所以这里不需要「仓库根」这种概念了。
 func workDir() string {
 	if wd, err := os.Getwd(); err == nil {
 		return wd

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png" alt="WorkBuddy2API" width="120">
+  <img src="https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png" alt="WP" width="120">
 </p>
 
-# WorkBuddy2API
+# WP
 
 把多个 WorkBuddy（CodeBuddy）账号聚合成一个 **OpenAI 兼容** HTTP 网关：下游客户端只需改
 `base_url` 与 `api_key`，就能共享整池账号的额度；网关负责鉴权、会话粘性、轮转、冷却、
@@ -61,7 +61,7 @@ git clone https://github.com/workpuppy/workpuppy.git
 cd workpuppy
 cp config.default.json config.json     # 至少改 api_key
 
-docker run -d --name workbuddy2api -p 127.0.0.1:7863:7863 \
+docker run -d --name wp -p 127.0.0.1:7863:7863 \
   -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
   -v "$PWD/config.json:/app/config.json:ro" \
   ghcr.io/workpuppy/workpuppy:latest
@@ -77,15 +77,15 @@ docker compose up -d --build        # 或 docker compose up -d（用已发布镜
 ### 源码运行
 
 ```bash
-go build -o wb2api ./cmd/server
-./wb2api -config config.json        # 默认读 ./config.json
+go build -o wp ./cmd/server
+./wp -config config.json        # 默认读 ./config.json
 ```
 
 ### 第一次进来（管理密码）
 
 ```bash
 # 1) 起服务后从日志里取管理密码（每次启动都会换）
-docker logs workbuddy2api | grep 登录密码
+docker logs wp | grep 登录密码
 #   登录密码: HDBzN2dnojSNGrpki7UA
 
 # 2) 添加账号（扫码）
@@ -108,7 +108,7 @@ docker logs workbuddy2api | grep 登录密码
 ### 读取优先级（与 Spring 的属性覆盖一致）
 
 ```
-内置默认配置 config.default.json  ←  config.json 逐属性覆盖  ←  WB2A_* 环境变量
+内置默认配置 config.default.json  ←  config.json 逐属性覆盖  ←  WP_* 环境变量
 ```
 
 | 情况 | 结果 |
@@ -192,8 +192,8 @@ docker logs workbuddy2api | grep 登录密码
 |---|---|---|
 | `enabled` | `false` | 是否注册 `/admin/*`；未开启时这些路径**根本不注册**（404，而非 403） |
 | `body_limit_bytes` | `8192` | 管理面请求体上限 |
-| `password_length` | `20` | 启动时随机生成的管理密码长度（仅在没设 `WB2A_ADMIN_PASSWORD` 时生效） |
-| `min_password_length` | `8` | 用 `WB2A_ADMIN_PASSWORD` 固定密码时的最小长度（不足则启动失败） |
+| `password_length` | `20` | 启动时随机生成的管理密码长度（仅在没设 `WP_ADMIN_PASSWORD` 时生效） |
+| `min_password_length` | `8` | 用 `WP_ADMIN_PASSWORD` 固定密码时的最小长度（不足则启动失败） |
 
 > 管理密码**每次启动重新生成、只存内存、打印在终端**，与 `api_key` 完全分离：
 > 拿下游 key 打 `/admin/*` 一律 401；密码未初始化时管理面回 503（不存在"空凭据放行"）。
@@ -304,23 +304,23 @@ docker logs workbuddy2api | grep 登录密码
 
 | 变量 | 覆盖的配置项 |
 |---|---|
-| `WB2A_LISTEN` | `listen` |
-| `WB2A_API_KEY` | `api_key` |
-| `WB2A_AUTH_DIR` / `WB2A_STATE_FILE` | `auth_dir` / `state_file` |
-| `WB2A_PROXIES` | `proxies`（`name=url,name=url`） |
-| `WB2A_REASONING_AS_CONTENT` | `reasoning_as_content` |
-| `WB2A_SOFT_RATE` / `WB2A_SOFT_RATE_MAX` / `WB2A_CREDIT_EXHAUSTED` | `cooldown.*` |
-| `WB2A_TIMEOUT_SECONDS` / `WB2A_HEADER_TIMEOUT_SECONDS` / `WB2A_IDLE_TIMEOUT_SECONDS` | `upstream.*` 超时 |
-| `WB2A_USER_AGENT` / `WB2A_CLIENT_VERSION` / `WB2A_CLI_VERSION` / `WB2A_CLIENT_NAME` | 指纹相关 |
-| `WB2A_DEVICE_TOKEN` / `WB2A_DEVICE_TOKEN_FILE` | device token |
-| `WB2A_PASSTHROUGH_IP` / `WB2A_GZIP_BODY` | 透传 IP / 压缩 |
-| `WB2A_PROMPT_MODE` / `WB2A_PROMPT_FILE` | `prompt.*` |
-| `WB2A_SANITIZE_FINGERPRINTS` | `features.sanitize_blacklist_fingerprints` |
-| `WB2A_EXPIRING_SOON` | `pool.expiring_soon` |
-| `WB2A_ADMIN_ENABLED` | `admin.enabled` |
-| `WB2A_ADMIN_PASSWORD` | 固定管理密码（替代启动时随机生成） |
-| `WB2A_TASK_SPREAD` | 临时覆盖 `schedule.spread_window`（`"0"` 关闭），排障用 |
-| `WB2A_TASK_BIN_DIR` | `school_bin` / `task_runner` 等辅助二进制的目录 |
+| `WP_LISTEN` | `listen` |
+| `WP_API_KEY` | `api_key` |
+| `WP_AUTH_DIR` / `WP_STATE_FILE` | `auth_dir` / `state_file` |
+| `WP_PROXIES` | `proxies`（`name=url,name=url`） |
+| `WP_REASONING_AS_CONTENT` | `reasoning_as_content` |
+| `WP_SOFT_RATE` / `WP_SOFT_RATE_MAX` / `WP_CREDIT_EXHAUSTED` | `cooldown.*` |
+| `WP_TIMEOUT_SECONDS` / `WP_HEADER_TIMEOUT_SECONDS` / `WP_IDLE_TIMEOUT_SECONDS` | `upstream.*` 超时 |
+| `WP_USER_AGENT` / `WP_CLIENT_VERSION` / `WP_CLI_VERSION` / `WP_CLIENT_NAME` | 指纹相关 |
+| `WP_DEVICE_TOKEN` / `WP_DEVICE_TOKEN_FILE` | device token |
+| `WP_PASSTHROUGH_IP` / `WP_GZIP_BODY` | 透传 IP / 压缩 |
+| `WP_PROMPT_MODE` / `WP_PROMPT_FILE` | `prompt.*` |
+| `WP_SANITIZE_FINGERPRINTS` | `features.sanitize_blacklist_fingerprints` |
+| `WP_EXPIRING_SOON` | `pool.expiring_soon` |
+| `WP_ADMIN_ENABLED` | `admin.enabled` |
+| `WP_ADMIN_PASSWORD` | 固定管理密码（替代启动时随机生成） |
+| `WP_TASK_SPREAD` | 临时覆盖 `schedule.spread_window`（`"0"` 关闭），排障用 |
+| `WP_TASK_BIN_DIR` | `school_bin` / `task_runner` 等辅助二进制的目录 |
 | `TZ` | 容器时区（建议 `Asia/Shanghai`） |
 
 ---
@@ -352,7 +352,7 @@ curl -s http://127.0.0.1:7863/v1/chat/completions \
 打开 `http://<host>:7863/` 就是登录页：**只有一个密码框，没有用户名**。
 
 ```bash
-docker logs workbuddy2api | grep 登录密码
+docker logs wp | grep 登录密码
 ```
 
 | 页面 | 能做什么 |
@@ -394,7 +394,7 @@ docker logs workbuddy2api | grep 登录密码
 | `POST` | `/admin/playground/chat` | 测试台（`?uid=` 可指定账号定点验证） |
 
 ```bash
-PW=$(docker logs workbuddy2api 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
+PW=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
 curl -s -X POST http://127.0.0.1:7863/admin/accounts/checkin -H "Authorization: Bearer $PW"
 ```
 
@@ -404,7 +404,7 @@ curl -s -X POST http://127.0.0.1:7863/admin/accounts/checkin -H "Authorization: 
 
 ```bash
 go build -o wbctl ./cmd/wbctl
-export WB2A_ADMIN_PASSWORD=$(docker logs workbuddy2api 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
+export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
 
 ./wbctl accounts                 # 账号清单（-json 出原始 JSON）
 ./wbctl account <uid>            # 单账号详情
@@ -457,7 +457,7 @@ export WB2A_ADMIN_PASSWORD=$(docker logs workbuddy2api 2>&1 | sed -n 's/.*登录
 ```mermaid
 flowchart LR
     C["客户端 / SDK\nOpenAI 兼容"] --> H
-    subgraph GW["WorkBuddy2API（单进程 :7863）"]
+    subgraph GW["WP（单进程 :7863）"]
         H["HTTP Handler\n鉴权 · 提示词改写 · 指纹净化"] --> P
         H --> S
         H --> W["Web 管理后台\n内嵌 Bootstrap"]

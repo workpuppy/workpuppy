@@ -22,8 +22,8 @@ import (
 	"os"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 type accountResult struct {
@@ -40,7 +40,7 @@ type accountResult struct {
 func main() {
 	pretty := len(os.Args) > 1 && os.Args[1] == "-pretty"
 	authDir := "./auths"
-	if v := os.Getenv("WB2A_AUTH_DIR"); v != "" {
+	if v := os.Getenv("WP_AUTH_DIR"); v != "" {
 		authDir = v
 	}
 	// 出口线路（issue #210 补充）：查积分同样是上游请求，绑了线路的账号必须从

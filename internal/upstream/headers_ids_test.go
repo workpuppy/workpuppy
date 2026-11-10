@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // hex32Re / hex16Re 32 位与 16 位 hex 合法格式断言（B3 与消息级 ID 的合规性）。

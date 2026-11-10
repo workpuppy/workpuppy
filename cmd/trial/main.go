@@ -7,8 +7,8 @@
 //	go run ./cmd/trial
 //
 //	# 容器内：先 cp 进去再 exec
-//	docker cp trial workbuddy2api:/tmp/trial
-//	docker exec -w /app workbuddy2api /tmp/trial
+//	docker cp trial wp:/tmp/trial
+//	docker exec -w /app wp /tmp/trial
 //
 // 结果逐账号输出到 stdout：
 //
@@ -25,9 +25,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
+	"wp/internal/upstream"
 )
 
 // classifyTrial 归一化 ClaimTrial 结果（纯函数，供 main 循环与测试直接断言）：

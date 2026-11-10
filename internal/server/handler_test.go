@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/prompt"
-	"workbuddy2api/internal/redisstore"
-	"workbuddy2api/internal/session"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/prompt"
+	"wp/internal/redisstore"
+	"wp/internal/session"
+	"wp/internal/upstream"
 )
 
 // TestMain 默认关闭聊天表格日志（chatLogEnabled=false），消除 go test 期间的 stdout 噪音。

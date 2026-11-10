@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // newDeterministicSource 固定种子的确定性随机源：加权分布断言在 CI 上必须可复现，

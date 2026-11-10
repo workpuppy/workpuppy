@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 const (
@@ -706,7 +706,7 @@ func TestWorkspaceRootFingerprintDetected(t *testing.T) {
 	}
 }
 
-// 身份句式 7 个动词全覆盖（社区实测集合，见 workbuddy2api-hub#537）。
+// 身份句式 7 个动词全覆盖（社区实测集合，见 wp-hub#537）。
 func TestDshIdentityAllSevenVerbs(t *testing.T) {
 	for _, verb := range []string{
 		"powered by", "built on", "built by", "created by", "developed by", "made by", "trained by",

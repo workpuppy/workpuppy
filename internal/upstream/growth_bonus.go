@@ -1,5 +1,5 @@
 // growth_bonus.go growth 域「补签卡」+ billing 域「新手礼包 / 活动补偿」接口。
-// 逆向来源：下游 panel（/tmp/wb2a-panel internal/upstream/blackcat.go + scheduler/streak.go）
+// 逆向来源：下游 panel（/tmp/wp-panel internal/upstream/blackcat.go + scheduler/streak.go）
 // 的连登管家闭环——补签保连登 + 礼包/补偿领取，同属 growth 任务体系（活跃地图家族）。
 //
 //		GET  /activity/growth/streak          → data.makeup_cards{balance,max}（补签卡余额，
@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // 补签/礼包路径（panel 实测口径）。

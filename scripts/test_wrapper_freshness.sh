@@ -18,7 +18,7 @@
 # - C2/C3/C4 用 touch -t 显式设定 mtime（2030 / 2020 / 2021），不依赖 sleep 或
 #   时钟精度，在 1 秒粒度的文件系统上同样确定；也不写死「当前时间」字面量。
 #   C4 把全部 *.go 回拨、只让 go.mod 变新，从而**只可能**被「go.mod 纳入判据」满足。
-# - checkin.sh 依赖 curl（缺失即 exit 1）且会先探网关，故用 WB2A_URL 指向
+# - checkin.sh 依赖 curl（缺失即 exit 1）且会先探网关，故用 WP_URL 指向
 #   127.0.0.1:1（立即 connection refused）保持用例无网络;缺 curl 时跳过该用例。
 #
 # 用法:
@@ -44,7 +44,7 @@ WRAPPERS=(
     "signin.sh|signin_bin|./cmd/signin|"
     "checkin.sh|signin_bin|./cmd/signin|"
     "login.sh|login|./cmd/login|"
-    "dev.sh|wb2api|./cmd/server|start"
+    "dev.sh|wp|./cmd/server|start"
 )
 
 # ─── 沙箱 ──────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ WRAPPERS=(
 # 沙箱内不放 config.json，也不放 auths/ 里的凭证；login.sh 需要可写的 auths/。
 setup_sandbox() {
     local dir p s
-    dir=$(mktemp -d "${TMPDIR:-/tmp}/wb2a-freshness.XXXXXX")
+    dir=$(mktemp -d "${TMPDIR:-/tmp}/wp-freshness.XXXXXX")
     mkdir -p "$dir/bin" "$dir/auths"
     for p in credit signin login server; do
         mkdir -p "$dir/cmd/$p"
@@ -95,7 +95,7 @@ run_wrapper() {
     local dir="$1" script="$2"
     shift 2
     env PATH="$dir/bin:$PATH" GO_CALLS="$dir/go-calls.log" \
-        WB2A_URL="http://127.0.0.1:1" \
+        WP_URL="http://127.0.0.1:1" \
         bash "$dir/$script" "$@" </dev/null >/dev/null 2>&1 || true
 }
 
@@ -175,7 +175,7 @@ test_wrapper() {
         say "  - 跳过 C5：无法构造不含 go 的 PATH（go 目录: $godir）"
     else
         rc=0
-        env PATH="$cleanpath" WB2A_URL="http://127.0.0.1:1" \
+        env PATH="$cleanpath" WP_URL="http://127.0.0.1:1" \
             bash "$dir/$name" $extra </dev/null >"$dir/out.txt" 2>&1 || rc=$?
         if [[ $rc -ne 0 ]] && ! go_called "$dir"; then
             ok "C5 无 go 且需构建 → 退出码 $rc，未静默沿用"
@@ -186,16 +186,16 @@ test_wrapper() {
 
     # C6：构建**失败**时也必须中止，不得沿用旧二进制。
     # 这是 dev.sh 上真实出现过的缺陷：它没有 set -e，构建失败会继续走到 nohup，
-    # 把陈旧的 wb2api 拉起来并报「已启动」。用「被启动就留下标记文件」的桩二进制
+    # 把陈旧的 wp 拉起来并报「已启动」。用「被启动就留下标记文件」的桩二进制
     # 作观测点：只要标记出现，就说明旧二进制真的被跑了。
-    rm -f "$dir/go-calls.log" "$dir/RAN" "$dir/wb2api.pid" "$dir/.server.pid"
+    rm -f "$dir/go-calls.log" "$dir/RAN" "$dir/wp.pid" "$dir/.server.pid"
     printf '#!/bin/sh\ntouch "%s/RAN"\nexit 0\n' "$dir" >"$dir/$bin"
     chmod +x "$dir/$bin"
     touch -t 202001010000 "$dir/$bin"   # 过期 → 必然尝试构建
     rm -f "$dir/RAN"
     rc=0
     env PATH="$dir/bin:$PATH" GO_CALLS="$dir/go-calls.log" GO_STUB_FAIL=1 \
-        WB2A_URL="http://127.0.0.1:1" \
+        WP_URL="http://127.0.0.1:1" \
         bash "$dir/$name" $extra </dev/null >"$dir/out.txt" 2>&1 || rc=$?
     if [[ -f "$dir/RAN" ]]; then
         fail "C6 构建失败却仍启动了旧二进制（静默沿用，退出码 $rc）"

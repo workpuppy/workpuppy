@@ -15,15 +15,15 @@ import (
 	"sync"
 	"time"
 
-	"workbuddy2api/internal/adminauth"
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
-	"workbuddy2api/internal/loginsvc"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/prompt"
-	"workbuddy2api/internal/scheduler"
-	"workbuddy2api/internal/session"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/adminauth"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
+	"wp/internal/loginsvc"
+	"wp/internal/pool"
+	"wp/internal/prompt"
+	"wp/internal/scheduler"
+	"wp/internal/session"
+	"wp/internal/upstream"
 )
 
 // Config handler 依赖。
@@ -114,14 +114,14 @@ var upstreamRestrictionCooldown = 45 * time.Minute
 // forceAccountHeader 内部头：管理面测试台（/admin/playground/chat?uid=）用它指定账号。
 // 用头而不是 query 参数，是为了让「指定账号」这件事只发生在一处（选号前的统一入口），
 // 且不会顺着 body 传到上游。
-const forceAccountHeader = "X-Wb2a-Force-Account"
+const forceAccountHeader = "X-Wp-Force-Account"
 
 // ServiceName 网关身份标识。经 /healthz 响应体 service 字段与 X-Service 头同时透出：
 // 宿主（如 workbuddy-switch 托管网关子进程）探测同端口的旧服务/其他服务时，对方即使
 // 返回 2xx 也不带本标识，宿主据此可识别"假成功"。
-const ServiceName = "workbuddy2api"
+const ServiceName = "wp"
 
-// dumpReqMinBytes WB2A_DUMP_REQ 调试落盘的"大请求"固定阈值（4MB）。原判断是
+// dumpReqMinBytes WP_DUMP_REQ 调试落盘的"大请求"固定阈值（4MB）。原判断是
 // 「超过 max_body_mb 上限一半」，max_body_mb 移除后改为固定值，语义不变：
 // 小探针（{"input":"hi"} 之类）不落盘，避免覆盖真正要看的对话请求。
 var dumpReqMinBytes = 4 << 20
@@ -670,11 +670,11 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
 		return
 	}
-	// 调试开关：设置 WB2A_DUMP_REQ 即把上游侧收到的原始请求体落盘，供离线二分定位指纹命中行。
+	// 调试开关：设置 WP_DUMP_REQ 即把上游侧收到的原始请求体落盘，供离线二分定位指纹命中行。
 	// 仅在排查上游指纹拦截时开启；不设置时零开销、不落盘。
 	// 只落"大请求"（≥4MB 固定阈值，原 max_body_mb/2 语义的接替）：小探针
 	// （{"input":"hi"} 之类）会覆盖掉真正要看的对话请求。
-	if os.Getenv("WB2A_DUMP_REQ") != "" && len(body) >= dumpReqMinBytes {
+	if os.Getenv("WP_DUMP_REQ") != "" && len(body) >= dumpReqMinBytes {
 		if err := os.WriteFile("/app/data/last_request.json", body, 0o600); err != nil {
 			log.Printf("ERR: [server] dump req: %v", err)
 		}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // trialStub 模拟 /billing/ide/trial 端点，记录请求头与幂等码响应。

@@ -19,7 +19,7 @@ func TestIndexServed(t *testing.T) {
 		t.Fatalf("Content-Type = %q，want text/html", ct)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"WorkBuddy2API", "/assets/bootstrap.min.css", "/assets/app.js"} {
+	for _, want := range []string{"WP", "/assets/bootstrap.min.css", "/assets/app.js"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("入口页缺少 %q", want)
 		}
@@ -86,7 +86,7 @@ func TestNoTraversal(t *testing.T) {
 	for _, p := range []string{"/assets/../../go.mod", "/assets/..%2fgo.mod"} {
 		w := httptest.NewRecorder()
 		Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, p, nil))
-		if w.Code == http.StatusOK && strings.Contains(w.Body.String(), "module workbuddy2api") {
+		if w.Code == http.StatusOK && strings.Contains(w.Body.String(), "module wp") {
 			t.Fatalf("%s 读到了仓库内文件", p)
 		}
 	}

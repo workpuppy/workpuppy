@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // ClearModelBlocks 只清 11102 负缓存，不碰 6004 的独立冷却表。

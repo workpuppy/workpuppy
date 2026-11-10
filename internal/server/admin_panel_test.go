@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/adminauth"
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/loginsvc"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/adminauth"
+	"wp/internal/auth"
+	"wp/internal/loginsvc"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // 测试用的两套凭据：数据面（/v1、/status）用 apiKey，管理面用 adminPW。

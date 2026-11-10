@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // trialPath global trial 加油包端点（Maquer/workbuddy-checkin 实测）。

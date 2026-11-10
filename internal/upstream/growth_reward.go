@@ -22,8 +22,8 @@ import (
 	"net/http"
 	"strings"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/session"
+	"wp/internal/auth"
+	"wp/internal/session"
 )
 
 // growth 连登奖励/抽奖路径（实测 + SPA 证据）。

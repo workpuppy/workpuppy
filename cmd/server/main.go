@@ -1,4 +1,4 @@
-// main.go workbuddy2api 入口：加载配置、构建 pool、起调度器与 HTTP 服务。
+// main.go wp 入口：加载配置、构建 pool、起调度器与 HTTP 服务。
 package main
 
 import (
@@ -14,16 +14,16 @@ import (
 	"syscall"
 	"time"
 
-	"workbuddy2api/internal/adminauth"
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/loginsvc"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/redisstore"
-	"workbuddy2api/internal/scheduler"
-	"workbuddy2api/internal/server"
-	"workbuddy2api/internal/session"
-	"workbuddy2api/internal/upstream"
-	"workbuddy2api/internal/webui"
+	"wp/internal/adminauth"
+	"wp/internal/auth"
+	"wp/internal/loginsvc"
+	"wp/internal/pool"
+	"wp/internal/redisstore"
+	"wp/internal/scheduler"
+	"wp/internal/server"
+	"wp/internal/session"
+	"wp/internal/upstream"
+	"wp/internal/webui"
 )
 
 // modelJSONPath 由 state.json 路径推导 model.json 路径（同目录同名换缀）：
@@ -269,8 +269,8 @@ func main() {
 	}
 
 	// 管理面凭据：每次启动随机生成（只存内存），启动完成后打印到终端。
-	// WB2A_ADMIN_PASSWORD 可固定密码（开发/自动化用，长度不足会启动失败）。
-	adminStore, adminErr := adminauth.New(os.Getenv("WB2A_ADMIN_PASSWORD"))
+	// WP_ADMIN_PASSWORD 可固定密码（开发/自动化用，长度不足会启动失败）。
+	adminStore, adminErr := adminauth.New(os.Getenv("WP_ADMIN_PASSWORD"))
 	if adminErr != nil {
 		log.Fatalf("管理密码配置无效: %v", adminErr)
 	}
@@ -350,7 +350,7 @@ func main() {
 	}
 	log.Printf("配置来源: %s", cfg.SourcePath)
 	logScheduleMigration(&cfg.Schedule)
-	log.Printf("workbuddy2api listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
+	log.Printf("wp listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
 	if cfg.Admin.Enabled {
 		printAdminBanner(adminStore, ln.Addr().String())
 	} else {

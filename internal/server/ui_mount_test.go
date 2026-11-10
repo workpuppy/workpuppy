@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/adminauth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
-	"workbuddy2api/internal/webui"
+	"wp/internal/adminauth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
+	"wp/internal/webui"
 )
 
 // 管理后台挂在 `GET /` 之后，具体路径必须仍然走各自的 handler。

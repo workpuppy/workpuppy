@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 func TestChannelRejectionIsRequestScoped(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestReportChatActivitySendsArrayWithUserID 断言出站 body 是数组、含 userId、eventCode 正确，
@@ -32,7 +32,7 @@ func TestReportChatActivitySendsArrayWithUserID(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{HTTP: srv.Client(), BillingBaseCN: srv.URL}
-	if err := c.ReportChatActivity(&auth.Auth{AccessToken: "at", UID: "u-active"}, "wb2api-123", "req-7"); err != nil {
+	if err := c.ReportChatActivity(&auth.Auth{AccessToken: "at", UID: "u-active"}, "wp-123", "req-7"); err != nil {
 		t.Fatalf("report: %v", err)
 	}
 	if len(got) != 1 {
@@ -45,8 +45,8 @@ func TestReportChatActivitySendsArrayWithUserID(t *testing.T) {
 	if ev["userId"] != "u-active" {
 		t.Errorf("userId=%v want u-active（缺失则服务端 200 但静默丢弃）", ev["userId"])
 	}
-	if ev["conversationId"] != "wb2api-123" {
-		t.Errorf("conversationId=%v want wb2api-123", ev["conversationId"])
+	if ev["conversationId"] != "wp-123" {
+		t.Errorf("conversationId=%v want wp-123", ev["conversationId"])
 	}
 	if ev["requestId"] != "req-7" {
 		t.Errorf("requestId=%v want req-7（多轮同会话 requestId 独立）", ev["requestId"])

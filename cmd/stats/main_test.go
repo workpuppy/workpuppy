@@ -22,8 +22,8 @@ func TestResolveGatewayFromConfig(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:7999","api_key":"sk-abc"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("WB2A_CONFIG", cfg)
-	t.Setenv("WB2A_URL", "")
+	t.Setenv("WP_CONFIG", cfg)
+	t.Setenv("WP_URL", "")
 
 	base, key, err := resolveGateway("")
 	if err != nil {
@@ -58,8 +58,8 @@ func TestResolveGatewayListenForms(t *testing.T) {
 		dir := t.TempDir()
 		cfg := filepath.Join(dir, "config.json")
 		_ = os.WriteFile(cfg, []byte(c.listen), 0o600)
-		t.Setenv("WB2A_CONFIG", cfg)
-		t.Setenv("WB2A_URL", "")
+		t.Setenv("WP_CONFIG", cfg)
+		t.Setenv("WP_URL", "")
 
 		base, _, err := resolveGateway("")
 		if err != nil {
@@ -71,11 +71,11 @@ func TestResolveGatewayListenForms(t *testing.T) {
 	}
 }
 
-// TestResolveGatewayURLOverride WB2A_URL 优先于配置文件。
+// TestResolveGatewayURLOverride WP_URL 优先于配置文件。
 func TestResolveGatewayURLOverride(t *testing.T) {
-	t.Setenv("WB2A_URL", "http://example.com:1234/") // 带尾斜杠应被去掉
-	t.Setenv("WB2A_API_KEY", "sk-env")
-	t.Setenv("WB2A_CONFIG", "/nonexistent/config.json")
+	t.Setenv("WP_URL", "http://example.com:1234/") // 带尾斜杠应被去掉
+	t.Setenv("WP_API_KEY", "sk-env")
+	t.Setenv("WP_CONFIG", "/nonexistent/config.json")
 
 	base, key, err := resolveGateway("")
 	if err != nil {
@@ -89,17 +89,17 @@ func TestResolveGatewayURLOverride(t *testing.T) {
 	}
 }
 
-// TestResolveGatewayMissingConfig 配置文件缺失且无 WB2A_URL 时报错，
-// 且错误信息要指明可用 WB2A_URL（否则用户不知如何绕过）。
+// TestResolveGatewayMissingConfig 配置文件缺失且无 WP_URL 时报错，
+// 且错误信息要指明可用 WP_URL（否则用户不知如何绕过）。
 func TestResolveGatewayMissingConfig(t *testing.T) {
-	t.Setenv("WB2A_URL", "")
-	t.Setenv("WB2A_CONFIG", filepath.Join(t.TempDir(), "nope.json"))
+	t.Setenv("WP_URL", "")
+	t.Setenv("WP_CONFIG", filepath.Join(t.TempDir(), "nope.json"))
 	_, _, err := resolveGateway("")
 	if err == nil {
 		t.Fatal("配置缺失应报错")
 	}
-	if !strings.Contains(err.Error(), "WB2A_URL") {
-		t.Errorf("错误信息应提示 WB2A_URL，得到: %v", err)
+	if !strings.Contains(err.Error(), "WP_URL") {
+		t.Errorf("错误信息应提示 WP_URL，得到: %v", err)
 	}
 }
 
@@ -108,8 +108,8 @@ func TestResolveGatewayBadJSON(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	_ = os.WriteFile(cfg, []byte(`{not json`), 0o600)
-	t.Setenv("WB2A_URL", "")
-	t.Setenv("WB2A_CONFIG", cfg)
+	t.Setenv("WP_URL", "")
+	t.Setenv("WP_CONFIG", cfg)
 	if _, _, err := resolveGateway(""); err == nil {
 		t.Fatal("非法 JSON 应报错")
 	}
@@ -664,9 +664,9 @@ func TestResolveGatewayServerOverride(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	_ = os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:1111","api_key":"from-config"}`), 0o600)
-	t.Setenv("WB2A_CONFIG", cfg)
-	t.Setenv("WB2A_URL", "http://127.0.0.1:2222")
-	t.Setenv("WB2A_API_KEY", "")
+	t.Setenv("WP_CONFIG", cfg)
+	t.Setenv("WP_URL", "http://127.0.0.1:2222")
+	t.Setenv("WP_API_KEY", "")
 
 	// -server 覆盖地址；key 来自配置文件（否则「只想换地址」会意外 401）。
 	base, key, err := resolveGateway("http://127.0.0.1:3333/")
@@ -680,10 +680,10 @@ func TestResolveGatewayServerOverride(t *testing.T) {
 		t.Errorf("-server 下 key 应来自 config.json，得到 %q", key)
 	}
 
-	// 显式 WB2A_API_KEY 优先于文件。
-	t.Setenv("WB2A_API_KEY", "from-env")
+	// 显式 WP_API_KEY 优先于文件。
+	t.Setenv("WP_API_KEY", "from-env")
 	if _, key, _ := resolveGateway("http://127.0.0.1:3333"); key != "from-env" {
-		t.Errorf("WB2A_API_KEY 应优先于 config.json，得到 %q", key)
+		t.Errorf("WP_API_KEY 应优先于 config.json，得到 %q", key)
 	}
 }
 

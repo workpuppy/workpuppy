@@ -2453,7 +2453,7 @@ func (r *Runner) processMiniChatTask(a *Auth, code, uid8 string) {
 // 不退回自造 UUID（那正是这条任务一直 0/1 的原因）。
 func lighthouseRealChat(a *Auth, expertID string) (string, string, string) {
 	nowNS := time.Now().UnixNano()
-	conv := fmt.Sprintf("wb2api-conv-%d", nowNS)
+	conv := fmt.Sprintf("wp-conv-%d", nowNS)
 	body := map[string]any{
 		"model": "fast-model",
 		"messages": []any{

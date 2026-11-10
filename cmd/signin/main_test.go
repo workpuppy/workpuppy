@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // TestIsAlready 幂等码识别：today-already / 未开启 / 已过期 / inactive 类

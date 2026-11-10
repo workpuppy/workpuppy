@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // globalModelsSrv 返回一段 global 模型目录探测服务：record 逐条记录请求路径与鉴权头，

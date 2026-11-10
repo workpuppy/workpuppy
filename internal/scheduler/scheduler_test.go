@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // TestMain 统一关掉签到账号间隔与退避等待：默认值面向生产（3s / 5s+15s+60s），
@@ -23,7 +23,7 @@ import (
 //
 // 同时把「随机摊开」（spread.go）默认设为关闭：摊开会把定时批量摊到 15 分钟窗口里，
 // 开着它跑测试要么等十几分钟、要么被 ctx 取消。验证摊开行为的用例自己
-// t.Setenv("WB2A_TASK_SPREAD", "10m") 显式打开。
+// t.Setenv("WP_TASK_SPREAD", "10m") 显式打开。
 func TestMain(m *testing.M) {
 	checkinAccountDelay = 0
 	checkinRetryDelays = nil
@@ -31,7 +31,7 @@ func TestMain(m *testing.M) {
 	// 因此 New(Config{}) 天然不等待；需要验证抖动的用例自行设置这两个字段。
 	// 随机摊开由 Config.SpreadWindow 控制（默认 0 = 关闭），这里清掉环境变量，
 	// 防止外部环境把测试带偏。验证摊开行为的用例自己设 Config.SpreadWindow。
-	os.Unsetenv("WB2A_TASK_SPREAD")
+	os.Unsetenv("WP_TASK_SPREAD")
 	os.Exit(m.Run())
 }
 

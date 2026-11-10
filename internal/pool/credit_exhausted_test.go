@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // 默认（没有 cooldown.credit_exhausted）必须保持旧行为：硬冷却到次日 04:00。

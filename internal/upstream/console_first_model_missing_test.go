@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // 复现 2026-10-28 整池负缓存事故的真实触发顺序。

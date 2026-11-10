@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // bonusChainStub 模拟 claimGrowthRewards 全链新增段：heatmap + makeup-cards/use +

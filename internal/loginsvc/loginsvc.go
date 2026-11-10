@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 const (

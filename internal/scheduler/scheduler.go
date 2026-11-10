@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // Config 调度器依赖。
@@ -50,7 +50,7 @@ type Config struct {
 	// 整点 + uniform(0, SpreadWindow)，避免整池账号在同一秒打上游（见 spread.go）。
 	// 0（或负数）= 关闭，回到「到点立刻 + 固定间隔」的旧行为。
 	// 来源：config.json 的 schedule.spread_window（默认 15m）；
-	// 环境变量 WB2A_TASK_SPREAD 可临时覆盖（排障用）。
+	// 环境变量 WP_TASK_SPREAD 可临时覆盖（排障用）。
 	SpreadWindow time.Duration
 
 	// IntraJitterMin/Max 同一账号内**连续请求**之间的随机间隔区间（uniform[min,max]）。
@@ -667,7 +667,7 @@ func joinDetail(existing, add string) string {
 // 只记 WARN 不影响遍历。
 //
 // 每号上报 N 条（ActivityReportCount，默认 5）：N 条共用同一 conversationId
-// （wb2api-<ms>），模拟同一会话内 N 轮对话——这是领养猫（buddy/first）对话量
+// （wp-<ms>），模拟同一会话内 N 轮对话——这是领养猫（buddy/first）对话量
 // 门槛的实测刷法（chat_5 前置需 5 次对话）。requestId 各条独立（同会话多轮）。
 // 账号内 N 条之间间隔 activityReportGap（1.5s）避免秒发触发风控。
 //
@@ -712,7 +712,7 @@ func (s *Scheduler) runActivity(ctx context.Context) {
 		// 点亮连登）；realmBase 路由/头由 upstream.billingJSON/BillingHeaders 按 realm 切。
 		// 单账号失败只记 WARN 不影响遍历（下方 report err → break 该号 → continue 下号）。
 		// N 条共用同一 conversationId（同会话），requestId 各自独立（每条一个）。
-		cid := fmt.Sprintf("wb2api-%d", time.Now().UnixMilli())
+		cid := fmt.Sprintf("wp-%d", time.Now().UnixMilli())
 		ok := 0
 		for i := 1; i <= count; i++ {
 			rid := fmt.Sprintf("%s-r%d", cid, i)

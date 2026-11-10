@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // hex36Re 36 位 hex 合法格式断言（machineId/sessionId 派生形态）。

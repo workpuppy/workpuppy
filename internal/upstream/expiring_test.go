@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // mkDetailedResp 构造带 CycleEndTime 的 get-user-resource 响应（R-A/R-B 实测上游

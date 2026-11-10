@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestCountsDetailedForRealm 混合池（cn+global 账号，部分冷却/禁用）各域计数独立正确，

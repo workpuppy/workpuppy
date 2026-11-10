@@ -3,7 +3,7 @@ package pool
 import (
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // issue #364：保底积分。低于阈值的账号只在没有别的候选时才被选中。

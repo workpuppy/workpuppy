@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // realmFake 捕获出站 chat 请求的 authz/model/path/messages 数的双域 fake upstream。

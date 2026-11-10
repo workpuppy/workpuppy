@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"workbuddy2api/internal/config"
+	"wp/internal/config"
 )
 
 // Options 遍历节奏（全部时长；0 = 关闭/不等，负值视为未设置）。

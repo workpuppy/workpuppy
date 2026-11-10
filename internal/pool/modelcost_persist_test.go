@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // modelCostOfHelper 曝露账本条目供测试断言（包内私有 helper，锁内读快照）。

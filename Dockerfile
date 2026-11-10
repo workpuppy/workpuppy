@@ -25,7 +25,7 @@ COPY . .
 # 为什么这么多小工具：容器内要能直接跑运维命令（登录 / 签到 / 积分 / 任务 / 管理面），
 # 而不是让用户再装一套运行时。
 ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH}
-RUN go build -trimpath -ldflags="-s -w" -o /out/wb2api ./cmd/server \
+RUN go build -trimpath -ldflags="-s -w" -o /out/wp ./cmd/server \
  && go build -trimpath -ldflags="-s -w" -o /out/signin_bin ./cmd/signin \
  && go build -trimpath -ldflags="-s -w" -o /out/login ./cmd/login \
  && go build -trimpath -ldflags="-s -w" -o /out/credit ./cmd/credit \
@@ -50,7 +50,7 @@ RUN if [ -n "$APK_MIRROR" ]; then sed -i "s#dl-cdn.alpinelinux.org#$APK_MIRROR#g
 WORKDIR /app
 # 二进制与脚本在切到 app 之前以 root 完成（app 对 root 所有的文件无写权限，
 # sed -i 去 CRLF 需要写权限）。
-COPY --from=build /out/wb2api /app/wb2api
+COPY --from=build /out/wp /app/wp
 COPY --from=build /out/signin_bin /app/signin_bin
 COPY --from=build /out/login /app/login
 COPY --from=build /out/credit /app/credit
@@ -68,4 +68,4 @@ USER app
 EXPOSE 7863
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
   CMD wget -qO- http://127.0.0.1:7863/healthz || exit 1
-ENTRYPOINT ["/app/wb2api", "-config", "/app/config.json"]
+ENTRYPOINT ["/app/wp", "-config", "/app/config.json"]

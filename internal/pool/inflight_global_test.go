@@ -3,7 +3,7 @@ package pool
 import (
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestInFlightGlobalTiering global 域在途上限分档（WAF 403 修复 P1-1）：

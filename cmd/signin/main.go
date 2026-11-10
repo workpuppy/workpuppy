@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/logfmt"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/logfmt"
+	"wp/internal/upstream"
 )
 
 type row struct {

@@ -14,8 +14,8 @@ import (
 	"bytes"
 	"testing"
 
-	"workbuddy2api/internal/prompt"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/prompt"
+	"wp/internal/upstream"
 )
 
 // rewriteChain server 侧出站 body 重写链（与 handler.chatCompletions 一致）：

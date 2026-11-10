@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestDeviceTokenInjected_WhenSet auth.Auth.DeviceToken 非空时 chat/billing 请求均注入。

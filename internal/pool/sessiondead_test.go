@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // sessionDeadFailsOf 曝露 entry.sessionDeadFails 供测试断言（包内私有 helper）。

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // 11140 + 「账号存在异常行为」= 上游账号封禁 → 明确禁用并写清原因（issue #376）。

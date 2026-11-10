@@ -36,7 +36,7 @@ func TestInjectPromptCacheKey_PreservesExisting(t *testing.T) {
 
 // TestInjectPromptCacheKey_UsesConversationID 覆盖任务用例 2：
 // body 无 prompt_cache_key 但有 conversation_id → 用它做会话哈希源。
-// 格式 wb2a-<uid8>-<conversationHash>：conversation_id 不逐字出现，而是驱动哈希段
+// 格式 wp-<uid8>-<conversationHash>：conversation_id 不逐字出现，而是驱动哈希段
 // （同 id 同 key、不同 id 不同 key）。同时仍带 uid8 隔离前缀。
 func TestInjectPromptCacheKey_UsesConversationID(t *testing.T) {
 	uid := "user-abc-123"
@@ -44,8 +44,8 @@ func TestInjectPromptCacheKey_UsesConversationID(t *testing.T) {
 
 	out := InjectPromptCacheKey([]byte(in), uid, "")
 	got := extractCacheKey(t, out)
-	if !strings.HasPrefix(got, "wb2a-") {
-		t.Fatalf("expected wb2a- prefix, got=%q", got)
+	if !strings.HasPrefix(got, "wp-") {
+		t.Fatalf("expected wp- prefix, got=%q", got)
 	}
 	if !strings.Contains(got, "user-abc") {
 		t.Fatalf("expected uid8 isolation prefix, got=%q", got)
@@ -89,8 +89,8 @@ func TestInjectPromptCacheKey_AccountIsolation(t *testing.T) {
 	if ka == kb {
 		t.Fatalf("cross-account key collision: both=%q", ka)
 	}
-	if !strings.HasPrefix(ka, "wb2a-") || !strings.HasPrefix(kb, "wb2a-") {
-		t.Fatalf("keys must carry wb2a- prefix: a=%q b=%q", ka, kb)
+	if !strings.HasPrefix(ka, "wp-") || !strings.HasPrefix(kb, "wp-") {
+		t.Fatalf("keys must carry wp- prefix: a=%q b=%q", ka, kb)
 	}
 }
 
@@ -101,8 +101,8 @@ func TestInjectPromptCacheKey_Format(t *testing.T) {
 	in := `{"model":"glm-5.2","messages":[]}`
 	out := InjectPromptCacheKey([]byte(in), uid, "conv-fmt")
 	got := extractCacheKey(t, out)
-	if !strings.HasPrefix(got, "wb2a-") {
-		t.Fatalf("expected wb2a- prefix, got=%q", got)
+	if !strings.HasPrefix(got, "wp-") {
+		t.Fatalf("expected wp- prefix, got=%q", got)
 	}
 	if !strings.Contains(got, "12345678") {
 		t.Fatalf("expected uid8 (12345678) in key, got=%q", got)
@@ -120,8 +120,8 @@ func TestInjectPromptCacheKey_EmptyConversation(t *testing.T) {
 	if got == "" {
 		t.Fatalf("expected non-empty key when no conversation, got empty")
 	}
-	if !strings.HasPrefix(got, "wb2a-") {
-		t.Fatalf("expected wb2a- prefix, got=%q", got)
+	if !strings.HasPrefix(got, "wp-") {
+		t.Fatalf("expected wp- prefix, got=%q", got)
 	}
 	if !strings.Contains(got, "user-abc") {
 		t.Fatalf("expected uid8 in key, got=%q", got)

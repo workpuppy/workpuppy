@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestGrowthStreakParsesDays 解析 data.streak.days（probe_active.py 同口径）。

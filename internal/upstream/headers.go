@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/session"
+	"wp/internal/auth"
+	"wp/internal/session"
 )
 
 const (
@@ -122,7 +122,7 @@ func (c *Client) injectDeviceToken(req *http.Request, a *auth.Auth) {
 }
 
 // deriveAccountStableID 按 uid + 用途盐稳定派生 36 hex 设备/会话标识。
-// 跨重启稳定（固定盐 "wb2a:"，不随进程换——这是与 session 包 deriveSalt 的本质差异：
+// 跨重启稳定（固定盐 "wp:"，不随进程换——这是与 session 包 deriveSalt 的本质差异：
 // 那是会话键维度的进程级随机盐，重启换新；本函数是账号维度，必须跨重启恒定）、
 // 账号间互异（uid 不同则不同）、同 uid 同用途恒同值（幂等）。对齐 hub
 // wb_fingerprint.py:derive_id 的 md5(salt:uid)[:36] 语义。
@@ -133,7 +133,7 @@ func (c *Client) injectDeviceToken(req *http.Request, a *auth.Auth) {
 //   - purpose="machine" → X-Machine-ID（设备级，跨会话稳定）
 //   - purpose="session" → X-Session-ID（账号固定会话，跨重启稳定——hub 语义）
 func deriveAccountStableID(uid, purpose string) string {
-	sum := sha256.Sum256([]byte("wb2a:" + purpose + ":" + uid))
+	sum := sha256.Sum256([]byte("wp:" + purpose + ":" + uid))
 	return hex.EncodeToString(sum[:18]) // 36 hex chars
 }
 

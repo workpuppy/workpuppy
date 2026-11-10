@@ -7,18 +7,18 @@ package main
 import (
 	"log"
 
-	"workbuddy2api/internal/adminauth"
+	"wp/internal/adminauth"
 )
 
 // printAdminBanner 打印管理后台入口与本次运行的凭据。
 //
 // 注意：密码**只在这里出现一次**，之后只存在进程内存里。重启即换新密码，
-// 旧密码立刻失效；要固定密码只能设 WB2A_ADMIN_PASSWORD（开发/自动化用）。
+// 旧密码立刻失效；要固定密码只能设 WP_ADMIN_PASSWORD（开发/自动化用）。
 func printAdminBanner(store *adminauth.Store, listen string) {
 	url := adminURL(listen)
 	src := "本次启动随机生成"
 	if store.Source() == "override" {
-		src = "来自 WB2A_ADMIN_PASSWORD（固定值，仅建议开发/自动化使用）"
+		src = "来自 WP_ADMIN_PASSWORD（固定值，仅建议开发/自动化使用）"
 	}
 	log.Printf("\n"+
 		"============================================================\n"+

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestManualDisabledStopsSelection 停用后不参与选号（含全冷却兜底路径），

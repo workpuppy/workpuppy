@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/pool"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/pool"
+	"wp/internal/upstream"
 )
 
 // TestGlobalAccountsSkipCheckinTravel gating（活动已放开，见下方两个 activity 用例）：

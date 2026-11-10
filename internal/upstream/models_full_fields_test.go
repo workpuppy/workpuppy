@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // fullFieldsEntry 上游全字段模型对象样本（任务书 hy3 抓取样本逐字）。

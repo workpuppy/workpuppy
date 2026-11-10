@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // TestClassifyTrial ClaimTrial 结果归一化：错误 → FAIL；claimed → OK；

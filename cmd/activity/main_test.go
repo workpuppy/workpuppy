@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"workbuddy2api/internal/config"
+	"wp/internal/config"
 )
 
 // TestNewUpstreamGlobalEnabled registry：cmd/activity 与 cmd/signin、cmd/trial、cmd/credit

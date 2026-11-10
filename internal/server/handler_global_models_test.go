@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"workbuddy2api/internal/auth"
-	"workbuddy2api/internal/upstream"
+	"wp/internal/auth"
+	"wp/internal/upstream"
 )
 
 // globalModelsHandlerFake 探测 fake：记录模型目录 GET 请求次数/路径/鉴权头，并可控响应。

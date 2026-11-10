@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"workbuddy2api/internal/redisstore"
+	"wp/internal/redisstore"
 )
 
 // countingStore 记录镜像调用次数的假 Store（不联网）。

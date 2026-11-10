@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"workbuddy2api/internal/auth"
+	"wp/internal/auth"
 )
 
 // uaCaptureTransport 记录出站请求的 User-Agent。
