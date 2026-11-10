@@ -112,6 +112,36 @@ func (p *Pool) SetManualDisabled(uid string, disabled bool, reason string) (foun
 	return true, true
 }
 
+// SetResting 运维「休养」开关：开=不接下游流量（自动任务照跑），关=恢复正常接流。
+//
+// 与 SetManualDisabled 的区别只在语义/展示：manual 是"停用"（可能有问题待处理），
+// resting 是"主动歇一阵"（账号健康，只是不想让它接活）。两者都独立持久化。
+func (p *Pool) SetResting(uid string, on bool) (found, changed bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.byUID[uid]
+	if !ok {
+		return false, false
+	}
+	if e.resting == on {
+		return true, false
+	}
+	e.resting = on
+	p.dirty.Store(true)
+	return true, true
+}
+
+// RestingState 读单个账号的休养态。uid 不存在时 ok=false。
+func (p *Pool) RestingState(uid string) (resting, ok bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	e, ok := p.byUID[uid]
+	if !ok {
+		return false, false
+	}
+	return e.resting, true
+}
+
 // ManualDisabledState 读单个账号的手动停用态（供端点回显）。uid 不存在时 ok=false。
 func (p *Pool) ManualDisabledState(uid string) (disabled bool, reason string, ok bool) {
 	p.mu.RLock()
@@ -503,6 +533,7 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 		Reason:           reason,
 		Disabled:         e.disabled,
 		ManualDisabled:   e.manualDisabled,
+		Resting:          e.resting,
 		SuccessCount:     e.successCount,
 		ErrTotal:         e.errTotal,
 		LastSuccessTime:  e.lastSuccess,

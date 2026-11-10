@@ -17,6 +17,7 @@ import (
 
 	"wp/internal/adminauth"
 	"wp/internal/auth"
+	"wp/internal/creditledger"
 	"wp/internal/logfmt"
 	"wp/internal/loginsvc"
 	"wp/internal/pool"
@@ -79,6 +80,9 @@ type Config struct {
 	AuthDir string
 	// Login 扫码登录服务（/admin/auth/start、/admin/auth/poll）。nil = 未接线。
 	Login *loginsvc.Manager
+
+	// Credits 积分日账本（nil = 未接线，/admin/credit-daily 回 501）。
+	Credits *creditledger.Ledger
 
 	// AdminAuth 管理面凭据（启动时随机生成、只存内存）。与 APIKey 完全分离：
 	// 管理端点只认它，且它未初始化时一律拒绝（绝不放行）。
@@ -263,6 +267,11 @@ func NewHandler(cfg Config) *Handler {
 		h.mux.HandleFunc("GET /admin/auth/poll", h.withAdminAuth(h.adminAuthPoll))
 		// 二维码：扫码加号把 auth_url 渲成 PNG（前端 fetch 带凭据取 blob，见 app.js renderQR）。
 		h.mux.HandleFunc("GET /admin/qr", h.withAdminAuth(h.adminQR))
+		// 积分日账本：当日取内存热值，历史取落盘的每日汇总（保留 30 天）。
+		h.mux.HandleFunc("GET /admin/credit-daily", h.withAdminAuth(h.adminCreditDaily))
+		// 休养开关：不接下游流量，签到/上报/旅行/保活照跑。
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/rest", h.withAdminAuth(h.adminAccountRest))
+		h.mux.HandleFunc("POST /admin/accounts/{uid}/unrest", h.withAdminAuth(h.adminAccountUnrest))
 		h.mux.HandleFunc("GET /admin/models", h.withAdminAuth(h.adminModels))
 		h.mux.HandleFunc("POST /admin/playground/chat", h.withAdminAuth(h.adminPlaygroundChat))
 	}

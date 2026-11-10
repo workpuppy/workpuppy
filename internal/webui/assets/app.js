@@ -219,17 +219,55 @@ async function loadStatus() {
     $('#kpiInFlight').textContent = fmtNum(s.in_flight_full);
     $('#kpiSticky').textContent = fmtNum(s.sticky_sessions);
     $('#statusRaw').textContent = JSON.stringify(s, null, 2);
+    loadCredits();
   } catch (e) {
     $('#statusRaw').textContent = String(e.message || e);
   }
 }
 
 // ── 账号 ────────────────────────────────────────────────────
+// ── 积分日账本（概览卡片）──────────────────────────────────────────────
+// 数据源 GET /admin/credit-daily：totals/accounts 是**当日内存热值**，
+// histories 是落盘的每日汇总（保留 30 天）；全局总量由后端按账号加总。
+async function loadCredits() {
+  const tbody = $('#creditBody');
+  if (!tbody) return;
+  try {
+    const d = await api('/admin/credit-daily?days=30');
+    const t = d.totals || {};
+    $('#creditToday').textContent =
+      d.today + '：赚 ' + fmtNum(t.earned || 0) + ' / 花 ' + fmtNum(t.spent || 0) +
+      ' / 调整 ' + fmtNum(t.adjust || 0) + ' / 净 ' + fmtNum(t.net || 0) +
+      '　（账号 ' + Object.keys(d.accounts || {}).length + ' 个）';
+    const rows = (d.histories || []).slice().reverse().map((h) => {
+      const ht = h.totals || {};
+      return el('tr', {}, [
+        el('td', { class: 'font-monospace small', text: h.date }),
+        el('td', { class: 'text-end text-success', text: fmtNum(ht.earned || 0) }),
+        el('td', { class: 'text-end text-danger', text: fmtNum(ht.spent || 0) }),
+        el('td', { class: 'text-end text-body-secondary', text: fmtNum(ht.adjust || 0) }),
+        el('td', { class: 'text-end fw-semibold', text: fmtNum(ht.net || 0) }),
+        el('td', { class: 'text-end text-body-secondary', text: fmtNum((h.accounts || []).length) }),
+      ]);
+    });
+    if (rows.length === 0) {
+      rows.push(el('tr', {}, [el('td', {
+        class: 'text-center text-body-secondary', attrs: { colspan: '6' },
+        text: '还没有记录（今天还没有签到或请求）',
+      })]));
+    }
+    tbody.replaceChildren(...rows);
+  } catch (e) {
+    $('#creditToday').textContent = String(e.message || e);
+  }
+}
+
 function statusBadge(a) {
   // 顺序与「能否接单」的判断一致：先看人为动作，再看系统状态，最后看是否入池。
   if (a.manual_disabled) return el('span', { class: 'badge text-bg-secondary status-badge', text: '手动停用', title: a.manual_reason || '' });
   if (a.disabled) return el('span', { class: 'badge text-bg-danger status-badge', text: '系统禁用', title: a.disabled_reason || '' });
   if (a.cooling) return el('span', { class: 'badge text-bg-warning status-badge', text: '冷却 ' + fmtDuration(a.cool_remaining_sec) });
+  if (a.resting) return el('span', { class: 'badge text-bg-info status-badge', text: '休养中' });
   if (!a.in_pool) return el('span', { class: 'badge text-bg-secondary status-badge', text: '未入池' });
   return el('span', { class: 'badge text-bg-success status-badge', text: '在线' });
 }
@@ -280,6 +318,10 @@ async function loadAccounts() {
         a.manual_disabled
           ? actionBtn('启用', 'success', a.uid, 'enable')
           : actionBtn('停用', 'secondary', a.uid, 'disable', a.disabled || !a.in_pool),
+        a.resting
+          ? actionBtn('恢复', 'outline-success', a.uid, 'unrest')
+          : actionBtn('休养', 'outline-secondary', a.uid, 'rest', a.disabled || !a.in_pool),
+
         actionBtn('复活', 'danger', a.uid, 'revive', !a.disabled),
       ]);
       return el('tr', {}, [
@@ -306,6 +348,12 @@ async function doAccountAction(uid, action) {
       const r = await api('/admin/accounts/' + encodeURIComponent(uid) + '/checkin', { method: 'POST', body: {} });
       const credit = r.credits !== undefined ? '，积分 ' + fmtNum(r.credits) : '';
       toast(uid + ' 签到 ' + (r.status || 'ok') + credit, 'success');
+    } else if (action === 'rest') {
+      await api('/admin/accounts/' + encodeURIComponent(uid) + '/rest', { method: 'POST', body: {} });
+      toast(uid + ' 已进入休养：不接下游流量，签到/上报/旅行/保活照跑', 'success');
+    } else if (action === 'unrest') {
+      await api('/admin/accounts/' + encodeURIComponent(uid) + '/unrest', { method: 'POST', body: {} });
+      toast(uid + ' 已恢复接流', 'success');
     } else if (action === 'disable') {
       const reason = prompt('停用原因（只摘对话流量，签到与保活照常）：', '手动停用');
       if (reason === null) return;
@@ -682,6 +730,7 @@ function bind() {
   });
 
   $('#btnLogout').addEventListener('click', logout);
+  if ($('#btnCreditRefresh')) $('#btnCreditRefresh').addEventListener('click', loadCredits);
 
   // 导航（按钮切换 hash，由 hashchange 驱动渲染）
   $$('.nav-link[data-view]').forEach((b) => {

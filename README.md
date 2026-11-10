@@ -135,7 +135,7 @@ docker logs wp | grep 登录密码
 | `listen` | string | `":7863"` | 监听地址。容器内用 `:7863`，宿主机用 `-p 7863:7863` 暴露端口 |
 | `api_key` | string | `"test_key"` | **数据面**密钥：下游调 `/v1/*`、`/status` 时 `Authorization: Bearer <api_key>`。留空 = 不鉴权（公网部署务必设置） |
 | `auth_dir` | string | `"./auths"` | 账号凭据目录（`workbuddy-<uid>.json`），新增文件几秒内自动热加载 |
-| `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复 |
+| `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复。同目录另有 `credit-daily.json`（积分日账本，保留 30 天） |
 | `qrcode_ttl` | string | `"15m"` | **扫码加号二维码的有效期**（不是管理后台的会话超时——管理凭据是启动随机密码，无会话）。到点后台把二维码标「已失效」、链接加删除线并停止轮询 |
 | `proxies` | object\|null | `null` | 出口线路映射，如 `{"hk": "http://127.0.0.1:7890"}`；账号文件里按线路名绑定 |
 | `reasoning_as_content` | bool | `true` | 思考兜底：整轮既无正文也无工具调用时，把 `reasoning_content` 同时作为 `content` 下发（避免空回复）。同时渲染两字段的客户端会看到重复，遇到就设 `false` |
@@ -366,8 +366,8 @@ docker logs wp | grep 登录密码
 
 | 页面 | 能做什么 |
 |---|---|
-| 概览 | 账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + 原始状态 JSON |
-| 账号 | 列表（状态、积分、在途、凭证有效期、线路、权重）+ 单号签到 / 停用 / 启用 / 复活 / 全部签到 |
+| 概览 | 账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + **积分日账本**（今日赚/花/调整/净 + 近 30 天）+ 原始状态 JSON |
+| 账号 | 列表（状态、积分、在途、凭证有效期、线路、权重）+ 单号签到 / 停用 / 启用 / 复活 / **休养** / 全部签到 |
 | 模型 | 模型中心：描述、上下文、最大输出、思考档位、积分倍率、能力标记 |
 | 测试台 | 选模型 → 填提示词 → 流式或非流式试跑（复用 `/v1` 整条链路） |
 | 扫码加号 | 选域名 → 拿授权链接 → **页面直接显示二维码 + 有效期倒计时**（也可复制链接）→ 轮询 → 账号自动落盘并进入池；过期后链接打删除线、二维码盖「已失效」遮罩 |
@@ -397,6 +397,9 @@ docker logs wp | grep 登录密码
 | `POST` | `/admin/accounts/{uid}/disable` | 摘除对话流量（签到/保活照常），可带 `{"reason":"…"}` |
 | `POST` | `/admin/accounts/{uid}/enable` | 解除手动停用 |
 | `POST` | `/admin/accounts/{uid}/revive` | 解除系统自动禁用（封号救不回，响应里会如实标） |
+| `POST` | `/admin/accounts/{uid}/rest` | **休养**：不接下游流量，但签到 / 活跃上报 / 旅行 / 保活照跑（凭证与积分都是活的）；持久化，重启保留 |
+| `POST` | `/admin/accounts/{uid}/unrest` | 解除休养，恢复接流 |
+| `GET` | `/admin/credit-daily` | 积分日账本：`totals`/`accounts` 是**当日内存热值**，`histories` 是落盘的每日汇总（保留 30 天，每账号 `earned/spent/adjust/credits_end`）；`?days=N` 控制历史条数 |
 | `POST` | `/admin/auth/start` | 扫码加号第一步：`{"realm":"cn\|global"}` → `{state, auth_url}` |
 | `GET` | `/admin/auth/poll` | 轮询 `?state=…&realm=…`：`pending` / `saved` |
 | `GET` | `/admin/qr` | 把任意文本渲成 PNG 二维码：`?text=<url>&size=240`（扫码加号的 auth_url 就用它；需管理凭据，输出 `no-store`） |
@@ -422,6 +425,9 @@ export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ 
 ./wpctl disable <uid> [原因]     # 摘除流量
 ./wpctl enable <uid>             # 解除手动停用
 ./wpctl revive <uid>             # 解除自动禁用
+./wpctl rest <uid>               # 休养：不接下游流量，自动任务照跑
+./wpctl unrest <uid>             # 解除休养
+./wpctl credits [天数]           # 积分日账本（默认 7 天）
 ./wpctl models                   # 模型中心
 ./wpctl chat --model <m> "…"     # 试跑
 ./wpctl login --realm cn         # 扫码加号

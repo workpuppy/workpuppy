@@ -16,6 +16,7 @@ import (
 
 	"wp/internal/adminauth"
 	"wp/internal/auth"
+	"wp/internal/creditledger"
 	"wp/internal/loginsvc"
 	"wp/internal/pool"
 	"wp/internal/redisstore"
@@ -275,6 +276,33 @@ func main() {
 		log.Fatalf("管理密码配置无效: %v", adminErr)
 	}
 
+	// 积分日账本：每账号每日「赚/花/调整」，落盘 data/credit-daily.json（保留 30 天）。
+	// 当日值取内存热值；全局总量由各账号加总（先账号、再全局）。
+	ledgerDir := "."
+	if cfg.StateFile != "" {
+		ledgerDir = filepath.Dir(cfg.StateFile)
+		if ledgerDir == "" {
+			ledgerDir = "."
+		}
+	}
+	credits := creditledger.New(filepath.Join(ledgerDir, "credit-daily.json"), creditledger.DefaultRetain)
+	if err := credits.Load(); err != nil {
+		log.Printf("WARN: 积分日账本读取失败（将从空账本开始）: %v", err)
+	}
+	pool.Configure(pool.Options{CreditSink: func(uid, realm string, delta, spent, balance int64) {
+		if delta > 0 {
+			credits.RecordEarned(uid, realm, delta)
+		} else if delta < 0 {
+			credits.RecordAdjust(uid, realm, -delta)
+		}
+		if spent > 0 {
+			credits.RecordSpent(uid, realm, spent)
+		}
+		if balance != 0 {
+			credits.SetCreditsEnd(uid, balance)
+		}
+	}})
+
 	h := server.NewHandler(server.Config{
 		Pool:                     p,
 		Upstream:                 up,
@@ -300,6 +328,7 @@ func main() {
 		Scheduler: sch,
 		AuthDir:   cfg.AuthDir,
 		Login:     newLoginManager(cfg.QRCodeTTLDur),
+		Credits:   credits,
 		// 管理后台（Bootstrap 静态页，embed 进二进制）：/ 是入口，
 		// /assets/... 是内嵌资源，/v1 与 /admin 走各自的 handler。
 		UI: webui.Handler(),
@@ -308,6 +337,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go sch.Run(ctx)
+	go credits.Run(ctx, 5*time.Second)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,

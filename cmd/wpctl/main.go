@@ -27,7 +27,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,6 +87,18 @@ func main() {
 		err = c.cmdModels(*asJSON)
 	case "chat":
 		err = c.cmdChat(args[1:])
+	case "rest":
+		if len(args) < 2 {
+			fatalf("rest 需要 uid")
+		}
+		err = c.cmdRest(args[1], true, *asJSON)
+	case "unrest":
+		if len(args) < 2 {
+			fatalf("unrest 需要 uid")
+		}
+		err = c.cmdRest(args[1], false, *asJSON)
+	case "credits":
+		err = c.cmdCredits(args[1:], *asJSON)
 	case "disable":
 		if len(args) < 2 {
 			fatalf("disable 需要 uid")
@@ -581,4 +595,71 @@ func flagReason(args []string) string {
 		}
 	}
 	return ""
+}
+
+// cmdRest 休养开关：on=true 让账号只跑自动任务、不接下游流量；false 恢复正常。
+func (c *client) cmdRest(uid string, on bool, asJSON bool) error {
+	path := "/admin/accounts/" + url.PathEscape(uid) + "/rest"
+	if !on {
+		path = "/admin/accounts/" + url.PathEscape(uid) + "/unrest"
+	}
+	out, err := c.do(http.MethodPost, path, nil)
+	if err != nil {
+		return err
+	}
+	state := "已恢复接流"
+	if on {
+		state = "已进入休养（不接下游流量，签到/上报/旅行/保活照跑）"
+	}
+	if asJSON {
+		os.Stdout.Write(out)
+		return nil
+	}
+	fmt.Printf("%s: %s\n", uid, state)
+	return nil
+}
+
+// cmdCredits 打印积分日账本（当日热值 + 最近 N 天汇总）。
+//
+//	wpctl credits          # 最近 7 天
+//	wpctl credits 30       # 最近 30 天
+func (c *client) cmdCredits(args []string, asJSON bool) error {
+	days := 7
+	if len(args) > 0 {
+		if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+			days = n
+		}
+	}
+	out, err := c.do(http.MethodGet, fmt.Sprintf("/admin/credit-daily?days=%d", days), nil)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		fmt.Println(string(out))
+		return nil
+	}
+	var d struct {
+		Today    string                                     `json:"today"`
+		Totals   struct{ Earned, Spent, Adjust, Net int64 } `json:"totals"`
+		Accounts map[string]struct {
+			Earned, Spent, Adjust int64
+		} `json:"accounts"`
+		Histories []struct {
+			Date     string                                     `json:"date"`
+			Totals   struct{ Earned, Spent, Adjust, Net int64 } `json:"totals"`
+			Accounts []struct {
+				UID string `json:"uid"`
+			} `json:"accounts"`
+		} `json:"histories"`
+	}
+	if err := json.Unmarshal(out, &d); err != nil {
+		return err
+	}
+	fmt.Printf("%s 今日：赚 %d / 花 %d / 调整 %d / 净 %d（账号 %d 个）\n",
+		d.Today, d.Totals.Earned, d.Totals.Spent, d.Totals.Adjust, d.Totals.Net, len(d.Accounts))
+	for _, h := range d.Histories {
+		fmt.Printf("  %s  赚 %6d  花 %6d  调整 %5d  净 %6d  账号 %d\n",
+			h.Date, h.Totals.Earned, h.Totals.Spent, h.Totals.Adjust, h.Totals.Net, len(h.Accounts))
+	}
+	return nil
 }

@@ -59,7 +59,9 @@ type Status struct {
 	// 叠加态分别透出不合并（面板据此区分「系统判定坏了」与「我主动摘的」，
 	// 两种可用操作不同：前者可 revive，后者该 enable）。
 	// 零值也显式写出（运维口径，同 consecutive_fails：缺失会让人误以为"没记录"）。
-	ManualDisabled  bool      `json:"manual_disabled"`
+	ManualDisabled bool `json:"manual_disabled"`
+	// Resting 休养中：不接下游流量，但签到/上报/旅行/保活照跑（与 manual_disabled 独立）。
+	Resting         bool      `json:"resting"`
 	ManualReason    string    `json:"manual_reason,omitempty"` // 仅手动停用：停用原因（运维可见）
 	SuccessCount    int64     `json:"success_count,omitempty"`
 	ErrTotal        int64     `json:"err_total,omitempty"`
@@ -128,8 +130,12 @@ type entry struct {
 	// 凭证与积分都是活的，只是不参与选号。与 disabled 各自独立清除，两位都清才回池。
 	// 持久化（stateAccount.ManualDisabled）：重启保留运维意图。
 	manualDisabled bool
-	manualReason   string
-	lastUsed       time.Time // 最近被选中时刻（防并发撞号）
+	// resting 运维「休养」开关：与 manualDisabled **并列独立**。
+	// 语义：不参与下游选号（不接对话流量），但账号完全正常 —— 签到 / 活跃上报 /
+	// 猫猫旅行 / token 保活照跑，凭证与积分都是活的。
+	resting      bool
+	manualReason string
+	lastUsed     time.Time // 最近被选中时刻（防并发撞号）
 	// usedSeq 单调递增的选中序号：每次被 pick 选中时取 p.pickSeq 自增值。
 	// Windows 等平台 time.Now() 精度有限（~0.5ms），高并发/快速连续选号时多个
 	// 账号 lastUsed 完全相等，基于 wall-clock 的 LRU/防惊群判定失效（高并发/低精度时钟下：
@@ -207,7 +213,7 @@ func (e *entry) modelCostOf(model string, now time.Time) (modelCostEntry, bool) 
 // 连败降权与冷却/熔断同入本判定（取更长者不叠加：三个截止是并列的或门，
 // 只要任一未到期即不可选，天然「并存取更远者」——不需要显式比较长短）。
 func (e *entry) healthy(now time.Time) bool {
-	if e.disabled || e.manualDisabled || e.refreshRiskActive(now) {
+	if e.disabled || e.manualDisabled || e.resting || e.refreshRiskActive(now) {
 		return false
 	}
 	if !e.until.IsZero() && now.Before(e.until) {
@@ -232,7 +238,7 @@ func (e *entry) healthy(now time.Time) bool {
 // 调用方负责 now 与冷却有效性的判断（本方法只看形态，不看冷却是否已过期）。
 func (e *entry) modelExempt() bool {
 	return len(e.modelCooldowns) > 0 &&
-		!e.disabled && !e.manualDisabled && !e.refreshRiskActive(time.Now()) && e.breakerUntil.IsZero()
+		!e.disabled && !e.manualDisabled && !e.resting && !e.refreshRiskActive(time.Now()) && e.breakerUntil.IsZero()
 }
 
 // modelCooled 报告账号对指定 model 是否正处 6004 模型级冷却（该模型的独立冷却未过期）。
@@ -354,11 +360,13 @@ type stateAccount struct {
 	// ManualDisabled 运维手动停用（issue #138/#118）。持久化——重启保留运维意图，
 	// 这也正是该功能要解决的痛点之一（旧权宜做法改 state.json 会被 5s flush 覆盖，
 	// 入口化后无需再碰文件）。零值也显式写出（运维口径，同 err_total 注释）。
-	ManualDisabled bool      `json:"manual_disabled"`
-	ManualReason   string    `json:"manual_reason,omitempty"`
-	Until          time.Time `json:"until,omitempty"`
-	CoolKind       CoolKind  `json:"cool_kind"`
-	SuccessCount   int64     `json:"success_count,omitempty"`
+	ManualDisabled bool `json:"manual_disabled"`
+	// Resting 运维「休养」：不接下游流量，自动任务照跑（与 manual_disabled 并列独立）。
+	Resting      bool      `json:"resting,omitempty"`
+	ManualReason string    `json:"manual_reason,omitempty"`
+	Until        time.Time `json:"until,omitempty"`
+	CoolKind     CoolKind  `json:"cool_kind"`
+	SuccessCount int64     `json:"success_count,omitempty"`
 	// err_total 累计错误计数。旧版 err_count（连续错误）仍可读：加载时映射到 err_total，
 	// 仅作一次性迁移，不再回写 err_count。
 	// 运维可见的运行态计数（err_total/soft_streak/session_dead_fails/credits_expiring）

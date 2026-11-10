@@ -105,7 +105,31 @@
           <pre class="mb-0 small" id="statusRaw">（加载中…）</pre>
         </div>
       </div>
-    </section>
+    
+        <div class="card mt-3" id="creditCard">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>积分日账本（今日 · 近 30 天）</span>
+            <button class="btn btn-outline-secondary btn-sm" id="btnCreditRefresh">刷新</button>
+          </div>
+          <div class="card-body">
+            <div class="small text-body-secondary mb-2" id="creditToday">加载中…</div>
+            <div class="table-responsive">
+              <table class="table table-sm table-borderless align-middle mb-0">
+                <thead>
+                  <tr class="small text-body-secondary">
+                    <th>日期</th><th class="text-end">赚</th><th class="text-end">花</th>
+                    <th class="text-end">调整</th><th class="text-end">净变化</th><th class="text-end">账号数</th>
+                  </tr>
+                </thead>
+                <tbody id="creditBody"></tbody>
+              </table>
+            </div>
+            <div class="small text-body-secondary mt-2">
+              口径：赚=签到/活动带来的余额增加；花=每次请求的真实扣费；调整=非请求的余额减少（积分过期/上游回收）。
+            </div>
+          </div>
+        </div>
+</section>
 
     <!-- 账号 -->
     <section id="view-accounts" hidden>
