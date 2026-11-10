@@ -27,3 +27,13 @@
 .status-badge {
   font-weight: 500;
 }
+
+/* ── hidden 属性必须"说到做到" ─────────────────────────────────────────
+ * 登录页/主界面/各视图都靠 `hidden` 属性切换（app.js 的 showLogin/showApp），
+ * 但登录页容器带着 Bootstrap 的 `d-flex`，而 `.d-flex{display:flex!important}`
+ * 会盖掉浏览器 UA 样式里的 `[hidden]{display:none}`——结果就是"登录成功、
+ * 接口 200，页面却还停在登录页"。用 !important 把 hidden 钉死在最上层，
+ * 以后给这些元素加任何 display 工具类都不会再破坏切换逻辑。 */
+[hidden] {
+  display: none !important;
+}

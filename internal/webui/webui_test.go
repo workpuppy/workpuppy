@@ -91,3 +91,43 @@ func TestNoTraversal(t *testing.T) {
 		}
 	}
 }
+
+// hidden 属性必须真的隐藏元素。
+//
+// 回归背景（实测 bug）：登录成功后 app.js 把 `#loginWrap.hidden = true`、`#app.hidden = false`，
+// 但登录页容器带着 Bootstrap 的 `d-flex`，而 `.d-flex{display:flex!important}` 会盖掉
+// UA 样式里的 `[hidden]{display:none}` —— 表现为"密码正确、/admin/status 也 200，
+// 页面却还停在登录页"。app.css 里用 `[hidden]{display:none!important}` 钉死优先级，
+// 且 app.css 必须在 bootstrap.min.css 之后加载，这条规则才生效。
+func TestHiddenAttributeIsAuthoritative(t *testing.T) {
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	if css.Code != http.StatusOK {
+		t.Fatalf("GET /assets/app.css = %d", css.Code)
+	}
+	body := css.Body.String()
+	if !strings.Contains(body, "[hidden]") || !strings.Contains(body, "display: none !important") {
+		t.Fatalf("app.css 缺少 `[hidden] { display: none !important }`：" +
+			"登录后页面不会切到主界面（Bootstrap 的 d-flex 会盖掉 hidden）")
+	}
+
+	// 顺序：bootstrap.min.css 先、app.css 后，覆盖才成立。
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	bs := strings.Index(html, "/assets/bootstrap.min.css")
+	app := strings.Index(html, "/assets/app.css")
+	if bs < 0 || app < 0 || bs > app {
+		t.Fatalf("样式表加载顺序不对（bootstrap=%d, app=%d）：[hidden] 规则会被 Bootstrap 覆盖", bs, app)
+	}
+
+	// 登录页与主界面都靠 hidden 切换，这两个 id 必须存在。
+	for _, id := range []string{`id="loginWrap"`, `id="app"`} {
+		if !strings.Contains(html, id) {
+			t.Errorf("入口页缺少 %s", id)
+		}
+	}
+	if !strings.Contains(html, `id="app" hidden`) {
+		t.Errorf(`"#app 初始必须是 hidden（避免登录前露出空面板）`)
+	}
+}

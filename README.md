@@ -62,7 +62,7 @@ git clone https://github.com/workpuppy/workpuppy.git
 cd workpuppy
 cp config.default.json config.json     # 至少改 api_key
 
-docker run -d --name wp -p 127.0.0.1:7863:7863 \
+docker run -d --name wp -p 7863:7863 \
   -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
   -v "$PWD/config.json:/app/config.json:ro" \
   ghcr.io/workpuppy/workpuppy:latest
@@ -161,7 +161,7 @@ curl -s http://127.0.0.1:7863/healthz
 
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `listen` | string | `":7863"` | 监听地址。容器内用 `:7863`，宿主机建议 `-p 127.0.0.1:7863:7863` 只绑本机 |
+| `listen` | string | `":7863"` | 监听地址。容器内用 `:7863`，宿主机用 `-p 7863:7863` 暴露端口 |
 | `api_key` | string | `"test_key"` | **数据面**密钥：下游调 `/v1/*`、`/status` 时 `Authorization: Bearer <api_key>`。留空 = 不鉴权（公网部署务必设置） |
 | `auth_dir` | string | `"./auths"` | 账号凭据目录（`workbuddy-<uid>.json`），新增文件几秒内自动热加载 |
 | `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复 |
@@ -539,6 +539,11 @@ old/                 归档的旧 Python/Next 面板（不入库、不参与构�
    go build ./... && go vet ./... && go test ./...
    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...
    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...
+   ```
+   管理后台的前端流程（登录 → 跳转）不在 Go 单测覆盖面内，改动 `internal/webui/assets/*`
+   或登录相关代码时，建议再跑一次真浏览器回归：
+   ```bash
+   node scripts/ui-login-check.mjs     # 需 Edge/Chrome + CDP，见脚本头注释
    ```
 5. **不入库**：`old/`、`auths/`、`data/`、真实 `config.json`（`.gitignore` / `.dockerignore` 已排除）。
 6. **不重写已发布的历史**：只有尚未推送的提交才允许 `reset`。
