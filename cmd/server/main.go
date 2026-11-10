@@ -299,7 +299,7 @@ func main() {
 		// 账号目录（扫码加号落盘位置）、登录服务（二维码 state 的内存管理器）。
 		Scheduler: sch,
 		AuthDir:   cfg.AuthDir,
-		Login:     newLoginManager(cfg.LoginTTLDur),
+		Login:     newLoginManager(cfg.QRCodeTTLDur),
 		// 管理后台（Bootstrap 静态页，embed 进二进制）：/ 是入口，
 		// /assets/... 是内嵌资源，/v1 与 /admin 走各自的 handler。
 		UI: webui.Handler(),
@@ -349,6 +349,11 @@ func main() {
 		log.Fatalf("listen %s: %v", cfg.Listen, err)
 	}
 	log.Printf("配置来源: %s", cfg.SourcePath)
+	if keys := cfg.LegacyKeys(); len(keys) > 0 {
+		log.Printf("WARN: 配置里用了已弃用的键（%s），请改用新键名；旧键后续版本会移除",
+			strings.Join(keys, ", "))
+	}
+	log.Printf("扫码二维码有效期：%v（qrcode_ttl）", cfg.QRCodeTTLDur)
 	logScheduleMigration(&cfg.Schedule)
 	log.Printf("wp listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
 	if cfg.Admin.Enabled {
@@ -362,7 +367,7 @@ func main() {
 	log.Printf("bye")
 }
 
-// newLoginManager 构造扫码登录服务并按配置设定 state 有效期（admin.login_ttl）。
+// newLoginManager 构造扫码登录服务并按配置设定二维码有效期（qrcode_ttl）。
 //
 // TTL 决定"二维码还能扫多久"：到点后 loginsvc 会把它判为过期（ErrStateExpired），
 // 管理后台据此显示倒计时、到期把二维码置为"已失效"。

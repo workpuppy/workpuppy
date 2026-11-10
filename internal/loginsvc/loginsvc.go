@@ -132,7 +132,7 @@ func (m *Manager) TTL() time.Duration {
 	return m.ttl
 }
 
-// SetTTL 覆盖 state 有效期（配置项 admin.login_ttl；<=0 忽略）。
+// SetTTL 覆盖 state 有效期（配置项 qrcode_ttl；<=0 忽略）。
 func (m *Manager) SetTTL(d time.Duration) {
 	if d > 0 {
 		m.ttl = d

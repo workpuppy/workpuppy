@@ -3,6 +3,7 @@
   "api_key": "test_key",
   "auth_dir": "./auths",
   "state_file": "./data/state.json",
+  "qrcode_ttl": "15m",
   "proxies": null,
   "reasoning_as_content": true,
   "cooldown": {
@@ -63,8 +64,7 @@
     "enabled": false,
     "body_limit_bytes": 8192,
     "password_length": 20,
-    "min_password_length": 8,
-    "login_ttl": "15m"
+    "min_password_length": 8
   },
   "global": {
     "enabled": true,
@@ -120,7 +120,7 @@
     "degrade_cooldown_max": "2h",
     "idle_weight_per_hour": 0.5,
     "idle_weight_max": 5,
-    "expiring_soon": "168h",
+    "expiring_soon_window": "168h",
     "cost_explore_interval": "30m",
     "min_pick_gap": "100ms",
     "session_dead_threshold": 3,
@@ -144,7 +144,7 @@
     "dump_min_bytes": 4194304
   },
   "models": {
-    "default_context": 1000000,
+    "default_context_window": 1000000,
     "catalog_timeout": "5s",
     "catalog_refresh_cooldown": "5m",
     "catalog_negative_ttl": "24h"

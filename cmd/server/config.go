@@ -85,9 +85,6 @@ type Config struct {
 		PasswordLength int `json:"password_length"`
 		// MinPasswordLength 用 WP_ADMIN_PASSWORD 固定密码时的最小长度（默认 8）。
 		MinPasswordLength int `json:"min_password_length"`
-		// LoginTTL 扫码登录 state 的有效期（时长字符串，默认 "15m"）：
-		// 到点二维码失效，管理后台会把它标成"已失效"并停止轮询。
-		LoginTTL string `json:"login_ttl"`
 	} `json:"admin"`
 
 	Global struct {
@@ -215,8 +212,10 @@ type Config struct {
 		DegradeCooldownMax string  `json:"degrade_cooldown_max"` // 降权时长的上限钳制，默认 "2h"（仅当 cooldown 超该值才钳制）
 		IdleWeightPerHour  float64 `json:"idle_weight_per_hour"` // 闲置补偿：每小时未用 +0.5 权重
 		IdleWeightMax      float64 `json:"idle_weight_max"`      // 闲置补偿封顶，默认 5.0
-		// ExpiringSoon 快过期积分窗口（如 "168h"=7天）：签到查余额时，到期时间在此窗口内
+		// ExpiringSoonWindow 快过期积分**窗口**（如 "168h"=7天）：签到查余额时，到期时间在此窗口内
 		// 的积分被标记为"快过期"，选号优先消耗（issue:积分过期）。空/0 = 禁用分桶。
+		ExpiringSoonWindow string `json:"expiring_soon_window"`
+		// ExpiringSoon 已弃用别名：等价于 expiring_soon_window（只写旧键时生效，并打 WARN）。
 		ExpiringSoon string `json:"expiring_soon"`
 		// CostExploreInterval costTier 条件探索窗口（issue #136 方案 a′）：tier 0
 		// 垄断层存在且 tier 1 有成员时，距上次探索 ≥ 窗口则本次 pick 生效层切
@@ -262,7 +261,8 @@ type Config struct {
 
 	// Models 模型目录与上下文窗口默认值。
 	Models struct {
-		DefaultContext         int64  `json:"default_context"`          // 默认 1000000
+		DefaultContextWindow   int64  `json:"default_context_window"`   // 默认 1000000（token 数）
+		DefaultContext         int64  `json:"default_context"`          // 已弃用别名（只写旧键时生效）
 		CatalogTimeout         string `json:"catalog_timeout"`          // 默认 "5s"
 		CatalogRefreshCooldown string `json:"catalog_refresh_cooldown"` // 默认 "5m"
 		CatalogNegativeTTL     string `json:"catalog_negative_ttl"`     // 默认 "24h"
@@ -294,6 +294,16 @@ type Config struct {
 	SpreadWindowDur time.Duration `json:"-"`
 	// SourcePath 本次配置的实际来源（config.json / 内置默认 builtin:config.default.json）。
 	// 只用于启动日志与排障，不参与 JSON 序列化。
+	// QRCodeTTL 管理后台「扫码加号」二维码的有效期（时长字符串，默认 "15m"）。
+	//
+	// 语义边界（别再叫 login_ttl）：它**不是**管理后台的登录会话超时（本项目的管理凭据
+	// 是启动随机密码，没有会话概念），而是"这一张扫码二维码还能扫多久"——到点后
+	// loginsvc 判 state 过期，后台把二维码标成"已失效"。
+	QRCodeTTL string `json:"qrcode_ttl"`
+
+	// legacyKeys 本次加载里用到的已弃用键（→ 新键），启动日志会打 WARN 提示迁移。
+	legacyKeys []string
+
 	SourcePath string `json:"-"`
 	// IntraJitterMinD/MaxD 同账号内连续请求的随机间隔区间
 	// （schedule.intra_request_jitter_min/max 解析结果）。默认 1s / 3s；都 0 = 关闭。
@@ -316,8 +326,11 @@ type Config struct {
 	ModelsCatalogRefreshDur        time.Duration `json:"-"`
 	ModelsCatalogNegativeDur       time.Duration `json:"-"`
 	UpstashKeyTTLDur               time.Duration `json:"-"`
-	LoginTTLDur                    time.Duration `json:"-"`
+	QRCodeTTLDur                   time.Duration `json:"-"`
 }
+
+// LegacyKeys 返回本次加载中用到的已弃用配置键（供启动日志提示迁移）。
+func (c *Config) LegacyKeys() []string { return c.legacyKeys }
 
 // Default 默认配置 —— **完全来自内嵌的 config.default.json**（唯一权威来源）。
 //
@@ -370,6 +383,8 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(raw, c); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", source, err)
 	}
+	// 旧键别名：按原始 JSON 的键集合判断（默认值已填满新字段，不能靠"字段为空"识别）。
+	c.applyLegacyAliases(raw)
 	applyEnv(c)
 	if err := c.normalize(); err != nil {
 		return nil, err
@@ -420,7 +435,7 @@ func (c *Config) wireTunings() error {
 		{"models.catalog_refresh_cooldown", c.Models.CatalogRefreshCooldown, &c.ModelsCatalogRefreshDur},
 		{"models.catalog_negative_ttl", c.Models.CatalogNegativeTTL, &c.ModelsCatalogNegativeDur},
 		{"upstash.key_ttl", c.Upstash.KeyTTL, &c.UpstashKeyTTLDur},
-		{"admin.login_ttl", c.Admin.LoginTTL, &c.LoginTTLDur},
+		{"qrcode_ttl", c.QRCodeTTL, &c.QRCodeTTLDur},
 	}
 	for _, it := range items {
 		d, err := parseDur(it.key, it.raw)
@@ -458,7 +473,7 @@ func (c *Config) wireTunings() error {
 		GzipThresholdBytes:     c.Upstream.GzipThresholdBytes,
 		DeviceTokenFileTTL:     c.DeviceTokenTTLDur,
 		DeviceTokenFileMaxLen:  c.Upstream.DeviceTokenMaxLen,
-		DefaultContextWindow:   c.Models.DefaultContext,
+		DefaultContextWindow:   c.Models.DefaultContextWindow,
 		CatalogTimeout:         c.ModelsCatalogTimeoutDur,
 		CatalogRefreshCooldown: c.ModelsCatalogRefreshDur,
 		CatalogNegativeTTL:     c.ModelsCatalogNegativeDur,
@@ -606,8 +621,12 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("WP_PROMPT_FILE"); v != "" {
 		c.Prompt.File = v
 	}
-	if v := os.Getenv("WP_EXPIRING_SOON"); v != "" {
-		c.Pool.ExpiringSoon = v
+	// 新名优先；旧名 WP_EXPIRING_SOON 仍接受（与配置文件里的旧键同口径）。
+	if v := os.Getenv("WP_EXPIRING_SOON_WINDOW"); v != "" {
+		c.Pool.ExpiringSoonWindow = v
+	} else if v := os.Getenv("WP_EXPIRING_SOON"); v != "" {
+		c.Pool.ExpiringSoonWindow = v
+		c.legacyKeys = append(c.legacyKeys, "环境变量 WP_EXPIRING_SOON → WP_EXPIRING_SOON_WINDOW")
 	}
 	if v := os.Getenv("WP_ADMIN_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -769,11 +788,12 @@ func (c *Config) normalize() error {
 			c.IntraJitterMaxD, c.IntraJitterMinD)
 	}
 	// 快过期窗口：空值回落默认 168h（Default 已置；此兜底覆盖显式 ""）；显式 "0"/负值 = 禁用分桶。
-	if c.Pool.ExpiringSoon == "" {
-		c.Pool.ExpiringSoon = defaults().Pool.ExpiringSoon
+	// expiring_soon_window 是**窗口**（时长）；旧键 pool.expiring_soon 的搬运见 legacy_keys.go。
+	if c.Pool.ExpiringSoonWindow == "" {
+		c.Pool.ExpiringSoonWindow = defaults().Pool.ExpiringSoonWindow
 	}
-	if c.ExpiringSoonDur, err = time.ParseDuration(c.Pool.ExpiringSoon); err != nil {
-		return fmt.Errorf("pool.expiring_soon: %w", err)
+	if c.ExpiringSoonDur, err = time.ParseDuration(c.Pool.ExpiringSoonWindow); err != nil {
+		return fmt.Errorf("pool.expiring_soon_window: %w", err)
 	}
 	if c.ExpiringSoonDur < 0 {
 		c.ExpiringSoonDur = 0 // 负值视为禁用，避免 upstream 判定窗口反转
@@ -813,6 +833,10 @@ func (c *Config) normalize() error {
 	}
 	// 排程段归一（空数组回落默认、ActivityReportCount 归一、小时范围校验）
 	// 由 internal/config 统一实现，cmd/server 与 cmd/activity 共用同一份语义。
+	// 旧键 models.default_context 的搬运见 legacy_keys.go（按原始 JSON 键集合判断）。
+	if c.Models.DefaultContextWindow == 0 {
+		c.Models.DefaultContextWindow = defaults().Models.DefaultContextWindow
+	}
 	if err := c.Schedule.Normalize(); err != nil {
 		return err
 	}

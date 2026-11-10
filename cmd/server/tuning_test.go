@@ -52,7 +52,7 @@ func TestTuningsDefaultsComeFromDefaultConfig(t *testing.T) {
 	if c.Admin.BodyLimitBytes != 8192 || c.Admin.PasswordLength != 20 || c.Admin.MinPasswordLength != 8 {
 		t.Errorf("admin=%+v want 8192/20/8", c.Admin)
 	}
-	if c.Models.DefaultContext != 1000000 || c.Upstash.WriteConcurrency != 8 {
+	if c.Models.DefaultContextWindow != 1000000 || c.Upstash.WriteConcurrency != 8 {
 		t.Errorf("models/upstash=%+v/%+v", c.Models, c.Upstash)
 	}
 	if c.Upstream.GzipThresholdBytes != 65536 || c.Upstream.DeviceTokenMaxLen != 1024 {
@@ -69,7 +69,7 @@ func TestTuningsUserOverride(t *testing.T) {
 	  "cooldown": {"not_found": "5s"},
 	  "risk": {"waf_window": "2m", "waf_threshold": 7},
 	  "admin": {"password_length": 24, "min_password_length": 12},
-	  "models": {"default_context": 200000, "catalog_timeout": "9s"},
+	  "models": {"default_context_window": 200000, "catalog_timeout": "9s"},
 	  "upstash": {"key_ttl": "24h", "write_concurrency": 4}
 	}`
 	if err := os.WriteFile(fp, []byte(body), 0o600); err != nil {
@@ -93,8 +93,8 @@ func TestTuningsUserOverride(t *testing.T) {
 	if c.Admin.PasswordLength != 24 || c.Admin.MinPasswordLength != 12 {
 		t.Errorf("admin 覆盖未生效：%+v", c.Admin)
 	}
-	if c.Models.DefaultContext != 200000 || c.ModelsCatalogTimeoutDur != 9*time.Second {
-		t.Errorf("models 覆盖未生效：%d/%v", c.Models.DefaultContext, c.ModelsCatalogTimeoutDur)
+	if c.Models.DefaultContextWindow != 200000 || c.ModelsCatalogTimeoutDur != 9*time.Second {
+		t.Errorf("models 覆盖未生效：%d/%v", c.Models.DefaultContextWindow, c.ModelsCatalogTimeoutDur)
 	}
 	if c.UpstashKeyTTLDur != 24*time.Hour || c.Upstash.WriteConcurrency != 4 {
 		t.Errorf("upstash 覆盖未生效：%v/%d", c.UpstashKeyTTLDur, c.Upstash.WriteConcurrency)
@@ -140,4 +140,92 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+// 改名后的键：qrcode_ttl / expiring_soon_window / default_context_window 生效，
+// 旧的 admin.login_ttl 不再被读取（避免"看起来配了其实没生效"）。
+func TestRenamedKeysEffective(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	body := `{
+	  "qrcode_ttl": "7m",
+	  "pool": {"expiring_soon_window": "48h"},
+	  "models": {"default_context_window": 64000}
+	}`
+	if err := os.WriteFile(fp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.QRCodeTTLDur != 7*time.Minute {
+		t.Errorf("qrcode_ttl=%v want 7m", c.QRCodeTTLDur)
+	}
+	if c.ExpiringSoonDur != 48*time.Hour {
+		t.Errorf("expiring_soon_window=%v want 48h", c.ExpiringSoonDur)
+	}
+	if c.Models.DefaultContextWindow != 64000 {
+		t.Errorf("default_context_window=%d want 64000", c.Models.DefaultContextWindow)
+	}
+	if len(c.LegacyKeys()) != 0 {
+		t.Errorf("用了新键不应记 legacy：%v", c.LegacyKeys())
+	}
+
+	// 旧的 admin.login_ttl 已被删除：写了也不生效（回落到默认 15m）。
+	fp2 := filepath.Join(dir, "old.json")
+	if err := os.WriteFile(fp2, []byte(`{"admin":{"login_ttl":"1m"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(fp2)
+	if err != nil {
+		t.Fatalf("load old: %v", err)
+	}
+	if c2.QRCodeTTLDur != 15*time.Minute {
+		t.Errorf("旧的 admin.login_ttl 不应再生效：qrcode_ttl=%v want 默认 15m", c2.QRCodeTTLDur)
+	}
+}
+
+// 旧键仍被接受（打 WARN 提示迁移），且新键优先。
+func TestLegacyKeysStillAcceptedWithWarning(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	body := `{
+	  "pool": {"expiring_soon": "24h"},
+	  "models": {"default_context": 32000}
+	}`
+	if err := os.WriteFile(fp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.ExpiringSoonDur != 24*time.Hour {
+		t.Errorf("旧键 expiring_soon 应被接受：%v", c.ExpiringSoonDur)
+	}
+	if c.Models.DefaultContextWindow != 32000 {
+		t.Errorf("旧键 default_context 应被接受：%d", c.Models.DefaultContextWindow)
+	}
+	keys := c.LegacyKeys()
+	if len(keys) != 2 {
+		t.Fatalf("应记录 2 个旧键，实际 %v", keys)
+	}
+
+	// 新旧并存 → 新键优先，且不记 legacy
+	fp2 := filepath.Join(dir, "both.json")
+	body2 := `{"pool":{"expiring_soon":"24h","expiring_soon_window":"12h"}}`
+	if err := os.WriteFile(fp2, []byte(body2), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(fp2)
+	if err != nil {
+		t.Fatalf("load both: %v", err)
+	}
+	if c2.ExpiringSoonDur != 12*time.Hour {
+		t.Errorf("新键应优先：%v want 12h", c2.ExpiringSoonDur)
+	}
+	if len(c2.LegacyKeys()) != 0 {
+		t.Errorf("新旧并存时不该记 legacy：%v", c2.LegacyKeys())
+	}
 }

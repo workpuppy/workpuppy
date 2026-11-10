@@ -15,7 +15,7 @@ func TestDefaultComesFromExampleConfig(t *testing.T) {
 	if c.Listen != ":7863" || c.AuthDir != "./auths" || c.StateFile != "./data/state.json" {
 		t.Errorf("基础默认值不来自示例：%q %q %q", c.Listen, c.AuthDir, c.StateFile)
 	}
-	if c.Pool.MaxInFlight != 3 || c.Pool.BreakerThreshold != 3 || c.Pool.ExpiringSoon != "168h" {
+	if c.Pool.MaxInFlight != 3 || c.Pool.BreakerThreshold != 3 || c.Pool.ExpiringSoonWindow != "168h" {
 		t.Errorf("池默认值不来自示例：%+v", c.Pool)
 	}
 	if c.Upstream.TimeoutSeconds != 120 || c.Upstream.ClientName != "WorkBuddy" {
@@ -43,7 +43,7 @@ func TestNormalizeIsNoOpOnDefaults(t *testing.T) {
 	if c.Listen != before.Listen || c.AuthDir != before.AuthDir || c.StateFile != before.StateFile {
 		t.Errorf("normalize 改了基础字段：%q → %q", before.Listen, c.Listen)
 	}
-	if c.Pool.MaxInFlight != before.Pool.MaxInFlight || c.Pool.ExpiringSoon != before.Pool.ExpiringSoon {
+	if c.Pool.MaxInFlight != before.Pool.MaxInFlight || c.Pool.ExpiringSoonWindow != before.Pool.ExpiringSoonWindow {
 		t.Errorf("normalize 改了池字段：%+v → %+v", before.Pool, c.Pool)
 	}
 	if c.Upstream.TimeoutSeconds != before.Upstream.TimeoutSeconds {
@@ -82,8 +82,8 @@ func TestLoadFallsBackPerProperty(t *testing.T) {
 		t.Errorf("session_sticky=%+v want 默认 30m/true（null 应回退默认）", c.SessionSticky)
 	}
 	// 完全没写的键 → 默认值
-	if c.Pool.ExpiringSoon != "168h" || c.AuthDir != "./auths" {
-		t.Errorf("未写的键应取默认值：expiring_soon=%q auth_dir=%q", c.Pool.ExpiringSoon, c.AuthDir)
+	if c.Pool.ExpiringSoonWindow != "168h" || c.AuthDir != "./auths" {
+		t.Errorf("未写的键应取默认值：expiring_soon_window=%q auth_dir=%q", c.Pool.ExpiringSoonWindow, c.AuthDir)
 	}
 	if got := strings.Join(c.Schedule.CheckinTime, ","); got != "09:00,21:00" {
 		t.Errorf("未写的排程应取默认值：%s", got)

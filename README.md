@@ -165,6 +165,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `api_key` | string | `"test_key"` | **数据面**密钥：下游调 `/v1/*`、`/status` 时 `Authorization: Bearer <api_key>`。留空 = 不鉴权（公网部署务必设置） |
 | `auth_dir` | string | `"./auths"` | 账号凭据目录（`workbuddy-<uid>.json`），新增文件几秒内自动热加载 |
 | `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复 |
+| `qrcode_ttl` | string | `"15m"` | **扫码加号二维码的有效期**（不是管理后台的会话超时——管理凭据是启动随机密码，无会话）。到点后台把二维码标「已失效」、链接加删除线并停止轮询 |
 | `proxies` | object\|null | `null` | 出口线路映射，如 `{"hk": "http://127.0.0.1:7890"}`；账号文件里按线路名绑定 |
 | `reasoning_as_content` | bool | `true` | 思考兜底：整轮既无正文也无工具调用时，把 `reasoning_content` 同时作为 `content` 下发（避免空回复）。同时渲染两字段的客户端会看到重复，遇到就设 `false` |
 
@@ -230,7 +231,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `body_limit_bytes` | `8192` | 管理面请求体上限 |
 | `password_length` | `20` | 启动时随机生成的管理密码长度（仅在没设 `WP_ADMIN_PASSWORD` 时生效） |
 | `min_password_length` | `8` | 用 `WP_ADMIN_PASSWORD` 固定密码时的最小长度（不足则启动失败） |
-| `login_ttl` | `"15m"` | 扫码登录 state 的有效期：后台会显示倒计时，到点二维码置为**已失效**（链接加删除线 + 遮罩）并停止轮询 |
+
 
 > 管理密码**每次启动重新生成、只存内存、打印在终端**，与 `api_key` 完全分离：
 > 拿下游 key 打 `/admin/*` 一律 401；密码未初始化时管理面回 503（不存在"空凭据放行"）。
@@ -303,7 +304,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `degrade_cooldown_max` | `"2h"` | 降权时长上限钳制 |
 | `idle_weight_per_hour` | `0.5` | 闲置补偿：每小时未使用 +0.5 权重 |
 | `idle_weight_max` | `5` | 闲置补偿权重封顶 |
-| `expiring_soon` | `"168h"` | 快过期积分窗口：到期时间在窗口内的积分优先消耗 |
+| `expiring_soon_window` | `"168h"` | 快过期积分**窗口**：到期时间在窗口内的积分优先消耗（旧键 `expiring_soon` 仍接受并打 WARN） |
 | `expiring_weight` | `8` | 快过期积分在选号权重里的倍数 |
 | `min_pick_gap` | `"100ms"` | 选号防惊群：跳过刚被选中的账号 |
 | `session_dead_threshold` | `3` | 连续多少次 `12153 session dead` 才禁用账号 |
@@ -324,7 +325,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `risk.waf_threshold` | `2` | 窗口内命中多少次进入"风险暂停"（暂停期间不刷新 token、不跑任务） |
 | `metrics.capacity` | `512` | 请求指标环形缓冲容量 |
 | `debug.dump_min_bytes` | `4194304` | 请求体落盘排障的最小字节数（`0` = 关闭） |
-| `models.default_context` | `1000000` | 模型未声明上下文窗口时的兜底值 |
+| `models.default_context_window` | `1000000` | 模型未声明上下文窗口时的兜底值（单位 token；旧键 `default_context` 仍接受并打 WARN） |
 | `models.catalog_timeout` | `"5s"` | 上游模型目录抓取超时 |
 | `models.catalog_refresh_cooldown` | `"5m"` | 模型目录抓取冷却 |
 | `models.catalog_negative_ttl` | `"24h"` | 抓取失败的负缓存 TTL |
@@ -353,7 +354,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `WP_PASSTHROUGH_IP` / `WP_GZIP_BODY` | 透传 IP / 压缩 |
 | `WP_PROMPT_MODE` / `WP_PROMPT_FILE` | `prompt.*` |
 | `WP_SANITIZE_FINGERPRINTS` | `features.sanitize_blacklist_fingerprints` |
-| `WP_EXPIRING_SOON` | `pool.expiring_soon` |
+| `WP_EXPIRING_SOON_WINDOW`（旧名 `WP_EXPIRING_SOON` 仍接受） | `pool.expiring_soon_window` |
 | `WP_ADMIN_ENABLED` | `admin.enabled` |
 | `WP_ADMIN_PASSWORD` | 固定管理密码（替代启动时随机生成） |
 | `WP_TASK_SPREAD` | 临时覆盖 `schedule.spread_window`（`"0"` 关闭），排障用 |
@@ -588,7 +589,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 | 签到失败 `code 10001` | 上游短时并发限流：调大 `schedule.checkin_account_delay` / `checkin_retry_delays` |
 | 上游 403 WAF | 降低 `pool.max_in_flight` / `max_in_flight_global`，核对 `upstream.client_*` 指纹，必要时配 `proxies` 出口 |
 | 客户端显示空回复（思考模型） | 保持 `reasoning_as_content: true`；若出现重复显示则设 `false` |
-| 模型上下文被截断 | 调 `models.default_context`，或确认上游模型声明 |
+| 模型上下文被截断 | 调 `models.default_context_window`，或确认上游模型声明 |
 | 账号被连续禁用 | 看 `pool.session_dead_threshold`；`12153` 连续多次才会禁用 |
 | 想快速定位某次请求 | 调 `debug.dump_min_bytes`（改大/改小）配合日志中的请求落盘 |
 
