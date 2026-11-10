@@ -37,3 +37,12 @@
 [hidden] {
   display: none !important;
 }
+/* 授权二维码：白底 + 内边距（扫码需要静区），像素放大不做插值（否则模块边缘糊掉）。 */
+.qr-img {
+  width: 240px;
+  height: 240px;
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}

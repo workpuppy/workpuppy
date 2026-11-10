@@ -471,6 +471,40 @@ async function sendPlayground() {
 }
 
 // ── 扫码加号 ────────────────────────────────────────────────
+// renderQR 把文本（auth_url）渲成二维码图片。
+//
+// 为什么要绕一层 fetch：`<img src="/admin/qr?...">` 无法携带 Authorization 头，
+// 而 /admin/qr 和其它管理端点一样要管理凭据。所以先带头发请求，再转成 data URL 挂上。
+//
+// 为什么用 data URL 而不是 createObjectURL(blob)：页面 CSP 是
+// `default-src 'self'; img-src 'self' data:` —— **blob: 不在白名单里**，用它挂图
+// 会被浏览器直接拦掉（表现就是"二维码不显示"）。data: 已在白名单内，且二维码只有几 KB。
+async function renderQR(text) {
+  const img = $('#qrImg');
+  if (!text) {
+    img.classList.add('d-none');
+    return;
+  }
+  try {
+    const resp = await fetch('/admin/qr?size=280&text=' + encodeURIComponent(text), {
+      headers: state.password ? { Authorization: 'Bearer ' + state.password } : {},
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const blob = await resp.blob();
+    const dataURL = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(fr.error || new Error('读取二维码失败'));
+      fr.readAsDataURL(blob);
+    });
+    img.src = dataURL;
+    img.classList.remove('d-none');
+  } catch (e) {
+    img.classList.add('d-none');
+    toast('二维码生成失败：' + String(e.message || e), 'warning');
+  }
+}
+
 async function startAuth() {
   const realm = $('#addRealm').value;
   const btn = $('#btnAuthStart');
@@ -481,7 +515,8 @@ async function startAuth() {
     $('#addUrl').href = r.auth_url || '#';
     $('#addBox').classList.remove('d-none');
     $('#addMeta').textContent = '等待授权…（' + (r.realm || realm) + '）';
-    pollAuth(r.state, r.realm || realm);
+    renderQR(r.auth_url || '');
+  pollAuth(r.state, r.realm || realm);
   } catch (e) {
     $('#addMeta').textContent = '';
     toast(String(e.message || e), 'danger');
@@ -589,6 +624,8 @@ function bind() {
 // boot：先看本地有没有密码。有就先验一次（服务重启后旧密码会失效），
 // 验不过就清掉并停在登录页；没有就直接显示登录页。
 (async function boot() {
+  // 标记：app.js 已执行并接管页面（自动化脚本据此判断可交互，见 scripts/ui-login-check.mjs）。
+  document.documentElement.dataset.appBooted = '1';
   applyTheme(localStorage.getItem(THEME_STORE) || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   bind();
 

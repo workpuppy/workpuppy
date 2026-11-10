@@ -397,7 +397,7 @@ docker logs wp | grep 登录密码
 | 账号 | 列表（状态、积分、在途、凭证有效期、线路、权重）+ 单号签到 / 停用 / 启用 / 复活 / 全部签到 |
 | 模型 | 模型中心：描述、上下文、最大输出、思考档位、积分倍率、能力标记 |
 | 测试台 | 选模型 → 填提示词 → 流式或非流式试跑（复用 `/v1` 整条链路） |
-| 扫码加号 | 拿授权链接 → 轮询 → 账号自动落盘并进入池 |
+| 扫码加号 | 选域名 → 拿授权链接 → **页面直接显示二维码**（也可复制链接）→ 轮询 → 账号自动落盘并进入池 |
 
 **边界**：后台只管账号运营，**不改平台参数**（`config.json` 永远由部署方维护）。
 密码每次启动随机生成、只存进程内存、重启即失效；浏览器把它存在 `localStorage`，收到 401
@@ -426,6 +426,7 @@ docker logs wp | grep 登录密码
 | `POST` | `/admin/accounts/{uid}/revive` | 解除系统自动禁用（封号救不回，响应里会如实标） |
 | `POST` | `/admin/auth/start` | 扫码加号第一步：`{"realm":"cn\|global"}` → `{state, auth_url}` |
 | `GET` | `/admin/auth/poll` | 轮询 `?state=…&realm=…`：`pending` / `saved` |
+| `GET` | `/admin/qr` | 把任意文本渲成 PNG 二维码：`?text=<url>&size=240`（扫码加号的 auth_url 就用它；需管理凭据，输出 `no-store`） |
 | `GET` | `/admin/models` | 模型中心数据 |
 | `POST` | `/admin/playground/chat` | 测试台（`?uid=` 可指定账号定点验证） |
 
@@ -595,3 +596,11 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 ## 许可
 
 MIT。上游基线见仓库 `LICENSE`；归档面板在 `old/`（不入库、不参与构建）。
+
+第三方依赖（均为 MIT/Apache-2.0，纯 Go，无 cgo）：
+
+| 模块 | 用途 |
+|---|---|
+| `github.com/redis/go-redis/v9` | 可选：会话镜像（Upstash Redis） |
+| `rsc.io/qr` | 管理后台把 `auth_url` 渲成二维码（`/admin/qr`） |
+| Bootstrap 5.3.3（vendored） | 管理后台样式，见 `internal/webui/assets/NOTICE.txt` |

@@ -131,3 +131,31 @@ func TestHiddenAttributeIsAuthoritative(t *testing.T) {
 		t.Errorf(`"#app 初始必须是 hidden（避免登录前露出空面板）`)
 	}
 }
+
+// 扫码加号必须能显示二维码（不只是链接）。
+//
+// 回归背景：前端曾只渲染 auth_url 文本，用户得自己复制链接；现在 app.js 通过
+// fetch('/admin/qr?...') 取 PNG blob 挂到 <img id="qrImg">。这里断言"接线还在"：
+// 入口页有该 img，脚本里确实调用了 /admin/qr，样式里给了白底+静区。
+func TestAdminPageHasQRCodeWiring(t *testing.T) {
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	for _, want := range []string{`id="qrImg"`, `id="addUrl"`, `id="btnAuthStart"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("入口页缺少 %s", want)
+		}
+	}
+
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	if !strings.Contains(js.Body.String(), "/admin/qr") {
+		t.Fatal("app.js 没有调用 /admin/qr：扫码加号只会显示链接，不显示二维码")
+	}
+
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	if !strings.Contains(css.Body.String(), ".qr-img") {
+		t.Error("app.css 缺少 .qr-img（二维码需要白底/静区/像素化渲染）")
+	}
+}

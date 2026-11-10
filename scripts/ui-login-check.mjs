@@ -68,7 +68,7 @@ async function main() {
   for (let i = 0; i < 50; i++) {
     ready = await evalJS(`(() => {
       const hasDom = !!document.getElementById('loginPassword');
-      const booted = !!document.documentElement.dataset.bsTheme;
+      const booted = document.documentElement.dataset.appBooted === '1';
       const css = [...document.styleSheets].some(s => (s.href || '').endsWith('app.css'));
       return hasDom && booted && css;
     })()`);

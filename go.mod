@@ -2,7 +2,10 @@ module wp
 
 go 1.22.5
 
-require github.com/redis/go-redis/v9 v9.18.0
+require (
+	github.com/redis/go-redis/v9 v9.18.0
+	rsc.io/qr v0.2.0
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

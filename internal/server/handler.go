@@ -261,6 +261,8 @@ func NewHandler(cfg Config) *Handler {
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/checkin", h.withAdminAuth(h.adminCheckinOne))
 		h.mux.HandleFunc("POST /admin/auth/start", h.withAdminAuth(h.adminAuthStart))
 		h.mux.HandleFunc("GET /admin/auth/poll", h.withAdminAuth(h.adminAuthPoll))
+		// 二维码：扫码加号把 auth_url 渲成 PNG（前端 fetch 带凭据取 blob，见 app.js renderQR）。
+		h.mux.HandleFunc("GET /admin/qr", h.withAdminAuth(h.adminQR))
 		h.mux.HandleFunc("GET /admin/models", h.withAdminAuth(h.adminModels))
 		h.mux.HandleFunc("POST /admin/playground/chat", h.withAdminAuth(h.adminPlaygroundChat))
 	}
