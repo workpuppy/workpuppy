@@ -215,10 +215,19 @@
               <button class="btn btn-primary btn-sm" id="btnAuthStart">获取二维码链接</button>
               <span class="small text-body-secondary ms-2" id="addMeta"></span>
               <div class="alert alert-info mt-3 d-none" id="addBox">
-                <div class="small mb-2">用微信 / QQ 扫码，或直接在浏览器打开下面的链接完成授权：</div>
-                <img id="qrImg" class="qr-img d-none" alt="授权二维码" width="240" height="240">
+                <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                  <div class="small">用微信 / QQ 扫码，或直接在浏览器打开下面的链接完成授权：</div>
+                  <span id="addCountdown" class="badge text-bg-secondary flex-shrink-0">有效期 --:--</span>
+                </div>
+                <div class="qr-wrap">
+                  <img id="qrImg" class="qr-img d-none" alt="授权二维码" width="240" height="240">
+                  <div id="qrOverlay" class="qr-overlay d-none">
+                    <div class="fw-semibold">二维码已失效</div>
+                    <div class="small mt-1">点「获取二维码链接」重新生成</div>
+                  </div>
+                </div>
                 <a id="addUrl" class="small text-break d-block mt-2" href="#" target="_blank" rel="noreferrer"></a>
-                <div class="small text-body-secondary mt-2">已开始轮询授权结果，成功后账号会自动落盘并进入账号池。</div>
+                <div class="small text-body-secondary mt-2" id="addHint">已开始轮询授权结果，成功后账号会自动落盘并进入账号池。</div>
               </div>
             </div>
           </div>

@@ -46,3 +46,38 @@
   border-radius: 8px;
   image-rendering: pixelated;
 }
+
+/* 二维码容器：遮罩要盖在图上，所以用相对定位包一层。 */
+.qr-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+/* 二维码失效遮罩：半透明黑底 + 居中提示，明确告诉用户"这张码别再扫了"。 */
+.qr-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  text-align: center;
+  padding: 12px;
+  line-height: 1.4;
+}
+
+/* 失效后二维码本身降饱和，避免和遮罩抢视觉。 */
+.qr-img.qr-stale {
+  filter: grayscale(1) opacity(0.5);
+}
+
+/* 失效的授权链接：删除线 + 变灰（点它已经没意义了）。 */
+.auth-expired {
+  text-decoration: line-through;
+  opacity: 0.55;
+  pointer-events: none;
+}

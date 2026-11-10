@@ -299,7 +299,7 @@ func main() {
 		// 账号目录（扫码加号落盘位置）、登录服务（二维码 state 的内存管理器）。
 		Scheduler: sch,
 		AuthDir:   cfg.AuthDir,
-		Login:     loginsvc.New(),
+		Login:     newLoginManager(cfg.LoginTTLDur),
 		// 管理后台（Bootstrap 静态页，embed 进二进制）：/ 是入口，
 		// /assets/... 是内嵌资源，/v1 与 /admin 走各自的 handler。
 		UI: webui.Handler(),
@@ -360,4 +360,16 @@ func main() {
 		log.Fatalf("http: %v", err)
 	}
 	log.Printf("bye")
+}
+
+// newLoginManager 构造扫码登录服务并按配置设定 state 有效期（admin.login_ttl）。
+//
+// TTL 决定"二维码还能扫多久"：到点后 loginsvc 会把它判为过期（ErrStateExpired），
+// 管理后台据此显示倒计时、到期把二维码置为"已失效"。
+func newLoginManager(ttl time.Duration) *loginsvc.Manager {
+	m := loginsvc.New()
+	if ttl > 0 {
+		m.SetTTL(ttl)
+	}
+	return m
 }

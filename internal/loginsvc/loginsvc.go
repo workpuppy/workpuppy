@@ -22,6 +22,7 @@ package loginsvc
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,6 +51,12 @@ const (
 	// maxPending 同时挂起的登录数上限（防滥用把内存当存储用）。
 	maxPending = 32
 )
+
+// ErrStateExpired 扫码 state 不存在或已过期（超过 TTL）。
+//
+// 单独做成哨兵错误而不是普通字符串：管理后台要据此把二维码标成"已失效"并停止轮询，
+// 而其它错误（上游 5xx、realm 不匹配）应该如实报成失败、提示用户重试。
+var ErrStateExpired = errors.New("授权二维码已过期或不存在，请重新获取")
 
 // Credentials 是登录成功后的结构化结果。
 type Credentials struct {
@@ -118,7 +125,14 @@ func (m *Manager) SetBases(cn, global string) {
 	}
 }
 
-// SetTTL 覆盖 state 有效期（测试用；<=0 忽略）。
+// TTL 返回当前 state 有效期（管理后台据此显示"有效期剩余"倒计时）。
+func (m *Manager) TTL() time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ttl
+}
+
+// SetTTL 覆盖 state 有效期（配置项 admin.login_ttl；<=0 忽略）。
 func (m *Manager) SetTTL(d time.Duration) {
 	if d > 0 {
 		m.ttl = d
@@ -249,7 +263,7 @@ func (m *Manager) Poll(realm, state string) (cred *Credentials, pending bool, er
 	e, ok := m.states[state]
 	m.mu.Unlock()
 	if !ok {
-		return nil, false, fmt.Errorf("state 不存在或已过期（请重新获取二维码）")
+		return nil, false, ErrStateExpired
 	}
 	if e.realm != wantRealm {
 		// 防混域：cn 的 state 拿去 global 轮询只会拿到一句看不懂的上游错误。
@@ -257,7 +271,7 @@ func (m *Manager) Poll(realm, state string) (cred *Credentials, pending bool, er
 	}
 	if m.now().Sub(e.created) > m.ttl {
 		m.forget(state)
-		return nil, false, fmt.Errorf("二维码已过期，请重新获取")
+		return nil, false, ErrStateExpired
 	}
 
 	_, origin := realmOrigin(wantRealm)

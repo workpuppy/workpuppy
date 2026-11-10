@@ -159,3 +159,37 @@ func TestAdminPageHasQRCodeWiring(t *testing.T) {
 		t.Error("app.css 缺少 .qr-img（二维码需要白底/静区/像素化渲染）")
 	}
 }
+
+// 扫码授权的有效期必须"看得见、过期后明确失效"。
+//
+// 回归背景：原先只写"已开始轮询授权结果"，用户不知道还能扫多久；state 过期后
+// 界面毫无变化，扫了才失败。现在要求：倒计时徽标 + 失效遮罩 + 链接删除线。
+// 这里断言三块接线都在（行为本身由 scripts/ui-login-check.mjs 的真浏览器用例覆盖）。
+func TestAuthExpiryWiring(t *testing.T) {
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	for _, want := range []string{`id="addCountdown"`, `id="qrOverlay"`, `id="addHint"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("入口页缺少 %s（倒计时/失效遮罩）", want)
+		}
+	}
+
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{"startAuthCountdown", "expireAuth", "renderAuthCountdown", "e.status === 410"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("app.js 缺少 %s（倒计时/过期处理）", want)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	cssBody := css.Body.String()
+	for _, want := range []string{".qr-overlay", ".auth-expired", "text-decoration: line-through"} {
+		if !strings.Contains(cssBody, want) {
+			t.Errorf("app.css 缺少 %s（失效遮罩/删除线样式）", want)
+		}
+	}
+}

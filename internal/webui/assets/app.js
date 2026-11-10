@@ -169,7 +169,9 @@ async function api(path, opts = {}) {
     throw new Error('管理面未开启：在 config.json 里设 "admin": {"enabled": true} 并重启服务');
   }
   if (!resp.ok) {
-    throw new Error('HTTP ' + resp.status + '：' + (await resp.text()).slice(0, 400));
+    const err = new Error('HTTP ' + resp.status + '：' + (await resp.text()).slice(0, 400));
+    err.status = resp.status; // 调用方按状态码分支（如 410 = 二维码已过期）
+    throw err;
   }
   return resp.json();
 }
@@ -471,6 +473,87 @@ async function sendPlayground() {
 }
 
 // ── 扫码加号 ────────────────────────────────────────────────
+// ── 扫码授权的有效期倒计时 ──────────────────────────────────────────────
+// 二维码里的 state 有 TTL（config 的 admin.login_ttl，默认 15 分钟）：过期后上游不再
+// 接受这次授权，必须重新生成。所以这里把"还剩多久"显式画出来，并在到点时：
+//   · 链接加删除线（点了也没意义）
+//   · 二维码盖一层"已失效"遮罩
+//   · 停止轮询（再问也不会成功）
+let authCountdownTimer = null;
+let authDeadline = 0;
+let authTTLSeconds = 0;
+
+function stopAuthCountdown() {
+  if (authCountdownTimer) {
+    clearInterval(authCountdownTimer);
+    authCountdownTimer = null;
+  }
+}
+
+function renderAuthCountdown() {
+  const el = $('#addCountdown');
+  if (!el || !authDeadline) return;
+  const leftMs = authDeadline - Date.now();
+  if (leftMs <= 0) {
+    expireAuth();
+    return;
+  }
+  const total = Math.ceil(leftMs / 1000);
+  const mm = String(Math.floor(total / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  el.textContent = '有效期剩余 ' + mm + ':' + ss;
+  // 最后 60 秒转黄提醒，避免用户扫到一半失效。
+  el.className = 'badge flex-shrink-0 ' + (total > 60 ? 'text-bg-secondary' : 'text-bg-warning');
+}
+
+function startAuthCountdown(seconds) {
+  stopAuthCountdown();
+  const el = $('#addCountdown');
+  if (!seconds || seconds <= 0) {
+    authDeadline = 0;
+    if (el) el.textContent = '';
+    return;
+  }
+  authTTLSeconds = seconds;
+  authDeadline = Date.now() + seconds * 1000;
+  renderAuthCountdown();
+  authCountdownTimer = setInterval(renderAuthCountdown, 1000);
+}
+
+// expireAuth 把界面切到"已失效"态（倒计时到点或 poll 返回 410 都走这里）。
+function expireAuth() {
+  stopAuthCountdown();
+  stopAuthPoll();
+  authDeadline = 0;
+  const el = $('#addCountdown');
+  if (el) {
+    el.textContent = '已失效';
+    el.className = 'badge flex-shrink-0 text-bg-danger';
+  }
+  $('#qrOverlay').classList.remove('d-none');
+  $('#qrImg').classList.add('qr-stale');
+  $('#addUrl').classList.add('auth-expired');
+  const ttlText = authTTLSeconds >= 60
+    ? Math.round(authTTLSeconds / 60) + ' 分钟'
+    : authTTLSeconds + ' 秒';
+  $('#addHint').textContent =
+    '二维码已过期（有效期 ' + ttlText + '）。点上方「获取二维码链接」重新生成。';
+  $('#addMeta').textContent = '';
+}
+
+// resetAuthView 在每次新生成二维码前复位界面（清掉上一次的失效标记）。
+function resetAuthView() {
+  stopAuthCountdown();
+  authDeadline = 0;
+  $('#qrOverlay').classList.add('d-none');
+  $('#qrImg').classList.remove('qr-stale');
+  $('#addUrl').classList.remove('auth-expired');
+  const el = $('#addCountdown');
+  el.textContent = '有效期 --:--';
+  el.className = 'badge flex-shrink-0 text-bg-secondary';
+  $('#addHint').textContent = '已开始轮询授权结果，成功后账号会自动落盘并进入账号池。';
+}
+
 // renderQR 把文本（auth_url）渲成二维码图片。
 //
 // 为什么要绕一层 fetch：`<img src="/admin/qr?...">` 无法携带 Authorization 头，
@@ -513,10 +596,12 @@ async function startAuth() {
     const r = await api('/admin/auth/start', { method: 'POST', body: { realm } });
     $('#addUrl').textContent = r.auth_url || '';
     $('#addUrl').href = r.auth_url || '#';
+    resetAuthView();
     $('#addBox').classList.remove('d-none');
     $('#addMeta').textContent = '等待授权…（' + (r.realm || realm) + '）';
     renderQR(r.auth_url || '');
-  pollAuth(r.state, r.realm || realm);
+    startAuthCountdown(r.expires_in || 0);
+    pollAuth(r.state, r.realm || realm);
   } catch (e) {
     $('#addMeta').textContent = '';
     toast(String(e.message || e), 'danger');
@@ -532,12 +617,24 @@ function pollAuth(stateToken, realm) {
       const r = await api('/admin/auth/poll?state=' + encodeURIComponent(stateToken) + '&realm=' + encodeURIComponent(realm));
       if (r.status === 'saved') {
         stopAuthPoll();
-        $('#addMeta').textContent = '已添加：' + (r.nickname || '') + '（' + r.uid + '）';
-        toast('账号已落盘：' + r.uid + '，池会在几秒内热加载', 'success');
+        stopAuthCountdown();
+        const el = $('#addCountdown');
+        el.textContent = '已授权';
+        el.className = 'badge flex-shrink-0 text-bg-success';
+        $('#addHint').textContent = '授权完成：账号已落盘，几秒内自动进入账号池。';
+        $('#addMeta').textContent = '已添加号（' + (r.nickname || '') + '，' + r.uid + '）';
+        toast('账号已落盘：' + r.uid + '，几秒内进入账号池', 'success');
         loadAccounts();
       }
     } catch (e) {
+      // 410 = state 过期/不存在：切成"已失效"态并提示重新获取，而不是笼统报失败。
+      if (e.status === 410) {
+        expireAuth();
+        toast('二维码已失效，请重新获取', 'warning');
+        return;
+      }
       stopAuthPoll();
+      stopAuthCountdown();
       $('#addMeta').textContent = '';
       toast('轮询失败：' + String(e.message || e), 'danger');
     }

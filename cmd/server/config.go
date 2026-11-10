@@ -85,6 +85,9 @@ type Config struct {
 		PasswordLength int `json:"password_length"`
 		// MinPasswordLength 用 WP_ADMIN_PASSWORD 固定密码时的最小长度（默认 8）。
 		MinPasswordLength int `json:"min_password_length"`
+		// LoginTTL 扫码登录 state 的有效期（时长字符串，默认 "15m"）：
+		// 到点二维码失效，管理后台会把它标成"已失效"并停止轮询。
+		LoginTTL string `json:"login_ttl"`
 	} `json:"admin"`
 
 	Global struct {
@@ -313,6 +316,7 @@ type Config struct {
 	ModelsCatalogRefreshDur        time.Duration `json:"-"`
 	ModelsCatalogNegativeDur       time.Duration `json:"-"`
 	UpstashKeyTTLDur               time.Duration `json:"-"`
+	LoginTTLDur                    time.Duration `json:"-"`
 }
 
 // Default 默认配置 —— **完全来自内嵌的 config.default.json**（唯一权威来源）。
@@ -416,6 +420,7 @@ func (c *Config) wireTunings() error {
 		{"models.catalog_refresh_cooldown", c.Models.CatalogRefreshCooldown, &c.ModelsCatalogRefreshDur},
 		{"models.catalog_negative_ttl", c.Models.CatalogNegativeTTL, &c.ModelsCatalogNegativeDur},
 		{"upstash.key_ttl", c.Upstash.KeyTTL, &c.UpstashKeyTTLDur},
+		{"admin.login_ttl", c.Admin.LoginTTL, &c.LoginTTLDur},
 	}
 	for _, it := range items {
 		d, err := parseDur(it.key, it.raw)

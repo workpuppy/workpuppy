@@ -63,7 +63,8 @@
     "enabled": false,
     "body_limit_bytes": 8192,
     "password_length": 20,
-    "min_password_length": 8
+    "min_password_length": 8,
+    "login_ttl": "15m"
   },
   "global": {
     "enabled": true,

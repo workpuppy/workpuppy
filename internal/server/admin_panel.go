@@ -15,6 +15,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"wp/internal/auth"
+	"wp/internal/loginsvc"
 	"wp/internal/pool"
 	"wp/internal/upstream"
 )
@@ -261,11 +263,18 @@ func (h *Handler) adminAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
 	}
+	// 有效期：前端据此显示倒计时、到点把二维码置为"已失效"。
+	ttl := h.cfg.Login.TTL()
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"state":    state,
-		"auth_url": authURL,
-		"realm":    normalizeRealmLabel(body.Realm),
-		"hint":     "用微信/QQ 扫码或打开 auth_url 完成授权，然后轮询 GET /admin/auth/poll?state=…",
+		"state":      state,
+		"auth_url":   authURL,
+		"realm":      normalizeRealmLabel(body.Realm),
+		"expires_in": int(ttl / time.Second),
+		"expires_at": time.Now().Add(ttl).Unix(),
+		"hint":       "用微信/QQ 扫码或打开 auth_url 完成授权，然后轮询 GET /admin/auth/poll?state=…",
 	})
 }
 
@@ -281,6 +290,11 @@ func (h *Handler) adminAuthPoll(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	cred, pending, err := h.cfg.Login.Poll(q.Get("realm"), q.Get("state"))
 	if err != nil {
+		// 过期/不存在 → 410：前端据此把二维码标"已失效"并停止轮询（不是普通失败）。
+		if errors.Is(err, loginsvc.ErrStateExpired) {
+			writeOpenAIError(w, http.StatusGone, "auth_state_expired", err.Error())
+			return
+		}
 		writeOpenAIError(w, http.StatusBadRequest, "login_error", err.Error())
 		return
 	}
