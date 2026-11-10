@@ -1,21 +1,21 @@
-// Command wbctl 是 wp 管理面的命令行客户端。
+// Command wpctl 是 wp 管理面的命令行客户端。
 //
 // 为什么有它：轻量版刻意不做 Web 界面，管理动作就落在两种人手上 ——
-// 脚本（curl / CI）与运维（命令行）。wbctl 是后者的入口：读同一份 config.json，
+// 脚本（curl / CI）与运维（命令行）。wpctl 是后者的入口：读同一份 config.json，
 // 拿管理密码（服务启动日志里那串），打同一组 /admin/* 端点。它**不含任何业务逻辑**，只是一层
-// 便于人读的封装；真正的判定全在服务端（这样 curl 与 wbctl 的行为不可能不一致）。
+// 便于人读的封装；真正的判定全在服务端（这样 curl 与 wpctl 的行为不可能不一致）。
 //
 // 用法：
 //
-//	wbctl accounts                       # 账号清单
-//	wbctl checkin                        # 全部签到
-//	wbctl checkin 12345678               # 单号签到（顺带回填积分）
-//	wbctl login --realm cn               # 扫码加号（打印二维码链接并等授权）
-//	wbctl models                         # 模型中心（上下文/输出/档位/积分倍率）
-//	wbctl chat --model glm-5.2 "你好"     # 聊天测试台（--uid 可指定账号，--stream 流式）
-//	wbctl disable 12345678 --reason 维护  # 摘除对话流量（签到保活照常）
-//	wbctl enable 12345678                # 恢复
-//	wbctl revive 12345678                # 解除系统自动禁用
+//	wpctl accounts                       # 账号清单
+//	wpctl checkin                        # 全部签到
+//	wpctl checkin 12345678               # 单号签到（顺带回填积分）
+//	wpctl login --realm cn               # 扫码加号（打印二维码链接并等授权）
+//	wpctl models                         # 模型中心（上下文/输出/档位/积分倍率）
+//	wpctl chat --model glm-5.2 "你好"     # 聊天测试台（--uid 可指定账号，--stream 流式）
+//	wpctl disable 12345678 --reason 维护  # 摘除对话流量（签到保活照常）
+//	wpctl enable 12345678                # 恢复
+//	wpctl revive 12345678                # 解除系统自动禁用
 //
 // 配置来源优先级：-server/-key 命令行 > config.json（-config，默认 ./config.json）。
 package main
@@ -103,7 +103,7 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 	default:
-		fatalf("未知命令 %q（wbctl help 看用法）", args[0])
+		fatalf("未知命令 %q（wpctl help 看用法）", args[0])
 	}
 	if err != nil {
 		fatalf("%v", err)
@@ -111,9 +111,9 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `wbctl —— wp 管理面命令行
+	fmt.Fprintf(os.Stderr, `wpctl —— wp 管理面命令行
 
-用法: wbctl [-config config.json] [-server URL] [-password PW] [-json] <命令> [参数]
+用法: wpctl [-config config.json] [-server URL] [-password PW] [-json] <命令> [参数]
 
 命令:
   accounts                         账号清单（池状态 + 凭证元信息）
@@ -134,7 +134,7 @@ func usage() {
 }
 
 func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "wbctl: "+format+"\n", args...)
+	fmt.Fprintf(os.Stderr, "wpctl: "+format+"\n", args...)
 	os.Exit(1)
 }
 
@@ -406,14 +406,14 @@ func numOf(m map[string]any, key string) int64 {
 
 func (c *client) cmdChat(args []string) error {
 	fs := flag.NewFlagSet("chat", flag.ExitOnError)
-	model := fs.String("model", "", "模型 ID（wbctl models 可查）")
+	model := fs.String("model", "", "模型 ID（wpctl models 可查）")
 	uid := fs.String("uid", "", "指定账号（定点验证某个号）")
 	stream := fs.Bool("stream", false, "流式输出")
 	effort := fs.String("effort", "", "reasoning_effort：low|medium|high（按模型支持档位）")
 	_ = fs.Parse(args)
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if *model == "" || prompt == "" {
-		return fmt.Errorf("用法: wbctl chat --model <模型> [--uid <账号>] [--stream] [--effort low] <提示词>")
+		return fmt.Errorf("用法: wpctl chat --model <模型> [--uid <账号>] [--stream] [--effort low] <提示词>")
 	}
 	body := map[string]any{
 		"model":    *model,
@@ -527,7 +527,7 @@ func (c *client) cmdLogin(args []string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("等待授权超时（%s）；重新执行 wbctl login 获取新二维码", *wait)
+	return fmt.Errorf("等待授权超时（%s）；重新执行 wpctl login 获取新二维码", *wait)
 }
 
 func (c *client) cmdManual(uid, action, reason string) error {

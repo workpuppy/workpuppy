@@ -160,7 +160,7 @@ jobs:
           JSON
           chmod 0644 "$work/config.json"
 
-          docker run -d --name wb-smoke -p 17863:7863 \
+          docker run -d --name wp-smoke -p 17863:7863 \
             -v "$work/config.json:/app/config.json:ro" \
             -v "$work/auths:/app/auths" \
             -v "$work/data:/app/data" \
@@ -178,8 +178,8 @@ jobs:
           echo "healthz: ${ok:-<无响应>}"
           if [ -z "$ok" ]; then
             echo "::error::容器未在 30s 内应答 /healthz"
-            docker logs wb-smoke || true
-            docker rm -f wb-smoke || true
+            docker logs wp-smoke || true
+            docker rm -f wp-smoke || true
             exit 1
           fi
           # 注意：无健康账号时 /healthz 会回 503（语义是"活着但不可服务"），
@@ -188,7 +188,7 @@ jobs:
           code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17863/status || true)"
           if [ "$code" != "401" ]; then
             echo "::error::镜像默认应开启鉴权：无 key 访问 /status 期望 401，实际 $code"
-            docker rm -f wb-smoke || true
+            docker rm -f wp-smoke || true
             exit 1
           fi
           echo "status(no key) = $code（符合预期）"
@@ -199,34 +199,34 @@ jobs:
           # 这里先打印状态码 + 首字节，再断言内容：失败时能一眼看出是"没起来/回错码"
           # 还是"回了页面但内容不对"，不用再为定位问题重跑一次流水线。
           page_head="$(curl -sS --retry 5 --retry-delay 1 --retry-connrefused -D - \
-            http://127.0.0.1:17863/ -o /tmp/wb-index.html 2>&1 | head -n 12 || true)"
+            http://127.0.0.1:17863/ -o /tmp/wp-index.html 2>&1 | head -n 12 || true)"
           echo "GET / 响应头："; echo "$page_head"
-          echo "GET / 正文：$(wc -c < /tmp/wb-index.html 2>/dev/null || echo 0) 字节"
-          if ! grep -q 'WP' /tmp/wb-index.html; then
+          echo "GET / 正文：$(wc -c < /tmp/wp-index.html 2>/dev/null || echo 0) 字节"
+          if ! grep -q 'WP' /tmp/wp-index.html; then
             # 关键诊断同时打到 annotation（日志只有仓库管理员能看，annotation 是公开的）。
-            snippet="$(tr -d '\r\n' < /tmp/wb-index.html 2>/dev/null | head -c 200 || true)"
-            echo "::error::GET / 未返回管理后台页面（status=$(echo "$page_head" | head -n1) bytes=$(wc -c < /tmp/wb-index.html 2>/dev/null || echo 0) body=$snippet）"
-            docker logs wb-smoke || true
-            docker rm -f wb-smoke || true
+            snippet="$(tr -d '\r\n' < /tmp/wp-index.html 2>/dev/null | head -c 200 || true)"
+            echo "::error::GET / 未返回管理后台页面（status=$(echo "$page_head" | head -n1) bytes=$(wc -c < /tmp/wp-index.html 2>/dev/null || echo 0) body=$snippet）"
+            docker logs wp-smoke || true
+            docker rm -f wp-smoke || true
             exit 1
           fi
           css_len="$(curl -s -o /dev/null -w '%{size_download}' http://127.0.0.1:17863/assets/bootstrap.min.css || echo 0)"
           if [ "${css_len:-0}" -lt 100000 ]; then
             echo "::error::内嵌 Bootstrap 资源异常：expected >100KB, got ${css_len}B"
-            docker rm -f wb-smoke || true
+            docker rm -f wp-smoke || true
             exit 1
           fi
           echo "管理后台：/ 可访问，bootstrap.min.css = ${css_len}B（符合预期）"
 
-          if docker exec wb-smoke sh -c 'command -v python3 >/dev/null 2>&1'; then
+          if docker exec wp-smoke sh -c 'command -v python3 >/dev/null 2>&1'; then
             echo "::error::镜像里不应存在 python3（Python 已全部 Go 化）"
-            docker rm -f wb-smoke || true
+            docker rm -f wp-smoke || true
             exit 1
           fi
           echo "镜像内无 python3（符合预期）"
 
-          docker logs wb-smoke | tail -n 20
-          docker rm -f wb-smoke
+          docker logs wp-smoke | tail -n 20
+          docker rm -f wp-smoke
 
       - name: 镜像元信息（标签 / OCI 标签）
         id: meta

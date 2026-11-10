@@ -20,11 +20,12 @@
 
 - [特性速览](#特性速览)
 - [快速开始](#快速开始)
+- [从旧版本升级](#从旧版本升级)
 - [配置说明](#配置说明)
 - [客户端接入（/v1）](#客户端接入v1)
 - [Web 管理后台](#web-管理后台)
 - [管理面 REST API](#管理面-rest-api)
-- [命令行客户端 wbctl](#命令行客户端-wbctl)
+- [命令行客户端 wpctl](#命令行客户端-wpctl)
 - [定时任务与账号节奏](#定时任务与账号节奏)
 - [双域适配（CN / Global）](#双域适配cn--global)
 - [架构总览](#架构总览)
@@ -97,6 +98,41 @@ docker logs wp | grep 登录密码
 
 > **没写 `config.json` 也能起来**：会打 WARNING 并整体回退到内置默认配置
 > （`api_key` 是占位符 `test_key`，只适合本机验证，不要直接对外）。
+
+---
+
+## 从旧版本升级
+
+去品牌化（`wb2api`/`workbuddy2api`/`wb2a` → `wp`）带来了**破坏性变更**，老部署必须按下表同步：
+
+| # | 变更 | 旧 | 新 | 影响 |
+|---|---|---|---|---|
+| 1 | 环境变量前缀 | `WB2A_*`（如 `WB2A_API_KEY`） | **`WP_*`**（`WP_API_KEY`） | compose / systemd / 启动脚本里的 env 全部要改；不改则被忽略（回落到配置文件） |
+| 2 | 主程序二进制 | `wb2api` | **`wp`** | 容器内 `/app/wp`；本地 `go build -o wp ./cmd/server` |
+| 3 | 容器名 | `workbuddy2api` | **`wp`** | `docker logs wp`、`docker exec wp …` |
+| 4 | CLI 工具 | `wbctl` | **`wpctl`** | `cmd/wpctl`，用法参数不变 |
+| 5 | `/healthz` 的 `service` 字段 | `workbuddy2api` | **`wp`** | 监控/告警规则里的字符串匹配要同步 |
+| 6 | 管理后台 localStorage 键 | `wb2a.adminPassword` | **`wp.adminPassword`** | 浏览器会要求重新输入一次管理密码 |
+| 7 | 指纹盐 / 缓存 key 前缀 | `wb2a:` / `wb2a-` | **`wp:` / `wp-`** | 上游把每个账号视为"新设备 / 新缓存"，首次请求冷启动一次（无功能影响） |
+
+升级步骤：
+
+```bash
+# 1) 拉新镜像
+docker pull ghcr.io/workpuppy/workpuppy:latest
+
+# 2) 改 compose / 启动参数：WB2A_* → WP_*，容器名 workbuddy2api → wp
+sed -i 's/WB2A_/WP_/g' docker-compose.yml
+
+# 3) 重建容器
+docker rm -f workbuddy2api && docker compose up -d
+
+# 4) 确认存活与鉴权（service 字段现在是 "wp"）
+docker logs wp | grep -E '配置来源|listening'
+curl -s http://127.0.0.1:7863/healthz
+```
+
+> 配置文件本身**不需要改**：`config.json` 的键名没变，`config.default.json` 仍是默认值来源。
 
 ---
 
@@ -400,21 +436,21 @@ curl -s -X POST http://127.0.0.1:7863/admin/accounts/checkin -H "Authorization: 
 
 ---
 
-## 命令行客户端 wbctl
+## 命令行客户端 wpctl
 
 ```bash
-go build -o wbctl ./cmd/wbctl
+go build -o wpctl ./cmd/wpctl
 export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
 
-./wbctl accounts                 # 账号清单（-json 出原始 JSON）
-./wbctl account <uid>            # 单账号详情
-./wbctl checkin [uid]            # 签到（省略 uid = 全部）
-./wbctl disable <uid> [原因]     # 摘除流量
-./wbctl enable <uid>             # 解除手动停用
-./wbctl revive <uid>             # 解除自动禁用
-./wbctl models                   # 模型中心
-./wbctl chat --model <m> "…"     # 试跑
-./wbctl login --realm cn         # 扫码加号
+./wpctl accounts                 # 账号清单（-json 出原始 JSON）
+./wpctl account <uid>            # 单账号详情
+./wpctl checkin [uid]            # 签到（省略 uid = 全部）
+./wpctl disable <uid> [原因]     # 摘除流量
+./wpctl enable <uid>             # 解除手动停用
+./wpctl revive <uid>             # 解除自动禁用
+./wpctl models                   # 模型中心
+./wpctl chat --model <m> "…"     # 试跑
+./wpctl login --realm cn         # 扫码加号
 ```
 
 其他辅助命令：`./signin.sh`（批量签到）、`./credit.sh`（积分日报）、`./trial.sh`（国际版激活）、
@@ -432,7 +468,7 @@ export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ 
 | 账号之间 | `spread_window`（默认 15m） | 每个账号的时刻 = 时点 + `uniform(0, 窗口)`，按延迟升序执行，账号与时刻的对应关系再洗牌 |
 | 账号之内 | `intra_request_jitter_min/max`（默认 1s–3s） | 同一账号的连续请求之间随机等待（签到「刷新 → 签到 → 查余额」等） |
 
-- **手动触发不摊开**：后台「全部签到」/`signin.sh`/`wbctl checkin` 立即执行（用户在等结果），
+- **手动触发不摊开**：后台「全部签到」/`signin.sh`/`wpctl checkin` 立即执行（用户在等结果），
   只保留账号内随机间隔。
 - 脚本类任务（开学季、夜猫子）在定时触发时**逐账号起子进程**，各落在自己的时刻。
 - 机器睡眠/关机跨过的槽位会在 `catchup_window` 内补跑；更老的槽位直接放弃（不重放一周）。
@@ -475,7 +511,7 @@ flowchart LR
 
 ```
 cmd/server/          网关主程序（HTTP + 调度 + 管理面 + 内嵌后台）
-cmd/wbctl/           命令行客户端
+cmd/wpctl/           命令行客户端
 cmd/login|signin|credit|trial|acct|stats|activity|taskrunner|school/   辅助二进制
 internal/server/     HTTP handler、管理面、冷却/风控、指标
 internal/pool/       账号池：选号、熔断、冷却、状态快照

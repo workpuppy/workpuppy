@@ -1,7 +1,7 @@
 // admin_panel.go 管理面（REST）：账号管理、扫码加号、模型中心、聊天测试台。
 //
 // 定位：这是「原 Python 面板那些必须联网/必须看状态的能力」在 Go 侧的最小实现，
-// 刻意只做 REST + CLI（`cmd/wbctl`），不带 Web UI。
+// 刻意只做 REST + CLI（`cmd/wpctl`），不带 Web UI。
 //
 // 设计约束（与本服务既有约定一致）：
 //   - 全部端点挂在 `admin.enabled` 开关下，未开启时**根本不注册**（不是 403）——

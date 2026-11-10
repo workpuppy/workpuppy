@@ -33,7 +33,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/wp ./cmd/server \
  && go build -trimpath -ldflags="-s -w" -o /out/activity_bin ./cmd/activity \
  && go build -trimpath -ldflags="-s -w" -o /out/task_runner ./cmd/taskrunner \
  && go build -trimpath -ldflags="-s -w" -o /out/school_bin ./cmd/school \
- && go build -trimpath -ldflags="-s -w" -o /out/wbctl ./cmd/wbctl
+ && go build -trimpath -ldflags="-s -w" -o /out/wpctl ./cmd/wpctl
 
 FROM alpine:3.20
 # Alpine 官方 CDN 在国内经常超时。构建参数可覆盖：
@@ -58,7 +58,7 @@ COPY --from=build /out/trial_bin /app/trial_bin
 COPY --from=build /out/activity_bin /app/activity_bin
 COPY --from=build /out/task_runner /app/task_runner
 COPY --from=build /out/school_bin /app/school_bin
-COPY --from=build /out/wbctl /app/wbctl
+COPY --from=build /out/wpctl /app/wpctl
 COPY login.sh signin.sh credit.sh trial.sh /app/
 RUN sed -i 's/\r$//' /app/*.sh && chmod 755 /app/*.sh
 # 镜像不带真实配置：落 example 作为默认（生产由挂载卷 /app/config.json 覆盖）
