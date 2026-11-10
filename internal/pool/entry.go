@@ -61,12 +61,17 @@ type Status struct {
 	// 零值也显式写出（运维口径，同 consecutive_fails：缺失会让人误以为"没记录"）。
 	ManualDisabled bool `json:"manual_disabled"`
 	// Resting 休养中：不接下游流量，但签到/上报/旅行/保活照跑（与 manual_disabled 独立）。
-	Resting         bool      `json:"resting"`
-	ManualReason    string    `json:"manual_reason,omitempty"` // 仅手动停用：停用原因（运维可见）
-	SuccessCount    int64     `json:"success_count,omitempty"`
-	ErrTotal        int64     `json:"err_total,omitempty"`
-	LastSuccessTime time.Time `json:"last_success,omitempty"`
-	LastErrTime     time.Time `json:"last_err,omitempty"`
+	Resting bool `json:"resting"`
+	// CheckedInToday 今天（CST）是否已签到——「一键签到」据此自动跳过。
+	CheckedInToday    bool      `json:"checked_in_today"`
+	LastCheckinDay    string    `json:"last_checkin_day,omitempty"`
+	LastCheckinStatus string    `json:"last_checkin_status,omitempty"`
+	LastCheckinAt     time.Time `json:"last_checkin_at,omitempty"`
+	ManualReason      string    `json:"manual_reason,omitempty"` // 仅手动停用：停用原因（运维可见）
+	SuccessCount      int64     `json:"success_count,omitempty"`
+	ErrTotal          int64     `json:"err_total,omitempty"`
+	LastSuccessTime   time.Time `json:"last_success,omitempty"`
+	LastErrTime       time.Time `json:"last_err,omitempty"`
 	// ConsecutiveFails 连续失败计数（连败降权用，见 entry.consecutiveFails）。
 	// 零值也透出（运维口径：与 err_total/session_dead_fails 一致，零值缺失会让人
 	// 误以为"没记录"，实际是零值被 omitempty 省略）。
@@ -133,9 +138,15 @@ type entry struct {
 	// resting 运维「休养」开关：与 manualDisabled **并列独立**。
 	// 语义：不参与下游选号（不接对话流量），但账号完全正常 —— 签到 / 活跃上报 /
 	// 猫猫旅行 / token 保活照跑，凭证与积分都是活的。
-	resting      bool
-	manualReason string
-	lastUsed     time.Time // 最近被选中时刻（防并发撞号）
+	resting bool
+	// lastCheckinDay 最近一次签到成功的自然日（CST，yyyy-mm-dd）。
+	// 用途：①「一键签到」自动跳过今天已签到的号（不白打上游）；② 后台展示"今天签没签"。
+	// 自动任务与手动补偿共用同一份状态，持久化到 state.json。
+	lastCheckinDay    string
+	lastCheckinStatus string    // ok / already / fail
+	lastCheckinAt     time.Time // 最近一次签到动作时刻
+	manualReason      string
+	lastUsed          time.Time // 最近被选中时刻（防并发撞号）
 	// usedSeq 单调递增的选中序号：每次被 pick 选中时取 p.pickSeq 自增值。
 	// Windows 等平台 time.Now() 精度有限（~0.5ms），高并发/快速连续选号时多个
 	// 账号 lastUsed 完全相等，基于 wall-clock 的 LRU/防惊群判定失效（高并发/低精度时钟下：
@@ -362,11 +373,15 @@ type stateAccount struct {
 	// 入口化后无需再碰文件）。零值也显式写出（运维口径，同 err_total 注释）。
 	ManualDisabled bool `json:"manual_disabled"`
 	// Resting 运维「休养」：不接下游流量，自动任务照跑（与 manual_disabled 并列独立）。
-	Resting      bool      `json:"resting,omitempty"`
-	ManualReason string    `json:"manual_reason,omitempty"`
-	Until        time.Time `json:"until,omitempty"`
-	CoolKind     CoolKind  `json:"cool_kind"`
-	SuccessCount int64     `json:"success_count,omitempty"`
+	Resting bool `json:"resting,omitempty"`
+	// 签到状态（持久化：重启后「一键签到」仍能跳过今天已签的号）。
+	LastCheckinDay    string    `json:"last_checkin_day,omitempty"`
+	LastCheckinStatus string    `json:"last_checkin_status,omitempty"`
+	LastCheckinAt     time.Time `json:"last_checkin_at,omitempty"`
+	ManualReason      string    `json:"manual_reason,omitempty"`
+	Until             time.Time `json:"until,omitempty"`
+	CoolKind          CoolKind  `json:"cool_kind"`
+	SuccessCount      int64     `json:"success_count,omitempty"`
 	// err_total 累计错误计数。旧版 err_count（连续错误）仍可读：加载时映射到 err_total，
 	// 仅作一次性迁移，不再回写 err_count。
 	// 运维可见的运行态计数（err_total/soft_streak/session_dead_fails/credits_expiring）

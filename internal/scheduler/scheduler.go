@@ -533,6 +533,15 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 			skipN++
 			continue
 		}
+		// 今天已签到成功 → 直接跳过（不白打上游）。手动「一键签到」与自动签到共用此判断。
+		if done, last := s.cfg.Pool.CheckedInToday(st.UID, time.Now()); done {
+			out = append(out, CheckinOutcome{
+				UID: st.UID, Nickname: st.Nickname, Status: CheckinAlready,
+				Detail: "checked_in_today (" + last + ")",
+			})
+			alreadyN++
+			continue
+		}
 		targets = append(targets, target{st: st, a: a})
 	}
 
@@ -643,6 +652,13 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 			alreadyN++
 		default:
 			failCheckinN++
+		}
+		// 记录签到状态（持久化）：成功后一键/自动都会跳过它。
+		switch oc.Status {
+		case CheckinOK, CheckinAlready:
+			s.cfg.Pool.MarkCheckin(st.UID, string(oc.Status), time.Now())
+		case CheckinFail:
+			s.cfg.Pool.MarkCheckin(st.UID, "fail", time.Now())
 		}
 		out = append(out, oc)
 	}

@@ -112,6 +112,65 @@ func (p *Pool) SetManualDisabled(uid string, disabled bool, reason string) (foun
 	return true, true
 }
 
+// checkinDay 返回 t 所属的上游自然日（CST）。签到按自然日重置。
+func checkinDay(t time.Time) string {
+	return t.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02")
+}
+
+// MarkCheckin 记录一次签到结果（持久化）。status: ok / already / fail。
+func (p *Pool) MarkCheckin(uid, status string, at time.Time) {
+	if uid == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.byUID[uid]
+	if !ok {
+		return
+	}
+	e.lastCheckinStatus = status
+	e.lastCheckinAt = at
+	if status == "ok" || status == "already" {
+		e.lastCheckinDay = checkinDay(at)
+	}
+	p.dirty.Store(true)
+}
+
+// CheckedInToday 今天（CST）是否已签到成功；第二个返回值是最近一次的状态。
+func (p *Pool) CheckedInToday(uid string, now time.Time) (bool, string) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	e, ok := p.byUID[uid]
+	if !ok {
+		return false, ""
+	}
+	return e.lastCheckinDay == checkinDay(now), e.lastCheckinStatus
+}
+
+// ClearDisabled 解除**系统自动禁用**（以及手动停用），让账号回到可接流状态。
+//
+// 后台「启用」按钮走这里：以前分成 enable（只清手动停用）与 revive（只清系统禁用）
+// 两个按钮，运维容易困惑——现在合并成一个"让它能用"的动作，禁用原因会随响应返回。
+func (p *Pool) ClearDisabled(uid string) (found, changed bool, wasDisabled bool, reason string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.byUID[uid]
+	if !ok {
+		return false, false, false, ""
+	}
+	wasDisabled = e.disabled
+	reason = e.reason
+	if e.disabled || e.manualDisabled {
+		e.disabled = false
+		e.reason = ""
+		e.manualDisabled = false
+		e.manualReason = ""
+		p.dirty.Store(true)
+		changed = true
+	}
+	return true, changed, wasDisabled, reason
+}
+
 // SetResting 运维「休养」开关：开=不接下游流量（自动任务照跑），关=恢复正常接流。
 //
 // 与 SetManualDisabled 的区别只在语义/展示：manual 是"停用"（可能有问题待处理），
@@ -529,22 +588,26 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 		Credits:    e.credits,
 		// Cooling 口径含连败降权（degradeUntil）：降权期账号不可选，运维在 /status
 		// 应看到它处于非健康态（CoolRemaining 取三截止最远者，与 healthy 或门同口径）。
-		Cooling:          now.Before(e.until) || now.Before(e.breakerUntil) || now.Before(e.degradeUntil) || e.refreshRiskActive(now),
-		Reason:           reason,
-		Disabled:         e.disabled,
-		ManualDisabled:   e.manualDisabled,
-		Resting:          e.resting,
-		SuccessCount:     e.successCount,
-		ErrTotal:         e.errTotal,
-		LastSuccessTime:  e.lastSuccess,
-		LastErrTime:      e.lastErr,
-		ConsecutiveFails: e.consecutiveFails,
-		DegradeUntil:     e.degradeUntil,
-		Until:            e.until,
-		SoftStreak:       e.softStreak,
-		InFlight:         int(e.inFlight.Load()),
-		BreakerFails:     e.fails,
-		BreakerUntil:     e.breakerUntil,
+		Cooling:           now.Before(e.until) || now.Before(e.breakerUntil) || now.Before(e.degradeUntil) || e.refreshRiskActive(now),
+		Reason:            reason,
+		Disabled:          e.disabled,
+		ManualDisabled:    e.manualDisabled,
+		Resting:           e.resting,
+		CheckedInToday:    e.lastCheckinDay == checkinDay(time.Now()),
+		LastCheckinDay:    e.lastCheckinDay,
+		LastCheckinStatus: e.lastCheckinStatus,
+		LastCheckinAt:     e.lastCheckinAt,
+		SuccessCount:      e.successCount,
+		ErrTotal:          e.errTotal,
+		LastSuccessTime:   e.lastSuccess,
+		LastErrTime:       e.lastErr,
+		ConsecutiveFails:  e.consecutiveFails,
+		DegradeUntil:      e.degradeUntil,
+		Until:             e.until,
+		SoftStreak:        e.softStreak,
+		InFlight:          int(e.inFlight.Load()),
+		BreakerFails:      e.fails,
+		BreakerUntil:      e.breakerUntil,
 	}
 	if st.Disabled {
 		// 禁用账号透出禁用原因（运维看不到为什么死）。

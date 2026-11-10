@@ -419,13 +419,3 @@ func TestAdminCheckinAllWithoutScheduler(t *testing.T) {
 		t.Fatalf("未接线应 501，实际 %d body=%s", w.Code, w.Body.String())
 	}
 }
-
-// 单号签到：缺 refreshToken 的账号要明确拒绝（否则用户看到的是上游一句看不懂的报错）。
-func TestAdminCheckinOneWithoutRefreshToken(t *testing.T) {
-	acc := auth.NewFromLogin("888", "", "无刷新令牌", "a8", "", "copilot.tencent.com", "cn", 4102444800)
-	h := newAdminHandler(t, []*auth.Auth{acc}, "")
-	w := adminReq(h, http.MethodPost, "/admin/accounts/888/checkin", strings.NewReader("{}"))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("缺 refreshToken 应 400，实际 %d body=%s", w.Code, w.Body.String())
-	}
-}

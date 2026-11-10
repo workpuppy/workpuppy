@@ -314,7 +314,6 @@ async function loadAccounts() {
 
     const rows = state.accounts.map((a) => {
       const ops = el('td', { class: 'text-end text-nowrap' }, [
-        actionBtn('签到', 'primary', a.uid, 'checkin', !a.checkinable),
         a.manual_disabled
           ? actionBtn('启用', 'success', a.uid, 'enable')
           : actionBtn('停用', 'secondary', a.uid, 'disable', a.disabled || !a.in_pool),
@@ -322,13 +321,19 @@ async function loadAccounts() {
           ? actionBtn('恢复', 'outline-success', a.uid, 'unrest')
           : actionBtn('休养', 'outline-secondary', a.uid, 'rest', a.disabled || !a.in_pool),
 
-        actionBtn('复活', 'danger', a.uid, 'revive', !a.disabled),
       ]);
       return el('tr', {}, [
         el('td', { class: 'font-monospace small', text: a.uid }),
         el('td', { text: a.nickname || '–' }),
         el('td', { text: a.realm || '–' }),
-        el('td', {}, [statusBadge(a)]),
+        el('td', {}, [
+          statusBadge(a),
+          a.checked_in_today ? el('span', {
+            class: 'badge text-bg-success-subtle text-success-emphasis ms-1',
+            text: '今日已签',
+            title: a.last_checkin_status ? '最近一次：' + a.last_checkin_status : '',
+          }) : null,
+        ].filter(Boolean)),
         el('td', { class: 'text-end', text: fmtNum(a.credits) }),
         el('td', { class: 'text-end', text: fmtNum(a.in_flight) }),
         el('td', { class: 'small text-body-secondary', text: credentialText(a) }),
@@ -344,11 +349,7 @@ async function loadAccounts() {
 
 async function doAccountAction(uid, action) {
   try {
-    if (action === 'checkin') {
-      const r = await api('/admin/accounts/' + encodeURIComponent(uid) + '/checkin', { method: 'POST', body: {} });
-      const credit = r.credits !== undefined ? '，积分 ' + fmtNum(r.credits) : '';
-      toast(uid + ' 签到 ' + (r.status || 'ok') + credit, 'success');
-    } else if (action === 'rest') {
+    if (action === 'rest') {
       await api('/admin/accounts/' + encodeURIComponent(uid) + '/rest', { method: 'POST', body: {} });
       toast(uid + ' 已进入休养：不接下游流量，签到/上报/旅行/保活照跑', 'success');
     } else if (action === 'unrest') {
@@ -362,9 +363,6 @@ async function doAccountAction(uid, action) {
     } else if (action === 'enable') {
       await api('/admin/accounts/' + encodeURIComponent(uid) + '/enable', { method: 'POST', body: {} });
       toast(uid + ' 已启用', 'success');
-    } else if (action === 'revive') {
-      await api('/admin/accounts/' + encodeURIComponent(uid) + '/revive', { method: 'POST', body: {} });
-      toast(uid + ' 已复活（若仍被禁用说明是封号，复活不生效）', 'success');
     }
     loadAccounts();
   } catch (e) {
@@ -377,14 +375,16 @@ async function checkinAll() {
   btn.disabled = true;
   btn.textContent = '签到中…';
   try {
+    // 服务端会跳过"今天已签到成功"的账号（状态持久化在 state.json），重复点不会白打上游。
     const r = await api('/admin/accounts/checkin', { method: 'POST', body: {} });
-    toast('签到完成：成功 ' + r.ok + ' / 已签 ' + r.already + ' / 失败 ' + r.fail + ' / 跳过 ' + r.skipped, 'success');
+    toast('一键签到完成：成功 ' + (r.ok || 0) + ' / 今日已签跳过 ' + (r.already || 0) +
+      ' / 失败 ' + (r.fail || 0) + ' / 其它跳过 ' + (r.skipped || 0), r.fail ? 'warning' : 'success');
     loadAccounts();
   } catch (e) {
     toast(String(e.message || e), 'danger');
   } finally {
     btn.disabled = false;
-    btn.textContent = '全部签到';
+    btn.textContent = '一键签到';
   }
 }
 
@@ -729,6 +729,38 @@ function bind() {
     }
   });
 
+  if ($('#btnTravelRun')) {
+    $('#btnTravelRun').addEventListener('click', async () => {
+      const btn = $('#btnTravelRun');
+      btn.disabled = true;
+      try {
+        await api('/admin/travel/run', { method: 'POST', body: {} });
+        toast('已开始一轮猫猫旅行（领养/派出/领奖），稍后刷新看结果', 'success');
+      } catch (e) {
+        toast(String(e.message || e), 'danger');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+  if ($('#btnRefreshBalances')) {
+    $('#btnRefreshBalances').addEventListener('click', async () => {
+      const btn = $('#btnRefreshBalances');
+      btn.disabled = true;
+      btn.textContent = '刷新中…';
+      try {
+        const r = await api('/admin/accounts/refresh', { method: 'POST', body: {} });
+        toast('余额刷新：成功 ' + (r.ok || 0) + ' / 跳过 ' + (r.skipped || 0) +
+          ' / 失败 ' + (r.fail || 0), r.fail ? 'warning' : 'success');
+        loadAccounts();
+      } catch (e) {
+        toast(String(e.message || e), 'danger');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '刷新余额';
+      }
+    });
+  }
   $('#btnLogout').addEventListener('click', logout);
   if ($('#btnCreditRefresh')) $('#btnCreditRefresh').addEventListener('click', loadCredits);
 

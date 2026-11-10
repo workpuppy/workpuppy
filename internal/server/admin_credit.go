@@ -57,7 +57,7 @@ func (h *Handler) setResting(w http.ResponseWriter, r *http.Request, on bool) {
 	}
 	found, changed := h.cfg.Pool.SetResting(uid, on)
 	if !found {
-		writeOpenAIError(w, http.StatusNotFound, "account_not_found", "账号不存在："+uid)
+		writeOpenAIError(w, http.StatusNotFound, "not_found", "account not found: "+uid)
 		return
 	}
 	resting, _ := h.cfg.Pool.RestingState(uid)

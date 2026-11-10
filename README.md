@@ -367,7 +367,7 @@ docker logs wp | grep 登录密码
 | 页面 | 能做什么 |
 |---|---|
 | 概览 | 账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + **积分日账本**（今日赚/花/调整/净 + 近 30 天）+ 原始状态 JSON |
-| 账号 | 列表（状态、积分、在途、凭证有效期、线路、权重）+ 单号签到 / 停用 / 启用 / 复活 / **休养** / 全部签到 |
+| 账号 | 顶部三个动作：**一键签到**（跳过今天已签）/ **一键猫猫旅行**（补自动任务）/ **刷新余额**（上游只读）；列表（状态、今日已签、积分、在途、凭证、线路、权重）+ 行内 停用 / 启用 / 休养 |
 | 模型 | 模型中心：描述、上下文、最大输出、思考档位、积分倍率、能力标记 |
 | 测试台 | 选模型 → 填提示词 → 流式或非流式试跑（复用 `/v1` 整条链路） |
 | 扫码加号 | 选域名 → 拿授权链接 → **页面直接显示二维码 + 有效期倒计时**（也可复制链接）→ 轮询 → 账号自动落盘并进入池；过期后链接打删除线、二维码盖「已失效」遮罩 |
@@ -390,13 +390,13 @@ docker logs wp | grep 登录密码
 |---|---|---|
 | `POST` | `/admin/login` | 验密码：`{"password":"…"}` → `{"ok":true}`；401 / 429 / 503 |
 | `GET` | `/admin/status` | 与 `/status` 同形，但走管理凭据 |
+| `POST` | `/admin/accounts/refresh` | **刷新余额**：逐账号打上游只读 `billing` 接口回写积分（导入的号首次刷新后才有值）；串行 + 间隔，单飞防重入 |
+| `POST` | `/admin/travel/run` | **一键猫猫旅行**：手动补一次自动计划任务（领养 / 派出 / 领奖），异步执行回 202 |
 | `GET` | `/admin/accounts` | 账号清单：池运行态 + 凭证元信息（含未入池的账号文件） |
 | `GET` | `/admin/accounts/{uid}` | 单账号详情 |
-| `POST` | `/admin/accounts/checkin` | 全部签到（与调度器共享单飞锁，忙时 409） |
-| `POST` | `/admin/accounts/{uid}/checkin` | 单号签到（幂等，今天已签回 `already`） |
+| `POST` | `/admin/accounts/checkin` | **一键签到**：自动跳过今天已签到的账号（签到状态持久化在 `state.json`），与调度器共享单飞锁，忙时 409 |
 | `POST` | `/admin/accounts/{uid}/disable` | 摘除对话流量（签到/保活照常），可带 `{"reason":"…"}` |
-| `POST` | `/admin/accounts/{uid}/enable` | 解除手动停用 |
-| `POST` | `/admin/accounts/{uid}/revive` | 解除系统自动禁用（封号救不回，响应里会如实标） |
+| `POST` | `/admin/accounts/{uid}/enable` | **启用**：同时解除手动停用与系统自动禁用（原 `revive` 已并入），响应里如实带原禁用原因 |
 | `POST` | `/admin/accounts/{uid}/rest` | **休养**：不接下游流量，但签到 / 活跃上报 / 旅行 / 保活照跑（凭证与积分都是活的）；持久化，重启保留 |
 | `POST` | `/admin/accounts/{uid}/unrest` | 解除休养，恢复接流 |
 | `GET` | `/admin/credit-daily` | 积分日账本：`totals`/`accounts` 是**当日内存热值**，`histories` 是落盘的每日汇总（保留 30 天，每账号 `earned/spent/adjust/credits_end`）；`?days=N` 控制历史条数 |
@@ -421,10 +421,11 @@ export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ 
 
 ./wpctl accounts                 # 账号清单（-json 出原始 JSON）
 ./wpctl account <uid>            # 单账号详情
-./wpctl checkin [uid]            # 签到（省略 uid = 全部）
+./wpctl checkin                  # 一键签到（自动跳过今天已签的）
 ./wpctl disable <uid> [原因]     # 摘除流量
 ./wpctl enable <uid>             # 解除手动停用
-./wpctl revive <uid>             # 解除自动禁用
+./wpctl travel                   # 一键猫猫旅行（领养/派出/领奖）
+./wpctl refresh                  # 刷新所有账号余额（上游只读）
 ./wpctl rest <uid>               # 休养：不接下游流量，自动任务照跑
 ./wpctl unrest <uid>             # 解除休养
 ./wpctl credits [天数]           # 积分日账本（默认 7 天）

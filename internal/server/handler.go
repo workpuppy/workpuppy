@@ -253,7 +253,6 @@ func NewHandler(cfg Config) *Handler {
 		h.mux.HandleFunc("GET /admin/status", h.withAdminAuth(h.adminStatus))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/disable", h.withAdminAuth(h.adminAccountDisable))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/enable", h.withAdminAuth(h.adminAccountEnable))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/revive", h.withAdminAuth(h.adminAccountRevive))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk", h.withAdminAuth(h.adminRefreshRisk))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/clear", h.withAdminAuth(h.adminClearRefreshRisk))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/success", h.withAdminAuth(h.adminRefreshRiskSuccess))
@@ -262,7 +261,6 @@ func NewHandler(cfg Config) *Handler {
 		h.mux.HandleFunc("GET /admin/accounts", h.withAdminAuth(h.adminAccounts))
 		h.mux.HandleFunc("GET /admin/accounts/{uid}", h.withAdminAuth(h.adminAccountDetail))
 		h.mux.HandleFunc("POST /admin/accounts/checkin", h.withAdminAuth(h.adminCheckinAll))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/checkin", h.withAdminAuth(h.adminCheckinOne))
 		h.mux.HandleFunc("POST /admin/auth/start", h.withAdminAuth(h.adminAuthStart))
 		h.mux.HandleFunc("GET /admin/auth/poll", h.withAdminAuth(h.adminAuthPoll))
 		// 二维码：扫码加号把 auth_url 渲成 PNG（前端 fetch 带凭据取 blob，见 app.js renderQR）。
@@ -270,6 +268,8 @@ func NewHandler(cfg Config) *Handler {
 		// 积分日账本：当日取内存热值，历史取落盘的每日汇总（保留 30 天）。
 		h.mux.HandleFunc("GET /admin/credit-daily", h.withAdminAuth(h.adminCreditDaily))
 		// 休养开关：不接下游流量，签到/上报/旅行/保活照跑。
+		h.mux.HandleFunc("POST /admin/accounts/refresh", h.withAdminAuth(h.adminRefreshBalances))
+		h.mux.HandleFunc("POST /admin/travel/run", h.withAdminAuth(h.adminTravelRun))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/rest", h.withAdminAuth(h.adminAccountRest))
 		h.mux.HandleFunc("POST /admin/accounts/{uid}/unrest", h.withAdminAuth(h.adminAccountUnrest))
 		h.mux.HandleFunc("GET /admin/models", h.withAdminAuth(h.adminModels))

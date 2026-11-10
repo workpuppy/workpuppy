@@ -199,44 +199,41 @@ func TestAdminIdempotent(t *testing.T) {
 }
 
 // TestAdminOrthogonalSemantics enable 不解除自动禁用；revive 不解除手动停用。
-func TestAdminOrthogonalSemantics(t *testing.T) {
+func TestAdminEnableClearsBothDisables(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
-	// 造出自动禁用
+	// 制造系统自动禁用
 	p.NoteSessionDead("u1")
 	p.NoteSessionDead("u1")
 	p.NoteSessionDead("u1")
 	if st, _ := p.Status("u1"); !st.Disabled {
-		t.Fatal("precondition: 应已自动禁用")
+		t.Fatal("precondition: 应被自动禁用")
 	}
 
-	// enable（解手动位）对自动禁用无效：账号仍不可选，但响应要如实透出 disabled
+	// 「启用」= 让这个号重新可用：同时解除系统自动禁用（原 revive 语义已并入）
 	_, out := doAdmin(t, h, "POST", "/admin/accounts/u1/enable", "")
-	if !out.Disabled {
-		t.Error("enable 后响应应如实透出 disabled=true（面板据此提示还需 revive）")
+	if out.Disabled {
+		t.Error("enable 后不应再是 disabled")
 	}
-	if got := p.Pick(""); got != nil {
-		t.Fatalf("自动禁用仍在，不应可选, got %+v", got)
-	}
-
-	// revive 解自动禁用
-	_, out = doAdmin(t, h, "POST", "/admin/accounts/u1/revive", "")
-	if out.Disabled || !out.Changed {
-		t.Fatalf("revive 响应 = %+v", out)
+	if !out.Changed {
+		t.Error("enable 应 changed=true")
 	}
 	if got := p.Pick(""); got == nil {
-		t.Fatal("revive 后应回池")
+		t.Fatal("启用后应恢复可选")
 	}
 
-	// 反过来：revive 不解除手动停用
-	p.SetManualDisabled("u1", true, "运维摘除")
-	_, out = doAdmin(t, h, "POST", "/admin/accounts/u1/revive", "")
-	if !out.ManualDisabled {
-		t.Error("revive 不应解除手动停用")
+	// 手动停用 + 系统禁用同时存在时，一次 enable 全部清掉
+	p.SetManualDisabled("u1", true, "运维摘流量")
+	p.NoteSessionDead("u1")
+	p.NoteSessionDead("u1")
+	p.NoteSessionDead("u1")
+	_, out = doAdmin(t, h, "POST", "/admin/accounts/u1/enable", "")
+	if out.ManualDisabled || out.Disabled {
+		t.Fatalf("enable 应同时清两种禁用：%+v", out)
 	}
-	if got := p.Pick(""); got != nil {
-		t.Fatalf("手动位仍在，不应可选, got %+v", got)
+	if got := p.Pick(""); got == nil {
+		t.Fatal("两种禁用都清掉后应可选")
 	}
 }
 
@@ -245,7 +242,7 @@ func TestAdminUnknownUID(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
-	for _, op := range []string{"disable", "enable", "revive"} {
+	for _, op := range []string{"disable", "enable", "rest"} {
 		rec, _ := doAdmin(t, h, "POST", "/admin/accounts/nope/"+op, "")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s unknown uid: code=%d want 404", op, rec.Code)

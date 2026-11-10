@@ -87,6 +87,10 @@ func main() {
 		err = c.cmdModels(*asJSON)
 	case "chat":
 		err = c.cmdChat(args[1:])
+	case "travel":
+		err = c.cmdTravel()
+	case "refresh":
+		err = c.cmdRefreshBalances(*asJSON)
 	case "rest":
 		if len(args) < 2 {
 			fatalf("rest 需要 uid")
@@ -109,11 +113,6 @@ func main() {
 			fatalf("enable 需要 uid")
 		}
 		err = c.cmdManual(args[1], "enable", "")
-	case "revive":
-		if len(args) < 2 {
-			fatalf("revive 需要 uid")
-		}
-		err = c.cmdManual(args[1], "revive", "")
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -660,6 +659,48 @@ func (c *client) cmdCredits(args []string, asJSON bool) error {
 	for _, h := range d.Histories {
 		fmt.Printf("  %s  赚 %6d  花 %6d  调整 %5d  净 %6d  账号 %d\n",
 			h.Date, h.Totals.Earned, h.Totals.Spent, h.Totals.Adjust, h.Totals.Net, len(h.Accounts))
+	}
+	return nil
+}
+
+// cmdTravel 手动补一次猫猫旅行巡检（领养/派出/领奖），异步执行。
+func (c *client) cmdTravel() error {
+	raw, err := c.do(http.MethodPost, "/admin/travel/run", nil)
+	if err != nil {
+		return err
+	}
+	fmt.Println(strings.TrimSpace(string(raw)))
+	return nil
+}
+
+// cmdRefreshBalances 批量刷新余额（只读），把导入后 credits 为 0 的号补上真实值。
+func (c *client) cmdRefreshBalances(asJSON bool) error {
+	raw, err := c.do(http.MethodPost, "/admin/accounts/refresh", nil)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		fmt.Println(strings.TrimSpace(string(raw)))
+		return nil
+	}
+	var out struct {
+		OK, Skipped, Fail, Total int
+		Accounts                 []struct {
+			UID, Status string
+			Credits     *int64
+		}
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		fmt.Println(strings.TrimSpace(string(raw)))
+		return nil
+	}
+	fmt.Printf("刷新余额：成功 %d / 跳过 %d / 失败 %d（共 %d）\n", out.OK, out.Skipped, out.Fail, out.Total)
+	for _, a := range out.Accounts {
+		cur := "-"
+		if a.Credits != nil {
+			cur = fmt.Sprint(*a.Credits)
+		}
+		fmt.Printf("  %-12s %-8s %s\n", a.UID, a.Status, cur)
 	}
 	return nil
 }

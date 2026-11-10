@@ -134,8 +134,10 @@
     <!-- 账号 -->
     <section id="view-accounts" hidden>
       <div class="d-flex flex-wrap gap-2 mb-3">
-        <button class="btn btn-primary btn-sm" id="btnCheckinAll">全部签到</button>
-        <button class="btn btn-outline-secondary btn-sm" id="btnRefreshAccounts">刷新</button>
+        <button class="btn btn-primary btn-sm" id="btnCheckinAll" title="自动跳过今天已签到的账号">一键签到</button>
+        <button class="btn btn-outline-primary btn-sm" id="btnTravelRun" title="手动补一次自动计划任务：领养 / 派出 / 领奖">一键猫猫旅行</button>
+        <button class="btn btn-outline-secondary btn-sm" id="btnRefreshBalances" title="向各账号上游拉一次只读余额（导入的号刷新后才有积分）">刷新余额</button>
+        <button class="btn btn-outline-secondary btn-sm" id="btnRefreshAccounts">刷新列表</button>
         <span class="ms-auto small text-body-secondary align-self-center" id="accountsHint"></span>
       </div>
       <div class="card">
@@ -144,7 +146,7 @@
             <thead class="table-light">
               <tr>
                 <th>UID</th><th>昵称</th><th>版本</th><th>状态</th>
-                <th class="text-end">积分</th><th class="text-end">在途</th>
+                <th class="text-end">积分</th><th class="text-end" title="当前正在处理的请求数（并发占用），不是历史请求量">在途</th>
                 <th>凭证</th><th>线路/权重</th><th class="text-end">操作</th>
               </tr>
             </thead>

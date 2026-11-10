@@ -96,25 +96,11 @@ func (h *Handler) adminAccountEnable(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusNotFound, "not_found", "account not found: "+uid)
 		return
 	}
-	stopped, reason, _ := h.cfg.Pool.ManualDisabledState(uid)
-	writeJSON(w, http.StatusOK, adminState{
-		UID: uid, ManualDisabled: stopped, ManualReason: reason,
-		Disabled: h.accountAutoDisabled(uid), Changed: changed,
-	})
-}
-
-// adminAccountRevive 解除系统自动禁用（清 disabled + reason + 连续 12153 计数）。
-// 不碰手动停用位：运维明确摘除的号不应被一次 revive 悄悄放回选号池。
-func (h *Handler) adminAccountRevive(w http.ResponseWriter, r *http.Request) {
-	uid, ok := adminUID(w, r)
-	if !ok {
-		return
+	// 「启用」= 让这个号重新可用：顺手清掉系统自动禁用（连续 12153 session dead 计数一并清零）。
+	// 以前拆成 enable / revive 两个按钮，运维要在"停用/封号"两种禁用之间猜——现在一个动作。
+	if h.cfg.Pool.ReviveDisabled(uid) {
+		changed = true
 	}
-	if _, _, found := h.cfg.Pool.ManualDisabledState(uid); !found {
-		writeOpenAIError(w, http.StatusNotFound, "not_found", "account not found: "+uid)
-		return
-	}
-	changed := h.cfg.Pool.ReviveDisabled(uid)
 	stopped, reason, _ := h.cfg.Pool.ManualDisabledState(uid)
 	writeJSON(w, http.StatusOK, adminState{
 		UID: uid, ManualDisabled: stopped, ManualReason: reason,

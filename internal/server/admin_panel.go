@@ -27,7 +27,6 @@ import (
 	"wp/internal/auth"
 	"wp/internal/loginsvc"
 	"wp/internal/pool"
-	"wp/internal/upstream"
 )
 
 // uidPattern auth 文件名里的 uid 白名单：uid 会直接拼进文件名，不校验等于开放
@@ -197,50 +196,6 @@ func (h *Handler) adminCheckinAll(w http.ResponseWriter, r *http.Request) {
 		"ok": okN, "already": alreadyN, "fail": failN, "skipped": skipN,
 		"total": len(outcomes), "outcomes": outcomes,
 	})
-}
-
-// adminCheckinOne POST /admin/accounts/{uid}/checkin —— 单账号签到（顺带回填积分）。
-//
-// 与批量签到的差别只在「只打一个号」，用的是同一个上游端点（upstream.DailyCheckin）
-// 与同一套幂等判定（IsAlreadyCheckin → already，不是失败）。
-func (h *Handler) adminCheckinOne(w http.ResponseWriter, r *http.Request) {
-	uid := strings.TrimSpace(r.PathValue("uid"))
-	if uid == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request", "uid is required")
-		return
-	}
-	a := h.cfg.Pool.AuthByUID(uid)
-	if a == nil {
-		writeOpenAIError(w, http.StatusNotFound, "not_found", "account not found: "+uid)
-		return
-	}
-	if strings.TrimSpace(a.RefreshTokenValue()) == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request",
-			"该账号没有 refreshToken，请重新扫码登录")
-		return
-	}
-	resp := map[string]any{"uid": uid, "nickname": a.Nickname}
-	if err := h.cfg.Upstream.DailyCheckin(a); err != nil {
-		if upstream.IsAlreadyCheckin(err) {
-			resp["status"] = "already"
-		} else {
-			resp["status"] = "fail"
-			resp["detail"] = err.Error()
-			writeJSON(w, http.StatusBadGateway, resp)
-			return
-		}
-	} else {
-		resp["status"] = "ok"
-	}
-	// 签到顺带查余额并回填池：CLI/GUI 都靠这一步「签完立刻看到积分」。
-	if remain, err := h.cfg.Upstream.UserResource(a); err == nil {
-		h.cfg.Pool.SetCredits(uid, remain)
-		h.cfg.Pool.ReenableIfCredits(uid, remain)
-		resp["credits"] = remain
-	} else {
-		resp["credits_error"] = err.Error()
-	}
-	writeJSON(w, http.StatusOK, resp)
 }
 
 // adminAuthStart POST /admin/auth/start —— 申请一张扫码登录二维码。
