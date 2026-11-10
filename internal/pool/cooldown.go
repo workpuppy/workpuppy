@@ -16,29 +16,42 @@ import (
 // （scheduler.go 签到时调用），本入口无生产调用方。保留是因为它是「总量更新」
 // 与「总量+分桶更新」的语义对照锚点（删掉则 expiring 的向后兼容行为失去断言）。
 func (p *Pool) SetCredits(uid string, credits int64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if e, ok := p.byUID[uid]; ok {
-		e.credits = credits
-		p.dirty.Store(true)
-	}
+	p.setCredits(uid, credits, nil) // nil = 不动快过架子集
 }
 
 // SetCreditsDetailed 更新账号余额总量 + 快过架子集（签到时调用，供优先消耗快过期积分）。
 // expiring 会被钳到 [0, credits]：上游分桶异常时不污染权重。
 func (p *Pool) SetCreditsDetailed(uid string, credits, expiring int64) {
+	p.setCredits(uid, credits, &expiring)
+}
+
+// setCredits 内部实现：expiring==nil 表示"保持原值"。写回后把
+// ①余额变化（>0 赚 / <0 调整）②当前余额 上报给积分日账本（creditledger）。
+func (p *Pool) setCredits(uid string, credits int64, expiring *int64) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	var delta, balance int64
+	var realm string
 	if e, ok := p.byUID[uid]; ok {
-		if expiring < 0 {
-			expiring = 0
-		}
-		if expiring > credits {
-			expiring = credits
+		prev := e.credits
+		if expiring != nil {
+			v := *expiring
+			if v < 0 {
+				v = 0
+			}
+			if v > credits {
+				v = credits
+			}
+			e.creditsExpiring = v
 		}
 		e.credits = credits
-		e.creditsExpiring = expiring
 		p.dirty.Store(true)
+		delta = credits - prev
+		balance = credits
+		realm = e.a.Realm()
+	}
+	p.mu.Unlock()
+	if balance != 0 || delta != 0 {
+		emitCredit(uid, realm, delta, 0, balance)
 	}
 }
 

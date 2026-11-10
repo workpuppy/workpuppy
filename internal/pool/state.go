@@ -209,6 +209,7 @@ func (p *Pool) NoteModelCost(uid, model string, credit float64, tokens int) {
 	// 高权重直到打空撞 402；global 账号不签到，credits 曾是终身冻结。
 	// 签到仍定期覆盖（ReenableIfCredits/SetCreditsDetailed 以 authoritative 余额
 	// 重置），扣减只是两次签到之间的内插估计；credit=0（免费请求）不动余额。
+	creditsBeforeEmit := e.credits
 	if credit > 0 {
 		d := int64(credit + 0.5) // 四舍五入，与测试口径一致（2.5 → 3）
 		if d > e.credits {
@@ -221,6 +222,9 @@ func (p *Pool) NoteModelCost(uid, model string, credit float64, tokens int) {
 			}
 			e.creditsExpiring -= d
 		}
+	}
+	if spent := creditsBeforeEmit - e.credits; spent > 0 {
+		emitCredit(uid, e.a.Realm(), 0, spent, e.credits)
 	}
 	if e.modelCost == nil {
 		e.modelCost = make(map[string]modelCostEntry)

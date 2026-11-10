@@ -9,6 +9,16 @@ package pool
 
 import "time"
 
+// creditSink 积分流水回调（nil = 不记录）。由 Configure 注入，供日账本统计。
+var creditSink func(uid, realm string, delta, spent, balance int64)
+
+// emitCredit 只在接了回调时上报（热路径上零开销）。
+func emitCredit(uid, realm string, delta, spent, balance int64) {
+	if creditSink != nil {
+		creditSink(uid, realm, delta, spent, balance)
+	}
+}
+
 // Options 池运行期阈值（0 表示"不设置"，由调用方保证传入有效值）。
 type Options struct {
 	MinPickGap           time.Duration // 选号防惊群间隔（跳过刚被选中的号）
@@ -18,6 +28,10 @@ type Options struct {
 	SmoothAlpha          float64       // credits 平滑系数
 	WatchInterval        time.Duration // auths 目录热加载轮询间隔
 	FlushInterval        time.Duration // state.json 落盘间隔
+
+	// CreditSink 积分流水回调（cmd/server 接到 creditledger 日账本）：
+	// delta=余额变化（>0 赚 / <0 调整）、spent=本次请求消耗、balance=当前余额。
+	CreditSink func(uid, realm string, delta, spent, balance int64)
 }
 
 // Configure 用生效配置覆盖包级阈值（cmd/server 启动时调用一次）。
@@ -36,5 +50,8 @@ func Configure(o Options) {
 	}
 	if o.FlushInterval > 0 {
 		flushInterval = o.FlushInterval
+	}
+	if o.CreditSink != nil {
+		creditSink = o.CreditSink
 	}
 }
