@@ -20,7 +20,6 @@
 
 - [特性速览](#特性速览)
 - [快速开始](#快速开始)
-- [从旧版本升级](#从旧版本升级)
 - [配置说明](#配置说明)
 - [客户端接入（/v1）](#客户端接入v1)
 - [Web 管理后台](#web-管理后台)
@@ -101,49 +100,13 @@ docker logs wp | grep 登录密码
 
 ---
 
-## 从旧版本升级
-
-去品牌化（`wb2api`/`workbuddy2api`/`wb2a` → `wp`）带来了**破坏性变更**，老部署必须按下表同步：
-
-| # | 变更 | 旧 | 新 | 影响 |
-|---|---|---|---|---|
-| 1 | 环境变量前缀 | `WB2A_*`（如 `WB2A_API_KEY`） | **`WP_*`**（`WP_API_KEY`） | compose / systemd / 启动脚本里的 env 全部要改；不改则被忽略（回落到配置文件） |
-| 2 | 主程序二进制 | `wb2api` | **`wp`** | 容器内 `/app/wp`；本地 `go build -o wp ./cmd/server` |
-| 3 | 容器名 | `workbuddy2api` | **`wp`** | `docker logs wp`、`docker exec wp …` |
-| 4 | CLI 工具 | `wbctl` | **`wpctl`** | `cmd/wpctl`，用法参数不变 |
-| 5 | `/healthz` 的 `service` 字段 | `workbuddy2api` | **`wp`** | 监控/告警规则里的字符串匹配要同步 |
-| 6 | 管理后台 localStorage 键 | `wb2a.adminPassword` | **`wp.adminPassword`** | 浏览器会要求重新输入一次管理密码 |
-| 7 | 指纹盐 / 缓存 key 前缀 | `wb2a:` / `wb2a-` | **`wp:` / `wp-`** | 上游把每个账号视为"新设备 / 新缓存"，首次请求冷启动一次（无功能影响） |
-
-升级步骤：
-
-```bash
-# 1) 拉新镜像
-docker pull ghcr.io/workpuppy/workpuppy:latest
-
-# 2) 改 compose / 启动参数：WB2A_* → WP_*，容器名 workbuddy2api → wp
-sed -i 's/WB2A_/WP_/g' docker-compose.yml
-
-# 3) 重建容器
-docker rm -f workbuddy2api && docker compose up -d
-
-# 4) 确认存活与鉴权（service 字段现在是 "wp"）
-docker logs wp | grep -E '配置来源|listening'
-curl -s http://127.0.0.1:7863/healthz
-```
-
-> 配置文件本身**不需要改**：`config.json` 的键名没变，`config.default.json` 仍是默认值来源。
-
----
-
 ## 配置说明
 
-> **不保留旧键兼容**：本项目尚未正式上线，配置键按"语义无歧义"直接演进，旧键不再被识别。
-> 写了旧键不会报错，但**启动日志会点名列出来**，避免"以为配了其实没生效"：
+> **写错键名会被点名**：配置里出现 `config.default.json` 中不存在的键（拼错、多打字）不会导致启动失败，
+> 但**启动日志会把它们列出来**，避免"以为配了其实没生效"：
 >
 > ```
-> WARN: 配置里有未知键（会被忽略，多半是拼错或旧版键名）：pool.expiring_soon, schedule.checkin_hours；
->       全部可用键见 config.default.json
+> WARN: 配置里有未知键（会被忽略，多半是拼错）：pool.max_in_flight_glboal；全部可用键见 config.default.json
 > ```
 
 配置模板是 [`config.default.json`](config.default.json)，**它就是全部默认值的权威来源**
@@ -183,7 +146,7 @@ curl -s http://127.0.0.1:7863/healthz
 |---|---|---|
 | `soft_rate` | `"600s"` | 软限流（429）冷却基数，指数退避的起点 |
 | `soft_rate_max` | `"2h"` | 软冷却指数退避封顶 |
-| `credit_exhausted` | `""` | 积分耗尽后的冷却时长（如 `"10m"`）。空 = 旧行为：硬冷却到次日 04:00 等签到恢复 |
+| `credit_exhausted` | `""` | 积分耗尽后的冷却时长（如 `"10m"`）。空 = 冷却到次日 04:00（等签到恢复积分） |
 | `not_found` | `"60s"` | 404 / 未知模型的冷却 |
 | `waf_base` | `"60s"` | WAF 403（风控）冷却基数 |
 | `upstream_restriction` | `"45m"` | 上游限制类错误（地区/权限受限）的冷却 |
@@ -226,10 +189,10 @@ curl -s http://127.0.0.1:7863/healthz
 | `activity_account_delay` | `"800ms"` | 活跃上报相邻账号间隔 |
 | `checkin_retry_delays` | `["5s","15s","60s"]` | 签到瞬时失败（HTTP 5xx / code 10001）的退避序列；`[]` = 不重试 |
 | `checkin_refresh_skew` | `"10m"` | 签到前多久判定 token 将过期并预刷新 |
-| `wakeup_grace` | `"5s"` | 睡眠唤醒后、补跑旧槽位前的网络宽限 |
-| `catchup_window` | `"24h"` | 补跑窗口：早于 `now-窗口` 的旧槽位不再补跑（关机几天不重放） |
-| `account_delay_min_seconds` | `0` | 旧机制：账号间额外抖动下限（秒），叠加在上述基线上 |
-| `account_delay_max_seconds` | `0` | 旧机制：账号间额外抖动上限（秒）；`>0` 时同时把同类任务串行化 |
+| `wakeup_grace` | `"5s"` | 睡眠唤醒后、补跑错过的槽位前的网络宽限 |
+| `catchup_window` | `"24h"` | 补跑窗口：早于 `now-窗口` 的槽位不再补跑（关机几天不重放） |
+| `account_delay_min_seconds` | `0` | 账号间额外抖动下限（秒），叠加在上述基线上 |
+| `account_delay_max_seconds` | `0` | 账号间额外抖动上限（秒）；`>0` 时同时把同类任务串行化 |
 
 ### `admin` —— 管理面
 
@@ -266,7 +229,7 @@ curl -s http://127.0.0.1:7863/healthz
 | `device_token_file` | `""` | device token 文件路径；空 = 不读 |
 | `device_token_ttl` | `"5m"` | 上述文件内容的缓存有效期 |
 | `device_token_max_len` | `1024` | 上述文件的最大字节数（超限忽略，优雅降级） |
-| `client_name` | `"WorkBuddy"` | `X-Product` / `X-IDE-Name` / `X-IDE-Type` 的取值；`"SaaS"` 还原旧行为 |
+| `client_name` | `"WorkBuddy"` | `X-Product` / `X-IDE-Name` / `X-IDE-Type` 的取值；`"SaaS"` = 只发 `X-Product`，不带 `X-IDE-*` |
 | `passthrough_ip` | `false` | 是否把客户端 IP（`X-Forwarded-For` / `X-Real-IP` 首段）透传给上游 |
 | `gzip_body` | `true` | 大请求体是否压缩后上传（省出口带宽） |
 | `gzip_threshold_bytes` | `65536` | 超过该字节数才压缩 |
@@ -593,6 +556,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 | `/status` 回 401 | 正常：数据面要 `api_key`；管理面才用管理密码 |
 | `/healthz` 回 503 | 活着但没有可用账号（0 个账号 / 全部冷却或禁用） |
 | `/admin/*` 回 404 | `admin.enabled=false`，管理面未注册 |
+| 启动日志出现「配置里有未知键」 | 该键名在 `config.default.json` 里不存在（多半拼错/多打字），当前会被忽略；对照默认配置改正即可 |
 | 管理密码忘了 | 只有容器日志里有，重启会换新的：`docker logs <name> \| grep 登录密码` |
 | 签到失败 `code 10001` | 上游短时并发限流：调大 `schedule.checkin_account_delay` / `checkin_retry_delays` |
 | 上游 403 WAF | 降低 `pool.max_in_flight` / `max_in_flight_global`，核对 `upstream.client_*` 指纹，必要时配 `proxies` 出口 |
