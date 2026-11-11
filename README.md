@@ -12,7 +12,7 @@
   镜像里没有 nginx、没有 npm、没有前端构建产物。
 - **一个镜像多架构**：`ghcr.io/workpuppy/workpuppy:latest` 同时含 `linux/amd64` + `linux/arm64`，
   客户端按自己的架构自动选。
-- **默认值只有一处来源**：内嵌的 [`config.default.json`](config.default.json)。
+- **默认值只有一处来源**：内嵌的 [`config.example.json`](config.example.json)。
 
 ---
 
@@ -47,7 +47,7 @@
 | 指纹伪装 | 伪造官方桌面端 UA / `X-IDE-*` 头组，请求体黑名单指纹脱敏，可配出口线路 |
 | 定时积分 | 签到、活跃上报、猫猫旅行、token 保活、开学季、夜猫子六类任务，账号之间随机分布 |
 | 管理后台 | 概览 / 账号 / 模型 / 测试台 / 扫码加号，Tabler（内嵌 Bootstrap 5）+ 原生 JS、无前端构建 |
-| 管理凭据 | 与 `/v1` 的 `api_key` **完全分离**；启动时随机生成密码并打印在终端 |
+| 管理凭据 | 与 `/v1` 的 `api_key` **完全分离**；首次打开页面时由用户设置，密码以加盐 10 轮 SHA256 的哈希存进 `data/config.json` |
 | 观测 | `/status`（给 SDK/监控）、`/healthz` 存活探测、请求指标环形缓冲、可选 Redis 会话镜像 |
 
 ---
@@ -59,7 +59,6 @@
 ```bash
 git clone https://github.com/workpuppy/workpuppy.git
 cd workpuppy
-cp config.default.json config.json     # 见下方「最小可用配置」：其实只需 api_key + admin.enabled
 
 # 两个数据目录必须先建好、并交给容器内的 app(uid 10001)：
 #   - 镜像里虽然已有 /app/auths、/app/data（属主 app:app），但 -v 绑定挂载会**覆盖**它们；
@@ -69,22 +68,20 @@ sudo chown -R 10001:10001 auths data   # macOS / Windows 的 Docker Desktop 不�
 
 docker run -d --name wp -p 7863:7863 \
   -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
-  -v "$PWD/config.json:/app/config.json:ro" \
   ghcr.io/workpuppy/workpuppy:latest
 ```
 
+> **不需要再挂载 `config.json`**：首次启动会自动生成 `data/config.json`（内容 = 镜像里的
+> `config.example.json`），之后用设置页或直接改这个文件即可。升级也不会覆盖它。
+>
 > **不建目录 / 不 chown 会怎样**（Linux rootful Docker）：
 > - `auths/` 不可写 → 扫码加号落盘失败；token 刷新成功但**回写失败**（重启后还在用旧 token）；
-> - `data/` 不可写 → 日志持续刷 `state.json 落盘失败`、`credit-daily 落盘失败`，积分/签到/禁用状态重启即丢；
+> - `data/` 不可写 → 日志持续刷 `state.json 落盘失败`、`credit-daily 落盘失败`，配置也保存不了；
 > - 症状通常表现为"服务能起、面板能开，但账号数一直是 0 或状态不持久"。
->
-> 另有一个容易踩的坑：`-v "$PWD/config.json:/app/config.json:ro"` 如果**文件不存在**，Docker 会建一个**同名目录**挂进去；
-> 服务会 WARNING 回落内置默认配置（`api_key` 是占位符 `test_key`，等于不鉴权）。所以 `cp` 一定要在 `docker run` **之前**做。
 
 ### Docker Compose
 
 ```bash
-cp config.default.json config.json
 mkdir -p auths data && sudo chown -R 10001:10001 auths data   # 同上一节：Linux 必需
 docker compose up -d --build        # 或 docker compose up -d（用已发布镜像）
 ```
@@ -93,61 +90,67 @@ docker compose up -d --build        # 或 docker compose up -d（用已发布镜
 
 ```bash
 go build -o wp ./cmd/server
-./wp -config config.json        # 默认读 ./config.json
+./wp -config data/config.json    # 默认就是 data/config.json；缺失会自动生成
 ```
 
-### 第一次进来（管理密码）
+### 第一次进来（初始化管理员密码）
 
 ```bash
-# 1) 起服务后从日志里取管理密码（每次启动都会换）
-docker logs wp | grep 登录密码
-#   登录密码: HDBzN2dnojSNGrpki7UA
+# 1) 浏览器打开管理后台：http://127.0.0.1:7863/
+#    首次没有密码，页面会引导你设置一个（至少 8 位）；
+#    成功后哈希写入 data/config.json 的 admin.password，并自动开启管理面（无需重启）。
 
 # 2) 添加账号（扫码）
 ./login.sh
 #    在宿主机跑会产生属主为当前用户的文件；Linux 上记得交还给容器用户：
 #    sudo chown -R 10001:10001 auths
 #    （更省事的做法：docker compose exec -it wp bash -c './login.sh'，容器内落盘属主天然是 10001）
-
-# 3) 浏览器打开管理后台：http://127.0.0.1:7863/
-#    粘贴上面那串密码（没有用户名）
 ```
 
-> **没写 `config.json` 也能起来**：会打 WARNING 并整体回退到内置默认配置
-> （`api_key` 是占位符 `test_key`，只适合本机验证，不要直接对外）。
+> **忘记管理密码**：删掉 `data/config.json` 里的 `admin.password` 字段并重启容器，
+> 页面会回到"初始化"状态，重新设置即可（管理面的其它配置不受影响）。
+>
+> **首次生成到初始化完成之间没有密码保护**：`/admin/setup` 只在"尚未初始化"时可用，
+> 但这也意味着任何先连上的人都能设密码。部署到公网时请在初始化完成前限制访问来源，
+> 或者先在本机初始化、再把 `data/` 带到服务器。
+>
+> **首次生成的 `api_key` 是占位符 `test_key`**：记得在「设置」页或文件里换成自己的随机串，
+> 否则 `/v1` 等于不鉴权。
 
 ---
 
 ## 配置说明
 
-> **写错键名会被点名**：配置里出现 `config.default.json` 中不存在的键（拼错、多打字、**改过名的旧键**）
+> **写错键名会被点名**：配置里出现 `config.example.json` 中不存在的键（拼错、多打字、**改过名的旧键**）
 > 不会导致启动失败，但**启动日志会把它们列出来**，避免"以为配了其实没生效"：
 >
 > ```
-> WARN: 配置里有未知键（会被忽略，多半是拼错）：pool.max_in_flight_glboal；全部可用键见 config.default.json
+> WARN: 配置里有未知键（会被忽略，多半是拼错）：pool.max_in_flight_glboal；全部可用键见 config.example.json
 > ```
 >
-> 改名不做兼容垫片：例如 `admin.password_length` 已改名为 `admin.random_password_length`，
+> 改名/退役不做兼容垫片：例如 `admin.random_password_length` 已随"随机密码"方案一起移除，
 > 写旧名只会在日志里被点名，不会静默生效。
 
-配置模板是 [`config.default.json`](config.default.json)，**它就是全部默认值的权威来源**
+配置模板是 [`config.example.json`](config.example.json)，**它就是全部默认值的权威来源**
 （编译进二进制；仓库根目录那份是同步副本，改完执行 `go run ./cmd/config-default -write`）。
 
-### 最小可用配置：只要两个键
+### 开箱即用，只需改 `api_key`
 
-只有两件事"必须你自己定"，其余全部有默认值——**不写就是默认，不需要照抄模板**：
+首次启动会生成 `data/config.json`（完整内容 = `config.example.json`）。默认值全部可用，
+唯一强烈建议改的是 `api_key`（默认占位符 `test_key`，等于 `/v1` 不鉴权）：
 
 ```json
 {
-  "api_key": "换成你自己的随机串",
-  "admin": { "enabled": true }
+  "api_key": "换成你自己的随机串"
 }
 ```
 
-| 键 | 为什么必须 |
+| 键 | 为什么 |
 |---|---|
 | `api_key` | 下游调 `/v1/*`、`/status` 的凭据。**留空 = 不鉴权**，公网部署务必设置 |
-| `admin.enabled` | 是否注册 `/admin/*`（管理后台页面与运维接口）。`false` 时这些路径**根本不注册**（404），页面能打开但会提示"管理面未开启" |
+
+`admin.enabled` 不用手动处理：首次在页面初始化管理员密码时，服务端会把它置为 `true`
+（之后也可以在设置页关掉，但关掉后设置页本身也会 404，只能改文件恢复）。
 
 账号**不在配置里**：扫码加号，或把 `workbuddy-<uid>.json` 丢进 `auth_dir`（默认 `./auths`），几秒内自动热加载。
 
@@ -167,23 +170,26 @@ docker logs wp | grep 登录密码
 - `upstash`：留空 = 纯内存 + 本地文件，单机部署不需要；配了才会镜像粘性会话与状态快照。
 - `schedule`：想关掉某类任务用 `*_enabled`（默认全开）；**清空时刻数组不是关闭**，会回落默认时刻。
 
-服务读取配置的顺序：`cmd/server -config <path>`（默认 `./config.json`）→ 见下方"读取优先级"。
+服务读取配置的路径：`cmd/server -config <path>`（默认 `data/config.json`）→ 见下方"读取优先级"。
 
 ### 读取优先级（与 Spring 的属性覆盖一致）
 
 ```
-内置默认配置 config.default.json  ←  config.json 逐属性覆盖  ←  WP_* 环境变量
+内置默认配置 config.example.json  ←  data/config.json 逐属性覆盖  ←  WP_* 环境变量
 ```
 
 | 情况 | 结果 |
 |---|---|
-| 键写了 | 用 `config.json` 里的值（写 `0` / `""` / `false` 也算写了） |
-| 键没写，或写成 `null` | 用 `config.default.json` 里的值（`null` 视为"未定义"） |
-| `config.json` 不存在（或该路径是目录） | **WARNING** + 全部取内置默认，服务照常启动 |
-| `config.json` 存在但不是合法 JSON | 启动失败，错误信息带文件名 |
-| 值非法（如该填时长却写 `"abc"`） | 启动失败，错误信息点名配置项 |
+| 键写了 | 用 `data/config.json` 里的值（写 `0` / `""` / `false` 也算写了） |
+| 键没写，或写成 `null` | 用 `config.example.json` 里的值（`null` 视为"未定义"） |
+| `data/config.json` 不存在 | **首次启动自动生成**（内容 = `config.example.json`，权限 `0600`），之后不会覆盖 |
+| `data/config.json` 存在但不是合法 JSON / 值非法 | 启动失败，错误信息点名配置项 |
+| 升级前的旧 `./config.json` | **不会自动迁移**（按需求）：需要时手工把内容搬到 `data/config.json` |
 
 启动日志会打印 `配置来源: …`，一行就能确认到底读了哪个文件。
+
+> **设置页保存 = 写 `data/config.json`**：除了「启用管理面」与「密码强度」即时生效，
+> 其余配置都要**重启容器**后生效；保存成功后页面顶部会出现"待重启"横幅，重启后自动消失。
 
 ### 顶层
 
@@ -193,7 +199,7 @@ docker logs wp | grep 登录密码
 | `api_key` | string | `"test_key"` | **数据面**密钥：下游调 `/v1/*`、`/status` 时 `Authorization: Bearer <api_key>`。留空 = 不鉴权（公网部署务必设置） |
 | `auth_dir` | string | `"./auths"` | 账号凭据目录（`workbuddy-<uid>.json`），新增文件几秒内自动热加载 |
 | `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复。同目录另有 `credit-daily.json`（积分日账本，保留 30 天） |
-| `qrcode_ttl` | string | `"15m"` | **扫码加号二维码的有效期**（不是管理后台的会话超时——管理凭据是启动随机密码，无会话）。到点后台把二维码标「已失效」、链接加删除线并停止轮询 |
+| `qrcode_ttl` | string | `"15m"` | **扫码加号二维码的有效期**（不是管理后台的会话超时——管理密码是持久化的，没有会话）。到点后台把二维码标「已失效」、链接加删除线并停止轮询 |
 | `proxies` | object\|null | `null` | 出口线路映射，如 `{"hk": "http://127.0.0.1:7890"}`；账号文件里按线路名绑定 |
 | `reasoning_as_content` | bool | `true` | 思考兜底：整轮既无正文也无工具调用时，把 `reasoning_content` 同时作为 `content` 下发（避免空回复）。同时渲染两字段的客户端会看到重复，遇到就设 `false` |
 
@@ -255,14 +261,15 @@ docker logs wp | grep 登录密码
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `enabled` | `false` | 是否注册 `/admin/*`；未开启时这些路径**根本不注册**（404，而非 403） |
+| `enabled` | `false` | 是否开放 `/admin/*`。首次初始化密码时会**自动置 true**；关掉后设置页自己也会 404（只能改文件恢复） |
 | `body_limit_bytes` | `8192` | 管理面请求体上限 |
-| `random_password_length` | `20` | 启动时**自动生成**的管理密码长度（只在没设 `WP_ADMIN_PASSWORD` 时生效；不影响外部固定密码） |
-| `min_password_length` | `8` | 用 `WP_ADMIN_PASSWORD` 固定密码时的**最小**长度（不足则启动失败；无上限） |
+| `min_password_length` | `8` | 初始化/修改管理密码时的**最小**长度（点保存后即时生效） |
+| `password` | 空 | 管理密码的哈希（`sha256x10$<salt>$<digest>`，加盐 10 轮 SHA256）。由页面写入，**不要手写**；删掉它并重启 = 回到初始化状态 |
 
 
-> 管理密码**每次启动重新生成、只存内存、打印在终端**，与 `api_key` 完全分离：
-> 拿下游 key 打 `/admin/*` 一律 401；密码未初始化时管理面回 503（不存在"空凭据放行"）。
+> 管理密码与 `api_key` 完全分离：拿下游 key 打 `/admin/*` 一律 401。
+> 管理面未初始化时接口回 **428**，前端据此显示"初始化密码"向导；
+> 密码只以哈希落盘，明文既不打印也不存储；改密需先登录（Bearer 就是旧密码）。
 
 ### `global` —— 国际版路由
 
@@ -386,7 +393,7 @@ docker logs wp | grep 登录密码
 | `WP_SANITIZE_FINGERPRINTS` | `features.sanitize_blacklist_fingerprints` |
 | `WP_EXPIRING_SOON_WINDOW` | `pool.expiring_soon_window` |
 | `WP_ADMIN_ENABLED` | `admin.enabled` |
-| `WP_ADMIN_PASSWORD` | 固定管理密码（替代启动时随机生成） |
+| ~~`WP_ADMIN_PASSWORD`~~ | **已移除**：管理密码改为页面首次初始化，哈希存在 `data/config.json` |
 | `WP_TASK_SPREAD` | 临时覆盖 `schedule.spread_window`（`"0"` 关闭），排障用 |
 | `WP_TASK_BIN_DIR` | `school_bin` / `task_runner` 等辅助二进制的目录 |
 | `TZ` | 容器时区（建议 `Asia/Shanghai`） |
@@ -417,37 +424,44 @@ curl -s http://127.0.0.1:7863/v1/chat/completions \
 
 ## Web 管理后台
 
-打开 `http://<host>:7863/` 就是登录页：**只有一个密码框，没有用户名**。
+打开 `http://<host>:7863/`：**首次**会引导设置管理员密码（无用户名），之后就是登录页。
 
 ```bash
-docker logs wp | grep 登录密码
+# 不记得密码了？删掉 data/config.json 里的 admin.password 字段并重启 → 回到初始化状态
+docker compose restart wp
 ```
 
 | 页面 | 能做什么 |
 |---|---|
-| 概览 | 账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + **积分总计四卡**（当前总积分额度、当日总获得 / 总消耗 / 总修正）+ **积分日账本**（今日赚/花/调整/净 + 近 30 天）+ 网关状态（默认折叠，排障用）；后端返回的原始状态 JSON 也在这里 |
-| 账号 | 顶部三个动作：**一键签到**（跳过今天已签）/ **一键猫猫旅行**（补自动任务）/ **刷新余额**（上游只读）；列表（昵称、UID、状态、今日已签、积分、在途、凭证、线路、权重）+ 行内 禁用 / 启用 / 休养；**点每行第一列的昵称** 弹出该号近 7/15/30 天积分曲线（日终总积分 / 当日获得 / 当日消耗 / 当日修正，缺记录的日期按 0） |
+| 概览 | 账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + **积分总计四卡**（当前总积分额度、当日总获得 / 总消耗 / 总调整）+ **积分日账本**（今日赚/花/调整/净 + 近 30 天）+ 网关状态（默认折叠，排障用）；后端返回的原始状态 JSON 也在这里 |
+| 账号 | 顶部三个动作：**一键签到**（跳过今天已签）/ **一键猫猫旅行**（补自动任务）/ **刷新余额**（上游只读）；列表（昵称、UID、状态、今日已签、积分、在途、凭证、线路、权重）+ 行内 禁用 / 启用 / 休养；**点每行第一列的昵称** 弹出该号近 7/15/30 天积分曲线（日终总积分 / 当日获得 / 当日消耗 / 当日调整，缺记录的日期按 0） |
 | 模型 | 模型中心：描述、上下文、最大输出、思考档位、积分倍率、能力标记 |
 | 测试台 | 选模型 → 填提示词 → 流式或非流式试跑（复用 `/v1` 整条链路） |
 | 扫码加号 | 选域名 → 拿授权链接 → **页面直接显示二维码 + 有效期倒计时**（也可复制链接）→ 轮询 → 账号自动落盘并进入池；过期后链接打删除线、二维码盖「已失效」遮罩 |
+| **设置** | 全部配置项的分组表单（14 组 / 100+ 项）：前端即时校验 + 后端字段级校验；单字段 / 整组 / 全部恢复默认；敏感项（api_key、token）默认掩码、可点眼睛看明文；保存后写盘并在顶部挂「重启容器后生效」横幅；另有「修改管理员密码」 |
 
-**边界**：后台只管账号运营，**不改平台参数**（`config.json` 永远由部署方维护）。
-密码每次启动随机生成、只存进程内存、重启即失效；浏览器把它存在 `localStorage`，收到 401
-或本地为空时自动清掉并回登录页。页面响应带 CSP（`default-src 'self'`）、`nosniff`、
-`frame-ancestors 'none'`，渲染一律 `textContent`（账号昵称等外部输入不进 HTML）。
-
-> 前提：`admin.enabled=true`，否则 `/admin/*` 不注册，页面会提示「管理面未开启」。
+**边界**：后台只管账号运营与自身配置，**不影响正在运行的进程**：设置页保存只写
+`data/config.json`，除「启用管理面」「密码强度」外都要重启容器才生效（横幅会一直挂着，
+直到进程重启）。浏览器把密码存在 `localStorage`，收到 401 或本地为空时自动清掉并回登录页。
+页面响应带 CSP（`default-src 'self'`）、`nosniff`、`frame-ancestors 'none'`，
+渲染一律 `textContent`（账号昵称等外部输入不进 HTML）。
 
 ---
 
 ## 管理面 REST API
 
 凭据是**管理密码**（不是 `api_key`）：`Authorization: Bearer <密码>`。登录失败按 IP 限速
-（5 分钟 10 次后 429）；密码未初始化时管理面回 503。
+（5 分钟 10 次后 429）；密码未初始化时管理面回 **428**（前端据此显示初始化向导）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/admin/login` | 验密码：`{"password":"…"}` → `{"ok":true}`；401 / 429 / 503 |
+| `GET` | `/admin/setup/status` | **匿名**：`{initialized, admin_enabled, min_password_length}`，首屏据此决定"初始化/登录" |
+| `POST` | `/admin/setup` | **匿名**（仅未初始化时可用）：`{"password":"…","confirm":"…"}` → 写哈希 + 自动 `admin.enabled=true`，即时生效 |
+| `POST` | `/admin/password` | 改密（Bearer = 旧密码）：`{"password":"新","confirm":"新"}` |
+| `GET` | `/admin/config` | 配置：`values`（生效值，不含密码哈希）+ `defaults` + `schema` + `meta`（路径/可写/待重启/初始化状态） |
+| `PUT` | `/admin/config` | 深合并保存：`{"values":{…}}`；字段级校验失败回 400 + `error.fields[]` |
+| `POST` | `/admin/config/reset` | 恢复默认：`{"scope":"fields","paths":[…]}` / `{"scope":"section","section":"pool"}` / `{"scope":"all"}`；`admin.enabled` 与密码哈希不会被清 |
+| `POST` | `/admin/login` | 验密码：`{"password":"…"}` → `{"ok":true}`；401 / 429 / 428 |
 | `GET` | `/admin/status` | 与 `/status` 同形，但走管理凭据 |
 | `POST` | `/admin/accounts/refresh` | **刷新余额**：逐账号打上游只读 `billing` 接口回写积分（导入的号首次刷新后才有值）；串行 + 间隔，单飞防重入 |
 | `POST` | `/admin/travel/run` | **一键猫猫旅行**：手动补一次自动计划任务（领养 / 派出 / 领奖），异步执行回 202。无猫账号会**先补齐领养前置的对话量上报**（同日已发过则跳过），再领养——不再出现"点了按钮却因为 `chat_5` 未满而 400" |
@@ -466,7 +480,7 @@ docker logs wp | grep 登录密码
 | `POST` | `/admin/playground/chat` | 测试台（`?uid=` 可指定账号定点验证） |
 
 ```bash
-PW=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
+PW='你在页面初始化时设置的密码'
 curl -s -X POST http://127.0.0.1:7863/admin/accounts/checkin -H "Authorization: Bearer $PW"
 ```
 
@@ -476,7 +490,7 @@ curl -s -X POST http://127.0.0.1:7863/admin/accounts/checkin -H "Authorization: 
 
 ```bash
 go build -o wpctl ./cmd/wpctl
-export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ ]*\).*/\1/p' | tail -1)
+export WP_ADMIN_PASSWORD='你在页面初始化时设置的密码'
 
 ./wpctl accounts                 # 账号清单（-json 出原始 JSON）
 ./wpctl account <uid>            # 单账号详情
@@ -559,7 +573,8 @@ internal/scheduler/  六类定时任务 + 随机分布 + 账号节奏
 internal/upstream/   上游客户端：请求构造、指纹、SSE、模型目录
 internal/auth/       账号凭据模型
 internal/config/     排程配置段（server 与 activity 共用）
-internal/configdata/ 内嵌默认配置（config.default.json）
+internal/configdata/ 内嵌默认配置（config.example.json）
+internal/configschema/ 配置项元数据（设置页分组/校验/默认值，前后端共用）
 internal/webui/      管理后台静态资源（vendored Tabler，embed）
 internal/session/    会话粘性与路由
 internal/redisstore/ 会话镜像（可选）
@@ -584,9 +599,9 @@ internal/redisstore/ 会话镜像（可选）
    ```bash
    node scripts/ui-login-check.mjs     # 需 Edge/Chrome + CDP，见脚本头注释
    ```
-5. **不入库**：`auths/`、`data/`、真实 `config.json`（`.gitignore` / `.dockerignore` 已排除）。
+5. **不入库**：`auths/`、`data/`（含 `data/config.json`）、真实密钥（`.gitignore` / `.dockerignore` 已排除）。
 6. **不重写已发布的历史**：只有尚未推送的提交才允许 `reset`。
-7. **默认值只写在 `internal/configdata/config.default.json`**（随二进制内嵌）。改默认值就改那份
+7. **默认值只写在 `internal/configdata/config.example.json`**（随二进制内嵌）。改默认值就改那份
    JSON，不要再往 Go 代码里塞字面量；根目录副本用 `go run ./cmd/config-default -write` 同步，
    `go test ./internal/configdata` 会在两者不一致时报错。
 
@@ -616,14 +631,17 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| `WARNING: 找不到配置文件 … 改用内置默认配置` | 没挂载 `config.json`。此时 `api_key` 是占位符 `test_key`，复制一份 `config.default.json` 改名即可 |
-| 容器起不来，日志说 `config.json 是个**目录**` | `docker compose` 挂载不存在的宿主机文件时 Docker 会创建同名目录；先在宿主机 `cp config.default.json config.json` |
+| 服务启动说「已生成默认配置文件 data/config.json」 | 首次启动的正常行为；内容等于 `config.example.json`，之后不会覆盖 |
+| `data/config.json` 没生成 / 启动失败 | `data/` 不可写：`sudo chown -R 10001:10001 data` |
+| 设置页保存报「配置文件当前不可写」 | 同上；容器内 app(uid 10001) 需要 `data/` 写权限 |
+| 设置页保存成功但行为没变 | 正常：除「启用管理面」「密码强度」外都要**重启容器**；顶部横幅即提示（重启后消失） |
+| 容器起不来，日志说 `config.json 是个**目录**` | 旧版 `-v ./config.json:/app/config.json:ro` 挂载遗留：删掉该目录与 `-v` 行，重启会自动生成文件 |
 | 面板能开，但**账号数一直是 0** / 日志刷 `state.json 落盘失败: permission denied` | `auths/`、`data/` 的宿主目录属主不是容器用户：`sudo chown -R 10001:10001 auths data`（Docker Desktop / rootless 无需）。详见「快速开始」的 Docker 一节 |
 | `/status` 回 401 | 正常：数据面要 `api_key`；管理面才用管理密码 |
 | `/healthz` 回 503 | 活着但没有可用账号（0 个账号 / 全部冷却或禁用） |
-| `/admin/*` 回 404 | `admin.enabled=false`，管理面未注册 |
-| 启动日志出现「配置里有未知键」 | 该键名在 `config.default.json` 里不存在（多半拼错/多打字），当前会被忽略；对照默认配置改正即可 |
-| 管理密码忘了 | 只有容器日志里有，重启会换新的：`docker logs <name> \| grep 登录密码` |
+| `/admin/*` 回 404 | 管理面关闭（初始化之前属正常，初始化会自动打开）；若被手动关掉，改 `data/config.json` 的 `admin.enabled` 后重启 |
+| 启动日志出现「配置里有未知键」 | 该键名在 `config.example.json` 里不存在（多半拼错/多打字），当前会被忽略；对照默认配置改正即可 |
+| 管理密码忘了 | 删掉 `data/config.json` 的 `admin.password` 字段并重启 → 页面重新引导初始化 |
 | 签到失败 `code 10001` | 上游短时并发限流：调大 `schedule.checkin_account_delay` / `checkin_retry_delays` |
 | 上游 403 WAF | 降低 `pool.max_in_flight` / `max_in_flight_global`，核对 `upstream.client_*` 指纹，必要时配 `proxies` 出口 |
 | 客户端显示空回复（思考模型） | 保持 `reasoning_as_content: true`；若出现重复显示则设 `false` |
