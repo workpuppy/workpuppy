@@ -1,7 +1,7 @@
 // admin_test.go 运维管理端点的契约测试（issue #138/#118）。
 //
-// 覆盖：开关默认关闭（404 且不暴露管理面）、鉴权与 /status 同源、三个操作的状态迁移、
-// 幂等、未知 uid、以及「enable 不解除自动禁用 / revive 不解除手动停用」的正交语义。
+// 覆盖：开关默认关闭（404 且不暴露管理面）、鉴权与 /status 同源、禁用/启用的状态迁移、
+// 幂等、未知 uid，以及「单一 disabled 位 + disabled_source 来源」的语义。
 package server
 
 import (
@@ -19,9 +19,9 @@ import (
 // adminResp 与 adminState 同构（测试侧独立声明，避免测试跟着实现改字段名）。
 type adminResp struct {
 	UID            string `json:"uid"`
-	ManualDisabled bool   `json:"manual_disabled"`
-	ManualReason   string `json:"manual_reason"`
 	Disabled       bool   `json:"disabled"`
+	DisabledSource string `json:"disabled_source"`
+	DisabledReason string `json:"disabled_reason"`
 	Changed        bool   `json:"changed"`
 }
 
@@ -57,7 +57,7 @@ func TestAdminDisabledByDefault(t *testing.T) {
 	for _, path := range []string{
 		"/admin/accounts/u1/disable",
 		"/admin/accounts/u1/enable",
-		"/admin/accounts/u1/revive",
+		"/admin/accounts/u1/rest",
 	} {
 		// 即使带 key 也得 404：路由未注册，withAuth 根本不进场
 		// （若路由注册了，正确 key 会命中 handler——这条同时锁住"关闭态不注册"本身）。
@@ -79,7 +79,7 @@ func TestAdminDisabledByDefault(t *testing.T) {
 		}
 	}
 	// 状态位未被触碰
-	if st, _ := p.Status("u1"); st.ManualDisabled {
+	if st, _ := p.Status("u1"); st.Disabled {
 		t.Fatal("关闭状态下不应有任何状态变更")
 	}
 }
@@ -126,7 +126,7 @@ func TestAdminRequiresAdminPassword(t *testing.T) {
 	}
 }
 
-// TestAdminDisableEnableRoundTrip 停用 → 状态可读且不参与选号 → 恢复 → 可选。
+// TestAdminDisableEnableRoundTrip 禁用 → 状态可读且不参与选号 → 启用 → 可选。
 func TestAdminDisableEnableRoundTrip(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
@@ -135,33 +135,33 @@ func TestAdminDisableEnableRoundTrip(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("disable code=%d body=%s", rec.Code, rec.Body)
 	}
-	if !out.ManualDisabled || !out.Changed {
+	if !out.Disabled || !out.Changed {
 		t.Fatalf("disable 响应 = %+v", out)
 	}
-	if out.ManualReason != "观察几天" {
-		t.Errorf("manual_reason=%q", out.ManualReason)
+	if out.DisabledSource != "manual" {
+		t.Errorf("disabled_source=%q want manual", out.DisabledSource)
 	}
-	if out.Disabled {
-		t.Error("disable 不应置自动禁用位")
+	if out.DisabledReason != "观察几天" {
+		t.Errorf("disabled_reason=%q", out.DisabledReason)
 	}
 
 	// 生效：不再被选中
 	if got := p.Pick(""); got != nil {
-		t.Fatalf("停用后仍被选中: %+v", got)
+		t.Fatalf("禁用后仍被选中: %+v", got)
 	}
 	// 状态位可读（仍在池里）
 	st, ok := p.Status("u1")
-	if !ok || !st.ManualDisabled {
-		t.Fatalf("状态应可读且 manual_disabled=true: %+v ok=%v", st, ok)
+	if !ok || !st.Disabled {
+		t.Fatalf("状态应可读且 disabled=true: %+v ok=%v", st, ok)
 	}
 
-	// 恢复
+	// 启用
 	_, out = doAdmin(t, h, "POST", "/admin/accounts/u1/enable", "")
-	if out.ManualDisabled || !out.Changed {
+	if out.Disabled || !out.Changed {
 		t.Fatalf("enable 响应 = %+v", out)
 	}
 	if got := p.Pick(""); got == nil || got.UID != "u1" {
-		t.Fatalf("恢复后应可选, got %+v", got)
+		t.Fatalf("启用后应可选, got %+v", got)
 	}
 }
 
@@ -171,12 +171,12 @@ func TestAdminDisableWithoutBody(t *testing.T) {
 	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	rec, out := doAdmin(t, h, "POST", "/admin/accounts/u1/disable", "")
-	if rec.Code != http.StatusOK || !out.ManualDisabled {
+	if rec.Code != http.StatusOK || !out.Disabled {
 		t.Fatalf("code=%d out=%+v", rec.Code, out)
 	}
 	// 默认原因文案
-	if out.ManualReason != "manual" {
-		t.Errorf("无 reason 时 default=%q, want manual", out.ManualReason)
+	if out.DisabledReason != "manual" {
+		t.Errorf("无 reason 时 default=%q, want manual", out.DisabledReason)
 	}
 }
 
@@ -193,13 +193,14 @@ func TestAdminIdempotent(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("重复调用应 200（幂等）, got %d", rec.Code)
 	}
-	if second.Changed || !second.ManualDisabled {
-		t.Fatalf("重复停用 = %+v, want changed=false manual_disabled=true", second)
+	if second.Changed || !second.Disabled {
+		t.Fatalf("重复禁用 = %+v, want changed=false disabled=true", second)
 	}
 }
 
-// TestAdminOrthogonalSemantics enable 不解除自动禁用；revive 不解除手动停用。
-func TestAdminEnableClearsBothDisables(t *testing.T) {
+// TestAdminEnableClearsBothSources 单一 disabled 位：无论手动还是系统置位，
+// 一次「启用」全部清掉。
+func TestAdminEnableClearsBothSources(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
@@ -211,7 +212,7 @@ func TestAdminEnableClearsBothDisables(t *testing.T) {
 		t.Fatal("precondition: 应被自动禁用")
 	}
 
-	// 「启用」= 让这个号重新可用：同时解除系统自动禁用（原 revive 语义已并入）
+	// 「启用」= 让这个号重新可用
 	_, out := doAdmin(t, h, "POST", "/admin/accounts/u1/enable", "")
 	if out.Disabled {
 		t.Error("enable 后不应再是 disabled")
@@ -223,17 +224,14 @@ func TestAdminEnableClearsBothDisables(t *testing.T) {
 		t.Fatal("启用后应恢复可选")
 	}
 
-	// 手动停用 + 系统禁用同时存在时，一次 enable 全部清掉
-	p.SetManualDisabled("u1", true, "运维摘流量")
-	p.NoteSessionDead("u1")
-	p.NoteSessionDead("u1")
-	p.NoteSessionDead("u1")
+	// 手动禁用后同样一次 enable 清掉
+	p.SetDisabled("u1", true, "运维禁用")
 	_, out = doAdmin(t, h, "POST", "/admin/accounts/u1/enable", "")
-	if out.ManualDisabled || out.Disabled {
-		t.Fatalf("enable 应同时清两种禁用：%+v", out)
+	if out.Disabled || out.DisabledSource != "" {
+		t.Fatalf("enable 应清禁用位与来源：%+v", out)
 	}
 	if got := p.Pick(""); got == nil {
-		t.Fatal("两种禁用都清掉后应可选")
+		t.Fatal("启用后应可选")
 	}
 }
 
@@ -251,11 +249,11 @@ func TestAdminUnknownUID(t *testing.T) {
 	}
 }
 
-// TestAdminStatusExposesManualDisabled /status 透出 manual_disabled 双位状态。
-func TestAdminStatusExposesManualDisabled(t *testing.T) {
+// TestAdminStatusExposesDisabledSource /status 透出 disabled + disabled_source。
+func TestAdminStatusExposesDisabledSource(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
-	p.SetManualDisabled("u1", true, "面板摘除")
+	p.SetDisabled("u1", true, "面板禁用")
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/status", nil))
@@ -274,16 +272,16 @@ func TestAdminStatusExposesManualDisabled(t *testing.T) {
 		t.Fatalf("accounts=%d", len(body.Accounts))
 	}
 	a := body.Accounts[0]
-	if !a.ManualDisabled {
-		t.Error("status 应透出 manual_disabled=true")
+	if !a.Disabled {
+		t.Error("status 应透出 disabled=true")
 	}
-	if a.Disabled {
-		t.Error("手动停用不应同时置 disabled")
+	if a.DisabledSource != "manual" {
+		t.Errorf("disabled_source=%q want manual", a.DisabledSource)
 	}
-	if a.ManualReason != "面板摘除" {
-		t.Errorf("manual_reason=%q", a.ManualReason)
+	if a.DisabledReason != "面板禁用" {
+		t.Errorf("disabled_reason=%q", a.DisabledReason)
 	}
-	// 计数口径：手动停用归入 disabled（与自动禁用同类）
+	// 计数口径：禁用归入 disabled
 	if body.Disabled != 1 || body.Healthy != 0 {
 		t.Errorf("counts disabled=%d healthy=%d, want 1/0", body.Disabled, body.Healthy)
 	}

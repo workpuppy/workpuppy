@@ -176,8 +176,8 @@ func TestNoteSuccessClearsSessionDeadCount(t *testing.T) {
 	}
 }
 
-// TestReviveDisabled 复活入口：清 disabled + reason + 误判计数，账号回到池子。
-func TestReviveDisabled(t *testing.T) {
+// TestClearDisabledRevives 启用入口：清 disabled + reason + 误判计数，账号回到池子。
+func TestClearDisabledRevives(t *testing.T) {
 	p := New("")
 	p.Add(&auth.Auth{UID: "u1"})
 	p.NoteSessionDead("u1")
@@ -186,45 +186,45 @@ func TestReviveDisabled(t *testing.T) {
 	if st, _ := p.Status("u1"); !st.Disabled {
 		t.Fatal("precondition: 应已禁用")
 	}
-	p.ReviveDisabled("u1")
+	p.ClearDisabled("u1")
 	st, ok := p.Status("u1")
 	if !ok {
 		t.Fatal("no status")
 	}
 	if st.Disabled {
-		t.Fatalf("revive 应清 disabled: %+v", st)
+		t.Fatalf("启用应清 disabled: %+v", st)
 	}
 	if st.Reason != "" {
-		t.Errorf("reason=%q want 空（revive 清 reason）", st.Reason)
+		t.Errorf("reason=%q want 空（启用清 reason）", st.Reason)
 	}
 	if got := p.Pick(""); got == nil || got.UID != "u1" {
-		t.Fatalf("复活后账号应回到池子, got %+v", got)
+		t.Fatalf("启用后账号应回到池子, got %+v", got)
 	}
-	// 误判计数一并清零：复活后重新计满 3 次才禁用。
+	// 误判计数一并清零：启用后重新计满 3 次才禁用。
 	p.NoteSessionDead("u1")
 	if p.NoteSessionDead("u1") {
-		t.Fatal("复活后第 2 次不应禁用（应从新计数）")
+		t.Fatal("启用后第 2 次不应禁用（应从新计数）")
 	}
 	if !p.NoteSessionDead("u1") {
-		t.Fatal("复活后第 3 次应禁用（从新计数够 3 次）")
+		t.Fatal("启用后第 3 次应禁用（从新计数够 3 次）")
 	}
 }
 
-// TestReviveDisabledPersists 复活清 disabled + reason 落盘持久化（重启后不回退）。
-func TestReviveDisabledPersists(t *testing.T) {
+// TestClearDisabledPersists 启用清 disabled + reason 落盘持久化（重启后不回退）。
+func TestClearDisabledPersists(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "state.json")
 	p := New(fp)
 	p.Add(&auth.Auth{UID: "u1"})
 	p.Disable("u1", "12153 session dead")
-	p.ReviveDisabled("u1")
+	p.ClearDisabled("u1")
 	p.Flush()
 
 	p2 := New(fp)
 	p2.Add(&auth.Auth{UID: "u1"})
 	st, ok := p2.Status("u1")
 	if !ok || st.Disabled || st.Reason != "" {
-		t.Fatalf("revive 应持久化（disabled=%v reason=%q）ok=%v", st.Disabled, st.Reason, ok)
+		t.Fatalf("启用应持久化（disabled=%v reason=%q）ok=%v", st.Disabled, st.Reason, ok)
 	}
 }
 
@@ -239,17 +239,17 @@ func TestStatusDisabledReasonDisabled(t *testing.T) {
 	}
 }
 
-// TestStatusDisabledReasonClearedByRevive 复活后 disabled_reason 归空。
-func TestStatusDisabledReasonClearedByRevive(t *testing.T) {
+// TestStatusDisabledReasonClearedByEnable 启用后 disabled_reason 归空。
+func TestStatusDisabledReasonClearedByEnable(t *testing.T) {
 	p := New("")
 	p.Add(&auth.Auth{UID: "u1"})
 	p.Disable("u1", "12153 session dead")
-	p.ReviveDisabled("u1")
+	p.ClearDisabled("u1")
 	st, _ := p.Status("u1")
 	if st.DisabledReason != "" {
-		t.Errorf("revive 后 disabled_reason=%q want 空", st.DisabledReason)
+		t.Errorf("启用后 disabled_reason=%q want 空", st.DisabledReason)
 	}
 	if st.Reason != "" {
-		t.Errorf("revive 后 reason=%q want 空", st.Reason)
+		t.Errorf("启用后 reason=%q want 空", st.Reason)
 	}
 }

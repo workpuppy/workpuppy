@@ -55,19 +55,18 @@ type Status struct {
 	ModelCosts     []ModelCostStatus `json:"model_costs,omitempty"`
 	Disabled       bool              `json:"disabled"`
 	DisabledReason string            `json:"disabled_reason,omitempty"` // 仅 disabled 账号：禁用原因（运维可见）
-	// ManualDisabled 运维手动停用（issue #138/#118）——与 disabled **并列独立**，
-	// 叠加态分别透出不合并（面板据此区分「系统判定坏了」与「我主动摘的」，
-	// 两种可用操作不同：前者可 revive，后者该 enable）。
-	// 零值也显式写出（运维口径，同 consecutive_fails：缺失会让人误以为"没记录"）。
-	ManualDisabled bool `json:"manual_disabled"`
-	// Resting 休养中：不接下游流量，但签到/上报/旅行/保活照跑（与 manual_disabled 独立）。
+	// DisabledSource 禁用来源：manual（运维手动禁用）/ system（系统判定，如连续 12153）。
+	// 只是展示与定责口径，**不参与任何判定**：两种来源都等价于「该号停用」——
+	// 不接下游流量，且所有自动任务（签到 / 上报 / 旅行 / 保活 / 开学季 / 夜猫子）全部不跑。
+	// 想要「只摘流量、养号照旧」请用休养（Resting），两者语义不同。
+	DisabledSource string `json:"disabled_source,omitempty"`
+	// Resting 休养中：不接下游流量，但签到/上报/旅行/保活照跑（与 disabled 独立）。
 	Resting bool `json:"resting"`
 	// CheckedInToday 今天（CST）是否已签到——「一键签到」据此自动跳过。
 	CheckedInToday    bool      `json:"checked_in_today"`
 	LastCheckinDay    string    `json:"last_checkin_day,omitempty"`
 	LastCheckinStatus string    `json:"last_checkin_status,omitempty"`
 	LastCheckinAt     time.Time `json:"last_checkin_at,omitempty"`
-	ManualReason      string    `json:"manual_reason,omitempty"` // 仅手动停用：停用原因（运维可见）
 	SuccessCount      int64     `json:"success_count,omitempty"`
 	ErrTotal          int64     `json:"err_total,omitempty"`
 	LastSuccessTime   time.Time `json:"last_success,omitempty"`
@@ -127,15 +126,18 @@ type entry struct {
 	lastErr     time.Time // 最近一次错误时间
 	lastSuccess time.Time // 最近一次成功时间
 	coolKind    CoolKind
-	until       time.Time // 冷却截止（即时冷却：CoolSoft 429 / CoolHard 余额耗尽）
-	disabled    bool
-	reason      string
-	// manualDisabled 运维手动停用（issue #138/#118）：与 disabled 并列的独立状态位。
-	// 语义是「对话流量摘除」而非「账号冻结」——停用期间签到/token 保活/排程照常执行，
-	// 凭证与积分都是活的，只是不参与选号。与 disabled 各自独立清除，两位都清才回池。
-	// 持久化（stateAccount.ManualDisabled）：重启保留运维意图。
-	manualDisabled bool
-	// resting 运维「休养」开关：与 manualDisabled **并列独立**。
+	until       time.Time
+	// disabled 停用（唯一状态位）：不接下游流量，且**所有自动任务不跑**
+	// （签到 / 活跃上报 / 旅行 / 保活 / 开学季 / 夜猫子都按它跳过）。
+	// 两个来源共用本字段，disabledSource 只用于展示与定责：
+	//   - manual：运维「禁用」置位（SetDisabled），只有「启用」能解除；
+	//   - system：连续 12153 / 凭证被拒达阈自动置位（disableLocked），同样只有「启用」能解除，
+	//     置位时不会覆盖已有的 manual 来源（避免系统判定把运维意图"降级"掉）。
+	// 想要「只摘流量、养号照旧」用 resting（休养），不要用本字段。
+	disabled       bool
+	reason         string
+	disabledSource DisabledSource
+	// resting 运维「休养」开关：与 disabled **并列独立**。
 	// 语义：不参与下游选号（不接对话流量），但账号完全正常 —— 签到 / 活跃上报 /
 	// 猫猫旅行 / token 保活照跑，凭证与积分都是活的。
 	resting bool
@@ -145,7 +147,6 @@ type entry struct {
 	lastCheckinDay    string
 	lastCheckinStatus string    // ok / already / fail
 	lastCheckinAt     time.Time // 最近一次签到动作时刻
-	manualReason      string
 	lastUsed          time.Time // 最近被选中时刻（防并发撞号）
 	// usedSeq 单调递增的选中序号：每次被 pick 选中时取 p.pickSeq 自增值。
 	// Windows 等平台 time.Now() 精度有限（~0.5ms），高并发/快速连续选号时多个
@@ -224,7 +225,7 @@ func (e *entry) modelCostOf(model string, now time.Time) (modelCostEntry, bool) 
 // 连败降权与冷却/熔断同入本判定（取更长者不叠加：三个截止是并列的或门，
 // 只要任一未到期即不可选，天然「并存取更远者」——不需要显式比较长短）。
 func (e *entry) healthy(now time.Time) bool {
-	if e.disabled || e.manualDisabled || e.resting || e.refreshRiskActive(now) {
+	if e.disabled || e.resting || e.refreshRiskActive(now) {
 		return false
 	}
 	if !e.until.IsZero() && now.Before(e.until) {
@@ -249,7 +250,7 @@ func (e *entry) healthy(now time.Time) bool {
 // 调用方负责 now 与冷却有效性的判断（本方法只看形态，不看冷却是否已过期）。
 func (e *entry) modelExempt() bool {
 	return len(e.modelCooldowns) > 0 &&
-		!e.disabled && !e.manualDisabled && !e.resting && !e.refreshRiskActive(time.Now()) && e.breakerUntil.IsZero()
+		!e.disabled && !e.resting && !e.refreshRiskActive(time.Now()) && e.breakerUntil.IsZero()
 }
 
 // modelCooled 报告账号对指定 model 是否正处 6004 模型级冷却（该模型的独立冷却未过期）。
@@ -368,17 +369,21 @@ type stateAccount struct {
 	Credits     int64             `json:"credits"`
 	Disabled    bool              `json:"disabled"`
 	Reason      string            `json:"reason,omitempty"`
-	// ManualDisabled 运维手动停用（issue #138/#118）。持久化——重启保留运维意图，
-	// 这也正是该功能要解决的痛点之一（旧权宜做法改 state.json 会被 5s flush 覆盖，
-	// 入口化后无需再碰文件）。零值也显式写出（运维口径，同 err_total 注释）。
-	ManualDisabled bool `json:"manual_disabled"`
-	// Resting 运维「休养」：不接下游流量，自动任务照跑（与 manual_disabled 并列独立）。
+	// DisabledSource 禁用来源（manual / system）。持久化：重启后运维仍能看出
+	// 「这个号是我自己禁的」还是「系统判坏的」，但**不影响任何判定**。
+	DisabledSource string `json:"disabled_source,omitempty"`
+	// LegacyManualDisabled 旧快照兼容：manual_disabled 曾是独立状态位，现已并入
+	// disabled + disabled_source。**只读取一次**（加载时迁移为 disabled=true, manual），
+	// 写侧永不输出——落盘只写 disabled/disabled_source。
+	LegacyManualDisabled bool `json:"manual_disabled,omitempty"`
+	// LegacyManualReason 同上：旧的 manual_reason 迁移到统一的 reason。
+	LegacyManualReason string `json:"manual_reason,omitempty"`
+	// Resting 运维「休养」：不接下游流量，自动任务照跑（与 disabled 并列独立）。
 	Resting bool `json:"resting,omitempty"`
 	// 签到状态（持久化：重启后「一键签到」仍能跳过今天已签的号）。
 	LastCheckinDay    string    `json:"last_checkin_day,omitempty"`
 	LastCheckinStatus string    `json:"last_checkin_status,omitempty"`
 	LastCheckinAt     time.Time `json:"last_checkin_at,omitempty"`
-	ManualReason      string    `json:"manual_reason,omitempty"`
 	Until             time.Time `json:"until,omitempty"`
 	CoolKind          CoolKind  `json:"cool_kind"`
 	SuccessCount      int64     `json:"success_count,omitempty"`

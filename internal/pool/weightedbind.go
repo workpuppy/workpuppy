@@ -36,7 +36,7 @@ func (p *Pool) WeightedPickAmong(candidates []string, model string) string {
 
 	now := time.Now()
 	// 候选集已由调用方按 realm + 模型可用性筛过；这里按池内实时状态再过滤一次，缩掉
-	// 「筛完到此刻之间刚进冷却 / 刚被手动停用」的时间窗 —— 否则会把一个已经不可用的号
+	// 「筛完到此刻之间刚进冷却 / 刚被禁用」的时间窗 —— 否则会把一个已经不可用的号
 	// 绑给会话，下一跳又得解绑重来。
 	live := make([]*entry, 0, len(candidates))
 	var maxCredits int64

@@ -38,8 +38,8 @@ func TestRestingExcludedFromSelection(t *testing.T) {
 			if !st.Resting {
 				t.Error("Status.Resting 应为 true")
 			}
-			if st.Disabled || st.ManualDisabled {
-				t.Error("休养不应被当成停用")
+			if st.Disabled {
+				t.Error("休养不应被当成禁用")
 			}
 		}
 	}

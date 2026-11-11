@@ -171,12 +171,11 @@ func (p *Pool) applyAccountsLocked(accounts map[string]stateAccount) {
 			credits:           s.Credits,
 			disabled:          s.Disabled,
 			reason:            s.Reason,
-			manualDisabled:    s.ManualDisabled,
+			disabledSource:    DisabledSource(s.DisabledSource),
 			resting:           s.Resting,
 			lastCheckinDay:    s.LastCheckinDay,
 			lastCheckinStatus: s.LastCheckinStatus,
 			lastCheckinAt:     s.LastCheckinAt,
-			manualReason:      s.ManualReason,
 			refreshRisk:       cloneRefreshRisk(s.RefreshRisk),
 			until:             s.Until,
 			coolKind:          s.CoolKind,
@@ -188,6 +187,28 @@ func (p *Pool) applyAccountsLocked(accounts map[string]stateAccount) {
 			sessionDeadFails:  s.SessionDeadFails,
 			consecutiveFails:  s.ConsecutiveFails,
 			creditsExpiring:   expiring,
+		}
+		// 旧快照迁移：manual_disabled / manual_reason 已并入 disabled + disabled_source。
+		// 旧的「手动停用」号在升级后必须仍然是禁用态（否则一次重启就把它悄悄放回
+		// 选号池），来源记 manual——运维意图优先于可能同时存在的系统判定。
+		if s.LegacyManualDisabled {
+			e.disabled = true
+			e.disabledSource = DisabledByManual
+			if s.LegacyManualReason != "" {
+				e.reason = s.LegacyManualReason
+			}
+			// 内存表示已与磁盘形状不同：置脏，让下一次 flush 用新字段重写快照
+			// （否则旧 state.json 会一直带着 manual_disabled 字段）。
+			p.dirty.Store(true)
+		}
+		// 来源兜底与清理：disabled 但来源为空（更老的快照只写 disabled）→ 记 system；
+		// 未禁用却残留来源（手工改过的脏数据）→ 清空，避免 /status 出现
+		// disabled=false + disabled_source=manual 的诡异组合。
+		if e.disabled && e.disabledSource == "" {
+			e.disabledSource = DisabledBySystem
+		}
+		if !e.disabled {
+			e.disabledSource = ""
 		}
 		// 恢复熔断器：breakerUntil 在未来才恢复（惰性过滤过期/零值，与落盘同口径）。
 		// retryCount 仅在 breakerUntil 未过期时恢复——已过期则归零（不保留无用退避指数）。
@@ -420,12 +441,11 @@ func (p *Pool) stateOverviewLocked() stateFile {
 			Credits:           e.credits,
 			Disabled:          e.disabled,
 			Reason:            reason,
-			ManualDisabled:    e.manualDisabled,
+			DisabledSource:    string(e.disabledSource),
 			Resting:           e.resting,
 			LastCheckinDay:    e.lastCheckinDay,
 			LastCheckinStatus: e.lastCheckinStatus,
 			LastCheckinAt:     e.lastCheckinAt,
-			ManualReason:      e.manualReason,
 			RefreshRisk:       cloneRefreshRisk(e.refreshRisk),
 			Until:             e.until,
 			CoolKind:          coolKind,

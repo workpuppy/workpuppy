@@ -1,20 +1,22 @@
-// acct — 账号运维工具：临时停用 / 恢复 / 复活（issue #138/#118）。
+// acct — 账号运维工具：禁用 / 启用（issue #138/#118）。
 //
 // 用法:
 //
-//	acct list                          # 列出账号与双位状态
-//	acct disable <uid> [reason]        # 临时停用（对话流量摘除，保留在池里）
-//	acct enable  <uid>                 # 解除手动停用
-//	acct revive  <uid>                 # 解除系统自动禁用
+//	acct list                          # 列出账号与状态（含禁用来源）
+//	acct disable <uid> [reason]        # 禁用（不接流量，自动任务全部停止）
+//	acct enable  <uid>                 # 启用（手动/系统禁用一并解除）
 //
 // 配置:
 //
 //	-config 配置路径（默认 config.json），从中读 listen 与 api_key
 //	-server 直接指定网关地址（覆盖 config 的 listen），如 http://127.0.0.1:7863
 //
-// 为什么走 HTTP 而不是直接改 state.json：手动停用是**运行中进程的内存状态**，
+// 为什么走 HTTP 而不是直接改 state.json：禁用状态是**运行中进程的内存状态**，
 // 由池的定时 flush 落盘（5s 周期）。外部直接改文件会在下一次 flush 被覆盖——
 // 这正是 issue #138 里面板侧绕不过去的死路。经端点操作才能可靠生效并被持久化。
+//
+// 注意「禁用」与「休养」的区别：禁用 = 完全停（签到/上报/旅行/保活都不跑，长期
+// 可能导致凭证失效）；只想摘下游流量、继续养号请用休养（wpctl rest / 面板「休养」）。
 package main
 
 import (
@@ -39,16 +41,15 @@ type accountStatus struct {
 	Credits        int64  `json:"credits"`
 	Disabled       bool   `json:"disabled"`
 	DisabledReason string `json:"disabled_reason"`
-	ManualDisabled bool   `json:"manual_disabled"`
-	ManualReason   string `json:"manual_reason"`
+	DisabledSource string `json:"disabled_source"`
 	Cooling        bool   `json:"cooling"`
 }
 
 type adminState struct {
 	UID            string `json:"uid"`
-	ManualDisabled bool   `json:"manual_disabled"`
-	ManualReason   string `json:"manual_reason"`
 	Disabled       bool   `json:"disabled"`
+	DisabledSource string `json:"disabled_source"`
+	DisabledReason string `json:"disabled_reason"`
 	Changed        bool   `json:"changed"`
 }
 
@@ -84,7 +85,7 @@ func main() {
 		if err := listAccounts(base, apiKey); err != nil {
 			fatalf("%v", err)
 		}
-	case "disable", "enable", "revive":
+	case "disable", "enable":
 		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
 			fmt.Fprintf(os.Stderr, "acct: %s 需要一个 uid\n", op)
 			os.Exit(2)
@@ -105,21 +106,21 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `acct — 账号运维工具
+	usage := `acct — 账号运维工具
 
 用法:
-  acct list                    列出账号与状态（含 manual_disabled / disabled 双位）
-  acct disable <uid> [reason]  临时停用：摘出选号池，但仍留在池里
-  acct enable  <uid>           解除手动停用
-  acct revive  <uid>           解除系统自动禁用
+  acct list                    列出账号与状态（含禁用来源 manual/system）
+  acct disable <uid> [reason]  禁用：不接下游流量，且签到/上报/旅行/保活全部停止
+  acct enable  <uid>           启用：解除禁用（手动/系统禁用一并解除）
 
 选项:
   -config <path>  配置路径（默认 config.json，读 listen 与 api_key）
   -server <url>   直接指定网关地址，如 http://127.0.0.1:7863
 
-注意：enable 只解手动位。若账号同时被系统自动禁用（disabled），
-需要额外执行 revive 才能回到选号池。
-`)
+注意：只想「摘掉下游流量、继续养号」请用休养（面板「休养」/ wpctl rest），
+不要去禁用——禁用会连签到与 token 保活一起停掉，长期可能真的失活。
+`
+	fmt.Fprint(os.Stderr, usage)
 }
 
 // resolveTarget 定出网关地址与 api_key：-server 优先，否则读 config 的 listen。
@@ -232,18 +233,17 @@ func listAccounts(base, apiKey string) error {
 	return nil
 }
 
-// stateLabel 把双位状态压成一行可读文案。叠加态两个都列（不合并）。
+// stateLabel 把状态压成一行可读文案。禁用带来源与原因（manual/system 分开写，
+// 运维一眼看出「我自己禁的」还是「系统判坏的」）。
 func stateLabel(a accountStatus) string {
 	var parts []string
-	if a.ManualDisabled {
-		s := "手动停用"
-		if a.ManualReason != "" {
-			s += "(" + a.ManualReason + ")"
-		}
-		parts = append(parts, s)
-	}
 	if a.Disabled {
-		s := "自动禁用"
+		s := "禁用"
+		if a.DisabledSource == "manual" {
+			s = "禁用(手动)"
+		} else if a.DisabledSource == "system" {
+			s = "禁用(系统)"
+		}
 		if a.DisabledReason != "" {
 			s += "(" + a.DisabledReason + ")"
 		}
@@ -285,21 +285,14 @@ func doAdmin(base, apiKey, op, uid, reason string) error {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return fmt.Errorf("解析响应: %w", err)
 	}
-	verb := map[string]string{"disable": "已停用", "enable": "已解除停用", "revive": "已复活"}[op]
+	verb := map[string]string{"disable": "已禁用", "enable": "已启用"}[op]
 	if !st.Changed {
-		verb = map[string]string{"disable": "本就是停用态", "enable": "本就是启用态", "revive": "本就未被自动禁用"}[op]
+		verb = map[string]string{"disable": "本就是禁用态", "enable": "本就是启用态"}[op]
 	}
 	fmt.Printf("%s %s: %s\n", verb, st.UID, stateLabel(accountStatus{
-		UID: st.UID, ManualDisabled: st.ManualDisabled, ManualReason: st.ManualReason,
-		Disabled: st.Disabled,
+		UID: st.UID, Disabled: st.Disabled, DisabledSource: st.DisabledSource,
+		DisabledReason: st.DisabledReason,
 	}))
-	// 提示遗留的另一个位：enable 不解除自动禁用，反之亦然。
-	if op == "enable" && st.Disabled {
-		fmt.Println("提示：该账号仍被系统自动禁用，要回到选号池还需执行 acct revive " + st.UID)
-	}
-	if op == "revive" && st.ManualDisabled {
-		fmt.Println("提示：该账号仍处于手动停用，要回到选号池还需执行 acct enable " + st.UID)
-	}
 	return nil
 }
 

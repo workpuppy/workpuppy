@@ -58,12 +58,12 @@ func TestWeightedPickAmongEmptyCandidates(t *testing.T) {
 	}
 }
 
-// TestWeightedPickAmongSkipsUnavailable 手动停用 / 未知 uid 必须被排除：把不可用的号
+// TestWeightedPickAmongSkipsUnavailable 禁用 / 未知 uid 必须被排除：把不可用的号
 // 绑给会话会让下一跳立刻解绑重分配，白跑一轮。
 func TestWeightedPickAmongSkipsUnavailable(t *testing.T) {
 	p := New("")
 	p.Add(&auth.Auth{UID: "off"})
-	p.SetManualDisabled("off", true, "维护中")
+	p.SetDisabled("off", true, "维护中")
 
 	if got := p.WeightedPickAmong([]string{"off", "ghost"}, ""); got != "" {
 		t.Fatalf("候选全不可用时应返回空串，got %q", got)

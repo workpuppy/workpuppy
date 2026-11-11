@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# acct.sh — 账号运维工具包装（临时停用 / 恢复 / 复活）
+# acct.sh — 账号运维工具包装（禁用 / 启用）
 #
 # 用法:
-#   ./acct.sh list                     # 列出账号与双位状态
-#   ./acct.sh disable <uid> [原因]     # 临时停用（对话流量摘除，保留在池里）
-#   ./acct.sh enable  <uid>            # 解除手动停用
-#   ./acct.sh revive  <uid>            # 解除系统自动禁用
+#   ./acct.sh list                     # 列出账号与状态（含禁用来源 manual/system）
+#   ./acct.sh disable <uid> [原因]     # 禁用：不接下游流量，签到/上报/旅行/保活全部停止
+#   ./acct.sh enable  <uid>            # 启用（手动/系统禁用一并解除）
+#
+# 只想「摘掉下游流量、继续养号」请用休养（面板「休养」/ wpctl rest），不要禁用。
 #
 # 需 config 里 admin.enabled = true（且 api_key 非空）。CLI 参数原样透传 cmd/acct，
 # 如 -config / -server 也支持：./acct.sh -server http://127.0.0.1:7863 list

@@ -94,10 +94,10 @@ func (h *Handler) adminAccounts(w http.ResponseWriter, r *http.Request) {
 		if row.Nickname == "" && a != nil {
 			row.Nickname = a.Nickname
 		}
-		// InPool 必须**由「是否真的进了池」决定**，不能只看三个禁用位：
-		// 只在文件里、没进池的账号（例如缺 refreshToken）三个位都是 false，
+		// InPool 必须**由「是否真的进了池」决定**，不能只看两个状态位：
+		// 只在文件里、没进池的账号（例如缺 refreshToken）位都是 false，
 		// 按位推断会把它显示成「在线」，而它其实一次请求都接不到。
-		row.InPool = st != nil && !row.Disabled && !row.ManualDisabled && !row.Cooling
+		row.InPool = st != nil && !row.Disabled && !row.Cooling
 		// Checkinable：签到只看凭证是否可用（冷却中的号照常签到，这是既有语义）。
 		row.Checkinable = row.HasCredential && row.CanRefresh && !row.Disabled
 		out = append(out, row)

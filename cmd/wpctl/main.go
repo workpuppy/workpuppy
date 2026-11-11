@@ -13,9 +13,9 @@
 //	wpctl login --realm cn               # 扫码加号（打印二维码链接并等授权）
 //	wpctl models                         # 模型中心（上下文/输出/档位/积分倍率）
 //	wpctl chat --model glm-5.2 "你好"     # 聊天测试台（--uid 可指定账号，--stream 流式）
-//	wpctl disable 12345678 --reason 维护  # 摘除对话流量（签到保活照常）
-//	wpctl enable 12345678                # 恢复
-//	wpctl revive 12345678                # 解除系统自动禁用
+//	wpctl disable 12345678 --reason 维护  # 禁用：不接流量，签到/保活也停
+//	wpctl enable 12345678                # 启用（手动/系统禁用一并解除）
+//	wpctl rest 12345678                  # 休养：只摘下游流量，签到/上报/旅行/保活照跑
 //
 // 配置来源优先级：-server/-key 命令行 > config.json（-config，默认 ./config.json）。
 package main
@@ -137,9 +137,9 @@ func usage() {
   models                           模型中心（上下文 / 最大输出 / 思考档位 / 积分倍率）
   chat --model <m> [--uid <u>] [--stream] [--effort low|medium|high] <prompt>
                                    聊天测试台（复用 /v1 全链路，可指定账号定点验证）
-  disable <uid> [--reason 文本]    摘除对话流量（签到与保活照常）
-  enable <uid>                     解除手动停用
-  revive <uid>                     解除系统自动禁用（封号救不回）
+  disable <uid> [--reason 文本]    禁用：不接下游流量，签到/上报/旅行/保活全部停止
+  enable <uid>                     启用（手动/系统禁用一并解除）
+  rest <uid> / unrest <uid>        休养 / 恢复接流（休养期间自动任务照跑）
 
 前置条件：服务端 config.json 里 admin.enabled=true；密码取服务启动日志里的「登录密码」，
            也可用 -password 或环境变量 WP_ADMIN_PASSWORD 直接给。
@@ -220,7 +220,7 @@ type accountRow struct {
 	Cooling       bool    `json:"cooling"`
 	CoolRemaining int64   `json:"cool_remaining_sec"`
 	Disabled      bool    `json:"disabled"`
-	ManualOff     bool    `json:"manual_disabled"`
+	DisabledSrc   string  `json:"disabled_source"`
 	InFlight      int     `json:"in_flight"`
 	InPool        bool    `json:"in_pool"`
 	Checkinable   bool    `json:"checkinable"`
@@ -266,8 +266,8 @@ func (c *client) cmdAccounts(asJSON bool) error {
 
 func statusLabel(a accountRow) string {
 	switch {
-	case a.ManualOff:
-		return "已手动停用"
+	case a.Disabled && a.DisabledSrc == "manual":
+		return "手动禁用"
 	case a.Disabled:
 		return "系统禁用"
 	case a.Cooling:
@@ -554,17 +554,17 @@ func (c *client) cmdManual(uid, action, reason string) error {
 		return err
 	}
 	var res struct {
-		UID          string `json:"uid"`
-		ManualOff    bool   `json:"manual_disabled"`
-		ManualReason string `json:"manual_reason"`
-		Disabled     bool   `json:"disabled"`
-		Changed      bool   `json:"changed"`
+		UID            string `json:"uid"`
+		Disabled       bool   `json:"disabled"`
+		DisabledSource string `json:"disabled_source"`
+		DisabledReason string `json:"disabled_reason"`
+		Changed        bool   `json:"changed"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return err
 	}
-	fmt.Printf("%s：手动停用=%v（%s） 系统禁用=%v 本次变更=%v\n",
-		res.UID, res.ManualOff, orNone(res.ManualReason), res.Disabled, res.Changed)
+	fmt.Printf("%s：禁用=%v（来源 %s，原因 %s） 本次变更=%v\n",
+		res.UID, res.Disabled, orNone(res.DisabledSource), orNone(res.DisabledReason), res.Changed)
 	return nil
 }
 

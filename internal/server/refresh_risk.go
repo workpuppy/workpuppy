@@ -47,7 +47,7 @@ func (h *Handler) adminClearRefreshRisk(w http.ResponseWriter, r *http.Request) 
 	}
 	status, _ := h.cfg.Pool.Status(uid)
 	writeJSON(w, 200, map[string]any{"uid": uid, "changed": changed, "refresh_risk": status.RefreshRisk,
-		"manual_disabled": status.ManualDisabled, "disabled": status.Disabled})
+		"disabled": status.Disabled, "disabled_source": status.DisabledSource})
 }
 
 func (h *Handler) adminRefreshRiskSuccess(w http.ResponseWriter, r *http.Request) {

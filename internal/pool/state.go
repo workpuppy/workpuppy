@@ -61,7 +61,7 @@ func (p *Pool) NoteAuthFailure(uid, reason string) bool {
 }
 
 // ClearSessionDead 清连续 12153 计数——账号被证明未死的任何时刻调用：
-// refresh 成功（RunKeepaliveNow）、chat 成功（NoteSuccess）、手工复活（ReviveDisabled）。
+// refresh 成功（RunKeepaliveNow）、chat 成功（NoteSuccess）、手工启用（ClearDisabled）。
 func (p *Pool) ClearSessionDead(uid string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -71,44 +71,53 @@ func (p *Pool) ClearSessionDead(uid string) {
 	}
 }
 
-// ReviveDisabled 人工/端点复活入口：清除 disabled + reason + 连续 12153 计数，
-// 账号回到池子（若无其他冷却/熔断则立即可选，健康检查自然接管）。
-// **不改** Disabled 在选号/状态端点的既有语义：disabled 号依然不参与选号，
-// 直到被本方法复活。不存在的 uid 为空操作。
-// 注意：不动 manualDisabled —— 自动禁用与手动停用是独立的两位，本方法只解系统判定，
-// 运维意图要由 SetManualDisabled(uid,false) 单独解除（否则一次 revive 会悄悄
-// 把运维明确摘除的号放回选号池）。返回 true 表示本次确实清除了自动禁用。
-func (p *Pool) ReviveDisabled(uid string) bool {
+// ClearDisabled 解除禁用（**唯一**的解除入口，手动禁用与系统禁用都由此解除），
+// 让账号回到可接流状态；顺带清连续 12153 计数与禁用原因/来源。
+//
+// 为什么只有一个入口：旧模型把禁用拆成「手动停用 manual_disabled」与「系统禁用
+// disabled」两位，运维要在"停用/封号"两种禁用之间猜该点哪个；合并成单一 disabled
+// （disabledSource 只记录来源用于展示）后，管理面「启用」就是"让它能用"。
+func (p *Pool) ClearDisabled(uid string) (found, changed bool, wasDisabled bool, reason string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e, ok := p.byUID[uid]
-	if !ok || !e.disabled {
-		return false
+	if !ok {
+		return false, false, false, ""
 	}
-	e.disabled = false
-	e.reason = ""
-	e.sessionDeadFails = 0
-	p.dirty.Store(true)
-	return true
+	wasDisabled = e.disabled
+	reason = e.reason
+	if e.disabled {
+		p.setDisabledLocked(e, false, "", "")
+		changed = true
+	}
+	return true, changed, wasDisabled, reason
 }
 
-// SetManualDisabled 运维手动停用/恢复（issue #138/#118）：置位时只摘除选号流量，
-// 账号仍在池里——签到、token 保活、排程任务照常执行，凭证与积分是活的。
-// 与自动禁用（Disabled）互相独立：本方法不清 disabled，也不清冷却/熔断维度；
-// 恢复时同理只清 manualDisabled。两位都清空后账号自然回到选号池。
-// 幂等：重复置位/清除不报错，重复操作只更新原因文案。
+// SetDisabled 运维「禁用」/「启用」开关（issue #138/#118）。
+//
+// 禁用：置 disabled + source=manual + 原因，不接下游流量，且**所有自动任务不跑**
+// （签到 / 上报 / 旅行 / 保活 / 开学季 / 夜猫子）——系统禁用与手动禁用是同一个位，
+// 差别只在 disabledSource 的展示口径。若账号本就被系统禁用（source=system），
+// 运维置位会把来源改写成 manual 并更新原因（运维意图优先）。
+// 启用：内部走 ClearDisabled 语义（清 disabled/source/reason + 12153 计数）。
+// 幂等：重复置位/清除不报错，重复置位只更新原因文案。
 // 返回 (found, changed)：uid 不存在 → (false,false)；状态无变化 → (true,false)。
-func (p *Pool) SetManualDisabled(uid string, disabled bool, reason string) (found, changed bool) {
+func (p *Pool) SetDisabled(uid string, disabled bool, reason string) (found, changed bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e, ok := p.byUID[uid]
 	if !ok {
 		return false, false
 	}
-	if e.manualDisabled == disabled && (!disabled || e.manualReason == reason) {
+	if !disabled {
+		wasDisabled := e.disabled
+		p.setDisabledLocked(e, false, "", "")
+		return true, wasDisabled
+	}
+	if e.disabled && e.disabledSource == DisabledByManual && e.reason == reason {
 		return true, false
 	}
-	p.setManualDisabledLocked(e, disabled, reason)
+	p.setDisabledLocked(e, true, reason, DisabledByManual)
 	return true, true
 }
 
@@ -147,34 +156,10 @@ func (p *Pool) CheckedInToday(uid string, now time.Time) (bool, string) {
 	return e.lastCheckinDay == checkinDay(now), e.lastCheckinStatus
 }
 
-// ClearDisabled 解除**系统自动禁用**（以及手动停用），让账号回到可接流状态。
-//
-// 后台「启用」按钮走这里：以前分成 enable（只清手动停用）与 revive（只清系统禁用）
-// 两个按钮，运维容易困惑——现在合并成一个"让它能用"的动作，禁用原因会随响应返回。
-func (p *Pool) ClearDisabled(uid string) (found, changed bool, wasDisabled bool, reason string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	e, ok := p.byUID[uid]
-	if !ok {
-		return false, false, false, ""
-	}
-	wasDisabled = e.disabled
-	reason = e.reason
-	if e.disabled || e.manualDisabled {
-		e.disabled = false
-		e.reason = ""
-		e.manualDisabled = false
-		e.manualReason = ""
-		p.dirty.Store(true)
-		changed = true
-	}
-	return true, changed, wasDisabled, reason
-}
-
 // SetResting 运维「休养」开关：开=不接下游流量（自动任务照跑），关=恢复正常接流。
 //
-// 与 SetManualDisabled 的区别只在语义/展示：manual 是"停用"（可能有问题待处理），
-// resting 是"主动歇一阵"（账号健康，只是不想让它接活）。两者都独立持久化。
+// 与 SetDisabled 的区别：disabled 是"完全停"（连自动任务都不跑，账号会随时间失活），
+// resting 是"主动歇一阵"（账号健康，只是不想让它接活，养号动作照旧）。两者都独立持久化。
 func (p *Pool) SetResting(uid string, on bool) (found, changed bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -201,15 +186,15 @@ func (p *Pool) RestingState(uid string) (resting, ok bool) {
 	return e.resting, true
 }
 
-// ManualDisabledState 读单个账号的手动停用态（供端点回显）。uid 不存在时 ok=false。
-func (p *Pool) ManualDisabledState(uid string) (disabled bool, reason string, ok bool) {
+// DisabledState 读单个账号的禁用态与来源（供端点回显）。uid 不存在时 ok=false。
+func (p *Pool) DisabledState(uid string) (disabled bool, reason string, source DisabledSource, ok bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	e, found := p.byUID[uid]
 	if !found {
-		return false, "", false
+		return false, "", "", false
 	}
-	return e.manualDisabled, e.manualReason, true
+	return e.disabled, e.reason, e.disabledSource, true
 }
 
 // ReenableIfCredits 签到后解冻：仅当 remain > 0 且账号非禁用时，清冷却域（余额恢复）。
@@ -488,10 +473,10 @@ func (p *Pool) countsDetailedForRealm(realm string) (total, healthy, cooling, di
 		}
 		total++
 		switch {
-		// 手动停用与自动禁用同归 disabled 计数：对「多少号不参与选号」这个运维
-		// 问题二者等价，分开会让 total/healthy/cooling/disabled 不闭合。
-		// 具体是哪一种看 /status 账号级的 manual_disabled/disabled 两位。
-		case e.disabled || e.manualDisabled:
+		// 禁用（手动/系统同一状态位）单独计数：对「多少号不参与选号」这个运维问题
+		// 它与冷却等价，分开会让 total/healthy/cooling/disabled 不闭合。
+		// 具体是哪种来源看 /status 账号级的 disabled_source。
+		case e.disabled:
 			disabled++
 		case !e.healthy(now):
 			cooling++
@@ -591,7 +576,7 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 		Cooling:           now.Before(e.until) || now.Before(e.breakerUntil) || now.Before(e.degradeUntil) || e.refreshRiskActive(now),
 		Reason:            reason,
 		Disabled:          e.disabled,
-		ManualDisabled:    e.manualDisabled,
+		DisabledSource:    string(e.disabledSource),
 		Resting:           e.resting,
 		CheckedInToday:    e.lastCheckinDay == checkinDay(time.Now()),
 		LastCheckinDay:    e.lastCheckinDay,
@@ -612,11 +597,6 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 	if st.Disabled {
 		// 禁用账号透出禁用原因（运维看不到为什么死）。
 		st.DisabledReason = e.reason
-	}
-	if st.ManualDisabled {
-		// 手动停用原因。与 DisabledReason 分开两个字段：叠加态下运维要能同时看到
-		//「我为什么摘它」和「系统为什么判它坏」，合并成一个字段会互相覆盖。
-		st.ManualReason = e.manualReason
 	}
 	if st.Cooling {
 		// 冷却剩余秒数（向上取整，避免 0 显示为已到期）。口径与 Cooling 判定一致：

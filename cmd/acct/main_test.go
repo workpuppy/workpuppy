@@ -27,7 +27,7 @@ func TestNormalizeListen(t *testing.T) {
 	}
 }
 
-// TestStateLabel 双位状态文案：叠加态两个都列，不合并。
+// TestStateLabel 状态文案：禁用带来源（manual/system）与原因。
 func TestStateLabel(t *testing.T) {
 	cases := []struct {
 		name string
@@ -35,13 +35,13 @@ func TestStateLabel(t *testing.T) {
 		want string
 	}{
 		{"正常", accountStatus{}, "正常"},
-		{"仅手动", accountStatus{ManualDisabled: true}, "手动停用"},
-		{"仅自动", accountStatus{Disabled: true}, "自动禁用"},
-		{"叠加", accountStatus{ManualDisabled: true, Disabled: true}, "手动停用 + 自动禁用"},
-		{"带原因", accountStatus{ManualDisabled: true, ManualReason: "观察"}, "手动停用(观察)"},
+		{"手动禁用", accountStatus{Disabled: true, DisabledSource: "manual"}, "禁用(手动)"},
+		{"系统禁用", accountStatus{Disabled: true, DisabledSource: "system"}, "禁用(系统)"},
+		{"来源缺失", accountStatus{Disabled: true}, "禁用"},
+		{"带原因", accountStatus{Disabled: true, DisabledSource: "manual", DisabledReason: "观察"}, "禁用(手动)(观察)"},
 		{"冷却", accountStatus{Cooling: true}, "冷却中"},
-		{"三者", accountStatus{ManualDisabled: true, Disabled: true, Cooling: true},
-			"手动停用 + 自动禁用 + 冷却中"},
+		{"二者", accountStatus{Disabled: true, DisabledSource: "system", Cooling: true},
+			"禁用(系统) + 冷却中"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

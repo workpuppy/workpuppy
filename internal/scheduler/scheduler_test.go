@@ -863,26 +863,45 @@ func TestRunKeepaliveBackfillsRealm(t *testing.T) {
 	}
 }
 
-// TestCheckinPathIncludesManualDisabled 手动停用号必须仍参与签到（issue #138
-// 用户硬约束：停用只是对话流量摘除，签到/保活照常）。scheduler 判据只看
-// st.Disabled——本锚防未来有人把判据改成「 Disabled || ManualDisabled 」时
-// 无声破坏停用号的积分与 token 活性（审查改造点 4 的 scheduler 回归锚）。
-func TestCheckinPathIncludesManualDisabled(t *testing.T) {
+// TestCheckinPathSkipsDisabled 禁用号不参与签到：禁用 = 完全停，
+// 签到 / 上报 / 旅行 / 保活全部不跑（这是与休养的核心区别，见
+// TestCheckinPathIncludesResting）。scheduler 判据只看 st.Disabled。
+func TestCheckinPathSkipsDisabled(t *testing.T) {
 	stub := &checkinStub{checkinBody: `{"code":0,"msg":"ok","data":{}}`, resourceRemain: 500}
 	s, p := newCheckinS(t, stub)
-	p.SetManualDisabled("u1", true, "观察几天")
+	p.SetDisabled("u1", true, "手动禁用")
+
+	out, err := s.CheckinAll()
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(out) != 1 || out[0].Status != CheckinSkipped || out[0].Detail != "disabled" {
+		t.Fatalf("禁用号应跳过签到, out=%+v", out)
+	}
+	if st, _ := p.Status("u1"); !st.Disabled || st.Credits != 0 {
+		t.Fatalf("禁用号状态不应被签到改动: %+v", st)
+	}
+}
+
+// TestCheckinPathIncludesResting 休养号仍参与签到（休养只摘下游流量，
+// 养号动作照跑）。本锚防未来有人把休养的判据改成与禁用同款时，
+// 无声破坏休养号「积攒 token」的设计意图。
+func TestCheckinPathIncludesResting(t *testing.T) {
+	stub := &checkinStub{checkinBody: `{"code":0,"msg":"ok","data":{}}`, resourceRemain: 500}
+	s, p := newCheckinS(t, stub)
+	p.SetResting("u1", true)
 
 	out, err := s.CheckinAll()
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(out) != 1 || out[0].Status != CheckinOK {
-		t.Fatalf("手动停用号应照常签到, out=%+v", out)
+		t.Fatalf("休养号应照常签到, out=%+v", out)
 	}
 	if stub.refreshCalls.Load() != 0 {
 		t.Errorf("token 未到期不应触发预刷新, calls=%d", stub.refreshCalls.Load())
 	}
-	if st, _ := p.Status("u1"); !st.ManualDisabled || st.Credits != 500 {
-		t.Fatalf("签到后应保留手动位且回填余额: %+v", st)
+	if st, _ := p.Status("u1"); !st.Resting || st.Credits != 500 {
+		t.Fatalf("签到后应保留休养位且回填余额: %+v", st)
 	}
 }

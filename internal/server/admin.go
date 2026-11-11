@@ -1,12 +1,15 @@
-// admin.go 运维管理端点（issue #138 / #118）：账号的临时停用 / 恢复 / 复活。
+// admin.go 运维管理端点（issue #138 / #118）：账号的禁用 / 启用。
 //
-// 设计要点（与维护者在 issue #118 预告的方案一致）：
-//   - 手动停用是**独立状态位** manual_disabled，与自动禁用 disabled 并列、互不影响。
-//     复用同一字段会让运维意图被签到解冻、refresh 成功等自动复活路径意外解除。
-//   - 语义是「对话流量摘除」而非「账号冻结」：不碰冷却/熔断维度，签到与保活照常，
-//     凭证和积分都是活的；恢复时拿到的是停用期间真实发生的状态。
+// 设计要点：
+//   - 账号状态只有**一个**禁用位 disabled：既能由运维手动置位（POST /disable），
+//     也能由系统自动置位（连续 12153 session dead 等）。disabled_source 只记录
+//     来源（manual/system）用于展示与定责，不影响判定。
+//   - 禁用 = 完全停：不接下游流量，且**所有自动任务都不跑**（签到 / 上报 / 旅行 /
+//     保活 / 开学季 / 夜猫子）。想「只摘流量、养号照旧」请用休养（/rest），
+//     两者语义不同，面板上并列展示。
+//   - 「启用」是唯一解除入口：手动禁用与系统禁用一并解除（不再有 revive）。
 //   - 默认关闭（config admin.enabled），开启后与 /status 共用同一把 api_key 鉴权。
-//   - 幂等：面板重试不会报错；重复调用只更新原因文案。
+//   - 幂等：面板重试不会报错；重复禁用只更新原因文案。
 package server
 
 import (
@@ -16,16 +19,16 @@ import (
 	"strings"
 )
 
-// adminState 管理端点的统一响应体：回显操作后的双位状态，面板据此直接更新 UI，
+// adminState 管理端点的统一响应体：回显操作后的禁用态，面板据此直接更新 UI，
 // 不必再打一次 /status。
 type adminState struct {
-	UID            string `json:"uid"`
-	ManualDisabled bool   `json:"manual_disabled"`
-	ManualReason   string `json:"manual_reason,omitempty"`
-	// Disabled 保留在响应里让面板能区分「手动摘除」与「系统判定坏了」——
-	// 恢复按钮的语义对两者不同（enable 解手动位，revive 解自动位）。
-	Disabled bool `json:"disabled"`
-	Changed  bool `json:"changed"`
+	UID      string `json:"uid"`
+	Disabled bool   `json:"disabled"`
+	// DisabledSource manual（运维禁用）/ system（系统判定）。面板据此显示
+	// 「手动禁用」还是「系统禁用」，以及原禁用原因。
+	DisabledSource string `json:"disabled_source,omitempty"`
+	DisabledReason string `json:"disabled_reason,omitempty"`
+	Changed        bool   `json:"changed"`
 }
 
 // adminUID 提取并校验路径段 uid。返回 false 表示已写出响应（uid 为空 → 400），
@@ -61,8 +64,8 @@ func adminReasonFromBody(r *http.Request) string {
 	return strings.TrimSpace(body.Reason)
 }
 
-// adminAccountDisable 手动停用：把账号摘出选号池，但保留在池里
-// （状态/冷却/成本台账继续归它管，签到与保活照常）。
+// adminAccountDisable 禁用：把账号停用（不接下游流量，自动任务也全部不跑）。
+// 与系统判定置位的 disabled 是同一个位，这里把来源记为 manual。
 func (h *Handler) adminAccountDisable(w http.ResponseWriter, r *http.Request) {
 	uid, ok := adminUID(w, r)
 	if !ok {
@@ -72,40 +75,27 @@ func (h *Handler) adminAccountDisable(w http.ResponseWriter, r *http.Request) {
 	if reason == "" {
 		reason = "manual"
 	}
-	found, changed := h.cfg.Pool.SetManualDisabled(uid, true, reason)
+	found, changed := h.cfg.Pool.SetDisabled(uid, true, reason)
 	if !found {
 		writeOpenAIError(w, http.StatusNotFound, "not_found", "account not found: "+uid)
 		return
 	}
-	stopped, stopReason, _ := h.cfg.Pool.ManualDisabledState(uid)
-	writeJSON(w, http.StatusOK, adminState{
-		UID: uid, ManualDisabled: stopped, ManualReason: stopReason,
-		Disabled: h.accountAutoDisabled(uid), Changed: changed,
-	})
+	writeJSON(w, http.StatusOK, h.adminStateOf(uid, changed))
 }
 
-// adminAccountEnable 解除手动停用。若账号仍被系统自动禁用（disabled），它**不会**
-// 因此回到选号池——那需要 revive。响应里的 disabled 字段就是给面板看的提示。
+// adminAccountEnable 启用：解除禁用（唯一解除入口，手动与系统禁用一并解除），
+// 连续 12153 计数一并清零。
 func (h *Handler) adminAccountEnable(w http.ResponseWriter, r *http.Request) {
 	uid, ok := adminUID(w, r)
 	if !ok {
 		return
 	}
-	found, changed := h.cfg.Pool.SetManualDisabled(uid, false, "")
+	found, changed, _, _ := h.cfg.Pool.ClearDisabled(uid)
 	if !found {
 		writeOpenAIError(w, http.StatusNotFound, "not_found", "account not found: "+uid)
 		return
 	}
-	// 「启用」= 让这个号重新可用：顺手清掉系统自动禁用（连续 12153 session dead 计数一并清零）。
-	// 以前拆成 enable / revive 两个按钮，运维要在"停用/封号"两种禁用之间猜——现在一个动作。
-	if h.cfg.Pool.ReviveDisabled(uid) {
-		changed = true
-	}
-	stopped, reason, _ := h.cfg.Pool.ManualDisabledState(uid)
-	writeJSON(w, http.StatusOK, adminState{
-		UID: uid, ManualDisabled: stopped, ManualReason: reason,
-		Disabled: h.accountAutoDisabled(uid), Changed: changed,
-	})
+	writeJSON(w, http.StatusOK, h.adminStateOf(uid, changed))
 }
 
 // adminModelAvailable 接受管理端的成功探测，只解除该账号该模型的 11102 负缓存。
@@ -115,7 +105,7 @@ func (h *Handler) adminModelAvailable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, _, found := h.cfg.Pool.ManualDisabledState(uid); !found {
+	if _, found := h.cfg.Pool.Status(uid); !found {
 		writeOpenAIError(w, http.StatusNotFound, "not_found", "account not found")
 		return
 	}
@@ -128,14 +118,13 @@ func (h *Handler) adminModelAvailable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": model})
 }
 
-// accountAutoDisabled 读某账号当前的自动禁用位（供响应回显）。
-// 复用 Pool.List 的单账号查询：轮询全部账号在小池下开销可忽略，
-// 且避免为此在 pool 上再开一个只读访问器（保持接口面最小）。
-func (h *Handler) accountAutoDisabled(uid string) bool {
-	for _, st := range h.cfg.Pool.List() {
-		if st.UID == uid {
-			return st.Disabled
-		}
+// adminStateOf 读回操作后的禁用态（含来源与原因），供端点响应体使用。
+func (h *Handler) adminStateOf(uid string, changed bool) adminState {
+	st := adminState{UID: uid, Changed: changed}
+	if cur, ok := h.cfg.Pool.Status(uid); ok {
+		st.Disabled = cur.Disabled
+		st.DisabledSource = cur.DisabledSource
+		st.DisabledReason = cur.DisabledReason
 	}
-	return false
+	return st
 }

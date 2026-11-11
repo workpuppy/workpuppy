@@ -18,7 +18,7 @@ func TestRefreshRiskBoundsExpiryAndIndependence(t *testing.T) {
 		if e.refreshRisk.Until != now.Add(tc.want).Unix() {
 			t.Fatalf("wait=%v state=%+v", tc.input, e.refreshRisk)
 		}
-		if !e.refreshRiskActive(now) || e.healthy(now) || e.manualDisabled || e.disabled {
+		if !e.refreshRiskActive(now) || e.healthy(now) || e.disabled {
 			t.Fatal("automatic hold changed independent flags")
 		}
 		if got := p.Pick(""); got == nil || got.UID != "healthy" {
@@ -27,10 +27,9 @@ func TestRefreshRiskBoundsExpiryAndIndependence(t *testing.T) {
 		if e.refreshRiskActive(now.Add(tc.want)) || !e.healthy(now.Add(tc.want)) {
 			t.Fatal("hold did not expire")
 		}
-		e.manualDisabled = true
 		e.disabled = true
 		p.ClearRefreshRisk("risk")
-		if !e.manualDisabled || !e.disabled {
+		if !e.disabled {
 			t.Fatal("clear erased operator/system state")
 		}
 	}
@@ -86,7 +85,7 @@ func TestRefreshRiskStructuredStateRoundTripAndReasonNotAuthority(t *testing.T) 
 	p := New("")
 	p.Add(&auth.Auth{UID: "u"})
 	e := p.byUID["u"]
-	e.manualReason = "account-risk: user-supplied reason"
+	e.reason = "account-risk: user-supplied reason"
 	if e.refreshRiskActive(time.Now()) {
 		t.Fatal("parsed manual reason")
 	}
@@ -105,7 +104,7 @@ func TestRefreshRiskStructuredStateRoundTripAndReasonNotAuthority(t *testing.T) 
 		t.Fatal("persistent deadline invalid")
 	}
 	st, _ := p.Status("u")
-	if st.RefreshRisk == nil || !st.RefreshRisk.Paused || st.ManualDisabled || st.Disabled || st.CoolKind != "refresh_risk" {
+	if st.RefreshRisk == nil || !st.RefreshRisk.Paused || st.Disabled || st.CoolKind != "refresh_risk" {
 		t.Fatalf("wrong status: %+v", st)
 	}
 }

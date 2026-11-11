@@ -51,7 +51,7 @@ func TestRefreshRiskAdminAuthAndIndependentRecovery(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+testAdminPW)
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	st, _ := p.Status("u1")
-	if !st.ManualDisabled || p.RiskPaused("u1") {
+	if !st.Disabled || p.RiskPaused("u1") {
 		t.Fatal("clearing risk changed operator stop")
 	}
 }
