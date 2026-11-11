@@ -129,8 +129,8 @@ func TestRunCatchesUpAfterSleep(t *testing.T) {
 	up := &upstream.Client{HTTP: srv.Client(), ChatBaseCN: srv.URL, BillingBaseCN: srv.URL}
 	s := New(Config{
 		Pool: p, Upstream: up,
-		CheckinAt:   []int{540},
-		KeepaliveAt: []int{1260},
+		CheckinAt:      []int{540},
+		KeepaliveAt:    []int{1260},
 		TravelDisabled: true, ActivityDisabled: true, SchoolDisabled: true, CatDisabled: true,
 	})
 
@@ -139,8 +139,8 @@ func TestRunCatchesUpAfterSleep(t *testing.T) {
 	done := make(chan struct{})
 	go func() { s.Run(ctx); close(done) }()
 
-	time.Sleep(200 * time.Millisecond)                // 让 Run 进入等待（等 21:00）
-	clock.Add(int64(13*time.Hour + 5*time.Minute))    // 睡一夜：20:00 → 次日 09:05
+	time.Sleep(200 * time.Millisecond)             // 让 Run 进入等待（等 21:00）
+	clock.Add(int64(13*time.Hour + 5*time.Minute)) // 睡一夜：20:00 → 次日 09:05
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && f.checkinCalls.Load() == 0 {

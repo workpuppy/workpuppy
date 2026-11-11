@@ -70,11 +70,11 @@ func equalArgs(a, b []string) bool {
 // TestNextWakeSchoolSlot 开学季任务在 school_hours（默认 12 点）处有独立时点。
 func TestNextWakeSchoolSlot(t *testing.T) {
 	s := New(Config{
-		CheckinAt:      []int{540},
+		CheckinAt:         []int{540},
 		TravelDisabled:    true,
 		ActivityDisabled:  true,
 		KeepaliveDisabled: true,
-		SchoolAt:       []int{720},
+		SchoolAt:          []int{720},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 14, 11, 0, 0, 0, time.Local))
 	if want := time.Date(2026, 9, 14, 12, 0, 0, 0, time.Local); !at.Equal(want) {
@@ -88,11 +88,11 @@ func TestNextWakeSchoolSlot(t *testing.T) {
 // TestNextWakeCatSlot 夜猫子任务在 cat_hours（默认 1 点）处有独立时点。
 func TestNextWakeCatSlot(t *testing.T) {
 	s := New(Config{
-		CheckinAt:      []int{540},
+		CheckinAt:         []int{540},
 		TravelDisabled:    true,
 		ActivityDisabled:  true,
 		KeepaliveDisabled: true,
-		CatAt:          []int{60},
+		CatAt:             []int{60},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 14, 23, 0, 0, 0, time.Local))
 	if want := time.Date(2026, 9, 15, 1, 0, 0, 0, time.Local); !at.Equal(want) {
@@ -106,12 +106,12 @@ func TestNextWakeCatSlot(t *testing.T) {
 // TestNextWakeSchoolCatDisabled 显式禁用 school/cat 后排程只剩签到时点（互不影响）。
 func TestNextWakeSchoolCatDisabled(t *testing.T) {
 	s := New(Config{
-		CheckinAt:      []int{1260},
+		CheckinAt:         []int{1260},
 		TravelDisabled:    true,
 		ActivityDisabled:  true,
 		KeepaliveDisabled: true,
-		SchoolAt:       []int{720},
-		CatAt:          []int{60},
+		SchoolAt:          []int{720},
+		CatAt:             []int{60},
 		SchoolDisabled:    true,
 		CatDisabled:       true,
 	})

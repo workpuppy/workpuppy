@@ -522,10 +522,10 @@ func TestNextWakeActivityIndependent(t *testing.T) {
 // TestNextWakeTravelDisabled 旅行禁用后排程里不再有旅行时点（签到照常）。
 func TestNextWakeTravelDisabled(t *testing.T) {
 	s := New(Config{
-		CheckinAt:   []int{540, 1260},
-		TravelAt:    []int{540},
+		CheckinAt:      []int{540, 1260},
+		TravelAt:       []int{540},
 		TravelDisabled: true,
-		KeepaliveAt: []int{1320},
+		KeepaliveAt:    []int{1320},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 11, 8, 0, 0, 0, time.Local))
 	// 旅行禁用 → 09:00 旅行时点不应出现，最近的是 09:00 签到（同小时但签到未禁用）。
@@ -543,10 +543,10 @@ func TestNextWakeTravelDisabled(t *testing.T) {
 // TestNextWakeActivityDisabled 活跃上报禁用后排程里不再有活跃时点。
 func TestNextWakeActivityDisabled(t *testing.T) {
 	s := New(Config{
-		CheckinAt:     []int{540, 1260},
-		ActivityAt:    []int{600},
+		CheckinAt:        []int{540, 1260},
+		ActivityAt:       []int{600},
 		ActivityDisabled: true,
-		KeepaliveAt:   []int{1320},
+		KeepaliveAt:      []int{1320},
 		SchoolDisabled:   true,
 		CatDisabled:      true,
 	})
@@ -562,11 +562,11 @@ func TestNextWakeActivityDisabled(t *testing.T) {
 // TestCheckinDisabledTravelStillRuns 签到禁用时旅行/活跃照跑（验收标准 2）。
 func TestCheckinDisabledTravelStillRuns(t *testing.T) {
 	s := New(Config{
-		CheckinAt:    []int{540, 1260},
+		CheckinAt:       []int{540, 1260},
 		CheckinDisabled: true,
-		TravelAt:     []int{540},
-		ActivityAt:   []int{600},
-		KeepaliveAt:  []int{1320},
+		TravelAt:        []int{540},
+		ActivityAt:      []int{600},
+		KeepaliveAt:     []int{1320},
 	})
 	at, kinds := s.nextWake(time.Date(2026, 9, 11, 8, 0, 0, 0, time.Local))
 	if want := time.Date(2026, 9, 11, 9, 0, 0, 0, time.Local); !at.Equal(want) {
@@ -589,10 +589,10 @@ func TestAllFourDisabledNoSpin(t *testing.T) {
 		KeepaliveDisabled: true,
 		SchoolDisabled:    true,
 		CatDisabled:       true,
-		CheckinAt:      []int{540, 1260},
-		TravelAt:       []int{540},
-		ActivityAt:     []int{600},
-		KeepaliveAt:    []int{1320},
+		CheckinAt:         []int{540, 1260},
+		TravelAt:          []int{540},
+		ActivityAt:        []int{600},
+		KeepaliveAt:       []int{1320},
 	})
 	at, kinds := s.nextWake(time.Now())
 	if !at.IsZero() || len(kinds) != 0 {
@@ -625,8 +625,8 @@ func TestRunDispatchesActivityAndTravel(t *testing.T) {
 	p := pool.New("")
 	up := &upstream.Client{}
 	s := New(Config{
-		Pool:           p,
-		Upstream:       up,
+		Pool:        p,
+		Upstream:    up,
 		CheckinAt:   []int{},
 		TravelAt:    []int{},
 		ActivityAt:  []int{},

@@ -78,10 +78,10 @@ func TestNextWakeKeepaliveOnly(t *testing.T) {
 // TestNextWakeSameInstantFiresAll 签到与保活配到同一整点时两类任务都要执行。
 func TestNextWakeSameInstantFiresAll(t *testing.T) {
 	s := New(Config{
-		CheckinAt:     []int{540, 1320},
-		TravelAt:      []int{}, // 禁用旅行时点干扰（仅测签到+保活同整点）
-		ActivityAt:    []int{}, // 禁用活跃时点干扰
-		KeepaliveAt:   []int{1320},
+		CheckinAt:        []int{540, 1320},
+		TravelAt:         []int{}, // 禁用旅行时点干扰（仅测签到+保活同整点）
+		ActivityAt:       []int{}, // 禁用活跃时点干扰
+		KeepaliveAt:      []int{1320},
 		TravelDisabled:   true,
 		ActivityDisabled: true,
 		SchoolDisabled:   true,
@@ -149,8 +149,8 @@ func TestNextWakeBothDisabledNothingScheduled(t *testing.T) {
 		KeepaliveDisabled: true,
 		SchoolDisabled:    true,
 		CatDisabled:       true,
-		CheckinAt:      []int{540, 1260},
-		KeepaliveAt:    []int{1320},
+		CheckinAt:         []int{540, 1260},
+		KeepaliveAt:       []int{1320},
 	})
 	at, kinds := s.nextWake(time.Now())
 	if !at.IsZero() || len(kinds) != 0 {
@@ -260,8 +260,8 @@ func TestRunCheckinReenablesCoolingAccount(t *testing.T) {
 		BillingBaseCN: srv.URL,
 	}
 	s := New(Config{
-		Pool:           p,
-		Upstream:       up,
+		Pool:        p,
+		Upstream:    up,
 		CheckinAt:   []int{540, 1260},
 		KeepaliveAt: []int{1320},
 	})
