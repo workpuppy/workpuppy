@@ -102,8 +102,8 @@ func (s *Scheduler) runTravel(ctx context.Context) {
 
 // travelOne 单账号单趟状态机：查有无猫 + 查状态 + 最多一个动作，不轮询不等待。
 //
-// 账号内的三次请求（buddy-info → travel/status → 派出/领奖）之间隔一个 0.5~3s 的随机
-// 间隔（s.intraJitter）：同一账号同一秒连打三个请求本身就是机器特征。
+// 账号内的请求（buddy-info → [领养前置上报] → travel/status → 派出/领奖）之间隔一个
+// 0.5~3s 的随机间隔（s.intraJitter）：同一账号同一秒连打多个请求本身就是机器特征。
 // 返回 false 表示 ctx 取消，调用方应停止本轮遍历。
 func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 	buddy, err := s.cfg.Upstream.BuddyInfo(a)
@@ -112,10 +112,21 @@ func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 		return true
 	}
 	if buddy == nil {
+		// 领养前置：上游 chat_5（5 次对话）必须先达成，否则 buddy/first 必然 400。
+		// 「一键猫猫旅行」也是这条链路，所以这里自己把上报补上，不再依赖活跃上报排程
+		// 恰好先跑过；当日已上报过 / 已有猫（已走过领养流程）都会自动跳过。
+		ok, justSent := s.ensureActivityReported(ctx, a, "travel")
+		if !ok {
+			if ctx.Err() != nil {
+				return false // 优雅停机：剩余账号下轮再巡
+			}
+			return true // 上报没发满：本轮不领养（400 是必然结果，不必白打）
+		}
 		if !s.intraJitter(ctx) {
 			return false
 		}
-		s.travelAdopt(a)
+		// justSent=true 说明门槛刚达成，属新状态，豁免 adoptTried 当日防抖。
+		s.travelAdopt(a, justSent)
 		return true
 	}
 	if !s.intraJitter(ctx) {
@@ -169,9 +180,10 @@ func (s *Scheduler) travelClaim(a *auth.Auth, ts *upstream.TravelState) {
 	log.Printf("travel %s: claim ok record=%d reward=%d", logfmt.Label(a.UID, a.Nickname), ts.RecordID, reward)
 }
 
-// travelAdopt 旅行巡检时领养：受 adoptTriedToday 当日防抖约束。
-func (s *Scheduler) travelAdopt(a *auth.Auth) {
-	s.adoptBuddy(a, false)
+// travelAdopt 旅行巡检时领养。force=true 时豁免 adoptTriedToday 当日防抖
+// （本趟刚把 chat_5 前置上报补满，属"门槛刚达成"的新状态）。
+func (s *Scheduler) travelAdopt(a *auth.Auth, force bool) {
+	s.adoptBuddy(a, force)
 }
 
 // travelAdoptForce 活跃上报补满对话量后领养：豁免 adoptTriedToday 当日防抖。

@@ -91,6 +91,13 @@ type Scheduler struct {
 	// （服务端幂等兜底：重启后当日重复 redeem 会拿 409 正常态，无副作用）。
 	rewardClaimed map[string]string
 
+	// activityReported 当日「领养前置对话量」已上报标记：uid → 自然日（CST）。
+	// 领养（buddy/first）的前置是上游 chat_5（5 次对话），靠发 N 条 chat_request_send
+	// 上报事件刷满。旅行与活跃上报两条链路都要先确保这件事，所以标记放在调度器上共享：
+	// 谁先跑到谁发，后跑到的直接沿用（同日不重复对上游打点）。进程重启即清零——
+	// 重启后多发一轮只是重复事件，上游按请求去重，无副作用。
+	activityReported map[string]string
+
 	// checkinMu 串行化签到：定时入口与手动触发互斥，避免同一时刻重复打上游签到接口。
 	checkinMu sync.Mutex
 }
@@ -119,7 +126,8 @@ func New(cfg Config) *Scheduler {
 	if cfg.ActivityReportCount <= 0 {
 		cfg.ActivityReportCount = 1
 	}
-	return &Scheduler{cfg: cfg, adoptTried: make(map[string]string), rewardClaimed: make(map[string]string)}
+	return &Scheduler{cfg: cfg, adoptTried: make(map[string]string), rewardClaimed: make(map[string]string),
+		activityReported: make(map[string]string)}
 }
 
 // checkinRefreshSkew 签到前判定"token 是否临近过期"的时间窗口（10 分钟）。
@@ -702,7 +710,6 @@ func (s *Scheduler) RunActivityNow() {
 
 // runActivity 活跃上报遍历，随 ctx 取消立即退出。
 func (s *Scheduler) runActivity(ctx context.Context) {
-	count := s.cfg.ActivityReportCount
 	// 先筛出真正要跑的账号（禁用/风险暂停/无 accessToken 的跳过），再规划节奏。
 	targets := make([]*auth.Auth, 0, 8)
 	for _, st := range s.cfg.Pool.List() {
@@ -726,33 +733,76 @@ func (s *Scheduler) runActivity(ctx context.Context) {
 		a := targets[idx]
 		// global 账号同样上报（PR #45 实测国际版 /v2/report 在 workbuddy.ai 上 code=0 OK，
 		// 点亮连登）；realmBase 路由/头由 upstream.billingJSON/BillingHeaders 按 realm 切。
-		// 单账号失败只记 WARN 不影响遍历（下方 report err → break 该号 → continue 下号）。
-		// N 条共用同一 conversationId（同会话），requestId 各自独立（每条一个）。
-		cid := fmt.Sprintf("wp-%d", time.Now().UnixMilli())
-		ok := 0
-		for i := 1; i <= count; i++ {
-			rid := fmt.Sprintf("%s-r%d", cid, i)
-			if err := s.cfg.Upstream.ReportChatActivity(a, cid, rid); err != nil {
-				log.Printf("activity %s: report %d/%d: %v", logfmt.Label(a.UID, a.Nickname), i, count, err)
-				break // 本号上报失败：不再续发，streak 自检无意义
+		// 单账号失败只记 WARN 不影响遍历。
+		// 「当日已上报过」直接沿用（旅行链路可能 09:00 已经替这个号发过，见
+		// ensureActivityReported）——同一天不重复对上游打点。
+		if ok, _ := s.ensureActivityReported(ctx, a, "activity"); !ok {
+			if ctx.Err() != nil {
+				return // 优雅停机：剩余账号下轮再报
 			}
-			log.Printf("activity %s: report %d/%d ok", logfmt.Label(a.UID, a.Nickname), i, count)
-			ok++
-			if i < count {
-				// 账号内 N 条之间隔一个随机间隔（0.5~3s）：固定 1.5s 本身就是节奏特征；
-				// 取消时立即放弃本号剩余条数。
-				if !s.intraJitter(ctx) {
-					return
-				}
-			}
-		}
-		if ok < count {
 			continue // N 条未发满：streak 自检与领养均无意义，下个账号
 		}
-		s.checkActivityStreak(a) // N 条全发满 → 回读 streak 自检（只留结论行）
+		s.checkActivityStreak(a) // 上报到位 → 回读 streak 自检（只留结论行）
 		s.travelAdoptForce(a)    // 无猫账号对话量刚补满 → 立即重试领养（豁免防抖）
 		s.claimGrowthRewards(a)  // 连登奖励 + 抽奖：点亮连登后按天领取（finally 语义：失败不拖累上报）
 	}
+}
+
+// reportActivityBurst 发一轮「chat_request_send」活跃上报：N 条共用同一 conversationId
+// （同会话多轮）、requestId 各自独立，条间留 0.5~3s 随机间隔（秒发本身就是机器特征）。
+//
+// 这是领养前置 chat_5（5 次对话）的刷法，也是点亮连登的动作。tag 只用于日志前缀
+// （"activity" / "travel"），便于分辨是谁替这个号发的。
+// 返回 true 表示 N 条全部成功；任一条失败立刻停发（上游短路，续发只会继续失败）。
+// ctx 取消时同样返回 false，调用方据 ctx.Err() 决定是停止本轮还是跳过本号。
+func (s *Scheduler) reportActivityBurst(ctx context.Context, a *auth.Auth, tag string) bool {
+	count := s.cfg.ActivityReportCount
+	cid := fmt.Sprintf("wp-%d", time.Now().UnixMilli())
+	for i := 1; i <= count; i++ {
+		rid := fmt.Sprintf("%s-r%d", cid, i)
+		if err := s.cfg.Upstream.ReportChatActivity(a, cid, rid); err != nil {
+			log.Printf("%s %s: report %d/%d: %v", tag, logfmt.Label(a.UID, a.Nickname), i, count, err)
+			return false
+		}
+		log.Printf("%s %s: report %d/%d ok", tag, logfmt.Label(a.UID, a.Nickname), i, count)
+		if i < count && !s.intraJitter(ctx) {
+			return false
+		}
+	}
+	return true
+}
+
+// ensureActivityReported 确保该账号**当日**已完成领养前置的对话量上报。
+//
+// 两条链路共用（活跃上报排程、猫猫旅行领养分支），语义：
+//   - 当日已上报过 → 直接返回 (true, false)，不重复发（"已经上报过的自动忽略"）；
+//   - 否则发一轮，全部成功才记当日标记，返回 (true, true)。
+//
+// 第二个返回值 justSent 用来判断"门槛是刚达成的"：此时领养属于新状态、应豁免
+// adoptTried 当日防抖（与活跃上报后 travelAdoptForce 的口径一致）。
+func (s *Scheduler) ensureActivityReported(ctx context.Context, a *auth.Auth, tag string) (ok, justSent bool) {
+	if s.activityReportedToday(a.UID) {
+		return true, false
+	}
+	if !s.reportActivityBurst(ctx, a, tag) {
+		return false, false
+	}
+	s.markActivityReported(a.UID)
+	return true, true
+}
+
+// activityReportedToday 该账号当日是否已完成领养前置的对话量上报。
+func (s *Scheduler) activityReportedToday(uid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activityReported[uid] == travelDay(time.Now())
+}
+
+// markActivityReported 记录该账号当日已完成对话量上报。
+func (s *Scheduler) markActivityReported(uid string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activityReported[uid] = travelDay(time.Now())
 }
 
 // checkActivityStreak 上报成功后回读连登天数（只读 oracle，发现静默失败）。

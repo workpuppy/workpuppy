@@ -391,7 +391,7 @@ docker logs wp | grep 登录密码
 | `POST` | `/admin/login` | 验密码：`{"password":"…"}` → `{"ok":true}`；401 / 429 / 503 |
 | `GET` | `/admin/status` | 与 `/status` 同形，但走管理凭据 |
 | `POST` | `/admin/accounts/refresh` | **刷新余额**：逐账号打上游只读 `billing` 接口回写积分（导入的号首次刷新后才有值）；串行 + 间隔，单飞防重入 |
-| `POST` | `/admin/travel/run` | **一键猫猫旅行**：手动补一次自动计划任务（领养 / 派出 / 领奖），异步执行回 202 |
+| `POST` | `/admin/travel/run` | **一键猫猫旅行**：手动补一次自动计划任务（领养 / 派出 / 领奖），异步执行回 202。无猫账号会**先补齐领养前置的对话量上报**（同日已发过则跳过），再领养——不再出现"点了按钮却因为 `chat_5` 未满而 400" |
 | `GET` | `/admin/accounts` | 账号清单：池运行态 + 凭证元信息（含未入池的账号文件） |
 | `GET` | `/admin/accounts/{uid}` | 单账号详情 |
 | `POST` | `/admin/accounts/checkin` | **一键签到**：自动跳过今天已签到的账号（签到状态持久化在 `state.json`），与调度器共享单飞锁，忙时 409 |

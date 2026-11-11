@@ -21,15 +21,25 @@ type travelStub struct {
 	buddy       string // /buddy/info 的 data.buddy 原文（"null" 或对象）
 	state       string // /travel/status 的 data 原文
 	firstStatus int    // /buddy/first 的 HTTP 状态码（非 0 时按业务错误返回）
+	reportFail  bool   // /v2/report 是否失败（模拟上报通道不可用）
 
 	infoCalls, statusCalls, departCalls atomic.Int32
 	claimCalls, firstCalls, agreeCalls  atomic.Int32
+	reportCalls                         atomic.Int32
 	location, record                    atomic.Int64
 }
 
 func (s *travelStub) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v2/report":
+			// 领养前置的活跃上报（chat_5 刷满）：旅行链路会先发这一轮再领养。
+			s.reportCalls.Add(1)
+			if s.reportFail {
+				http.Error(w, "report unavailable", 500)
+				return
+			}
+			w.Write([]byte(`{"code":0,"msg":"ok","data":{}}`))
 		case "/activity/growth/buddy/info":
 			s.infoCalls.Add(1)
 			fmt.Fprintf(w, `{"code":0,"msg":"ok","data":{"buddy":%s}}`, s.buddy)
@@ -127,7 +137,8 @@ func TestRunCheckinNowNoLongerTriggersTravel(t *testing.T) {
 	}
 }
 
-// TestRunTravelNowAdoptsOnNoBuddy 旅行独立排程：无猫 → 同意协议 + 领养。
+// TestRunTravelNowAdoptsOnNoBuddy 旅行独立排程：无猫 → 先补前置上报 → 同意协议 + 领养。
+// 领养的前置是上游 chat_5（5 次对话），旅行链路自己把上报补上，不依赖活跃上报排程先跑过。
 func TestRunTravelNowAdoptsOnNoBuddy(t *testing.T) {
 	fastTravel(t)
 	stub := &travelStub{buddy: "null"}
@@ -140,11 +151,101 @@ func TestRunTravelNowAdoptsOnNoBuddy(t *testing.T) {
 	if n := stub.infoCalls.Load(); n != 1 {
 		t.Errorf("buddy/info calls=%d want 1", n)
 	}
+	if n := stub.reportCalls.Load(); n != 1 {
+		t.Errorf("report calls=%d want 1（领养前必须补前置上报；默认 ActivityReportCount=1）", n)
+	}
 	if n := stub.firstCalls.Load(); n != 1 {
 		t.Errorf("buddy/first calls=%d want 1（无猫应尝试领养）", n)
 	}
 	if n := stub.agreeCalls.Load(); n != 1 {
 		t.Errorf("buddy/agreement calls=%d want 1", n)
+	}
+	// 上报成功即记当日标记：同日再跑不重复发。
+	if !s.activityReportedToday("u1") {
+		t.Error("上报成功后应记当日已上报标记")
+	}
+}
+
+// TestRunTravelAdoptReportsFullBurst 领养前置按 activity_report_count 发满（生产默认 5 条，
+// 对应上游 chat_5 的 5 次对话），而不是只发一条。
+func TestRunTravelAdoptReportsFullBurst(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{buddy: "null"}
+	srv := stub.server()
+	defer srv.Close()
+
+	p := pool.New("")
+	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt", ExpiresAt: 9999999999})
+	up := &upstream.Client{HTTP: srv.Client(), ChatBaseCN: srv.URL, BillingBaseCN: srv.URL}
+	s := New(Config{Pool: p, Upstream: up, ActivityReportCount: 5})
+
+	s.RunTravelNow()
+
+	if n := stub.reportCalls.Load(); n != 5 {
+		t.Errorf("report calls=%d want 5（chat_5 需 5 次对话）", n)
+	}
+	if n := stub.firstCalls.Load(); n != 1 {
+		t.Errorf("buddy/first calls=%d want 1", n)
+	}
+}
+
+// TestRunTravelAdoptSkipsReportsWhenAlreadyReported 当日已上报过 → 不重复发，仍可领养。
+func TestRunTravelAdoptSkipsReportsWhenAlreadyReported(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{buddy: "null"}
+	srv := stub.server()
+	defer srv.Close()
+
+	s, _ := newTravelScheduler(t, srv, "u1")
+	s.markActivityReported("u1") // 模拟活跃上报排程 10:00 已经发过
+	s.RunTravelNow()
+
+	if n := stub.reportCalls.Load(); n != 0 {
+		t.Errorf("report calls=%d want 0（已上报过应自动忽略）", n)
+	}
+	if n := stub.firstCalls.Load(); n != 1 {
+		t.Errorf("buddy/first calls=%d want 1（前置已满足，仍应领养）", n)
+	}
+}
+
+// TestRunTravelAdoptSkipsReportsWhenBuddyExists 已有猫 = 早就走过领养流程 → 不发上报、不领养。
+func TestRunTravelAdoptSkipsReportsWhenBuddyExists(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{buddy: `{"id":7,"name":"档案喵"}`,
+		state: `{"state":"traveling","record_id":42}`}
+	srv := stub.server()
+	defer srv.Close()
+
+	s, _ := newTravelScheduler(t, srv, "u1")
+	s.RunTravelNow()
+
+	if n := stub.reportCalls.Load(); n != 0 {
+		t.Errorf("report calls=%d want 0（有猫说明前置早已满足）", n)
+	}
+	if n := stub.firstCalls.Load(); n != 0 {
+		t.Errorf("buddy/first calls=%d want 0", n)
+	}
+}
+
+// TestRunTravelAdoptSkipsWhenReportsFail 前置上报失败 → 本轮不领养（buddy/first 必然 400，
+// 不做无意义的上游调用），也不记已上报标记（留给后续排程重试）。
+func TestRunTravelAdoptSkipsWhenReportsFail(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{buddy: "null", reportFail: true}
+	srv := stub.server()
+	defer srv.Close()
+
+	s, _ := newTravelScheduler(t, srv, "u1")
+	s.RunTravelNow()
+
+	if n := stub.reportCalls.Load(); n != 1 {
+		t.Errorf("report calls=%d want 1（失败即停发）", n)
+	}
+	if n := stub.firstCalls.Load(); n != 0 {
+		t.Errorf("buddy/first calls=%d want 0（前置未满足不应硬领养）", n)
+	}
+	if s.activityReportedToday("u1") {
+		t.Error("上报失败不应记「当日已上报」标记")
 	}
 }
 
@@ -300,7 +401,30 @@ func TestRunTravelAdoptThresholdTriedOncePerDay(t *testing.T) {
 	}
 }
 
-// TestRunTravelAdoptTriedExpiresNextDay 跨自然日后允许重新尝试领养。
+// TestRunTravelAdoptBypassesDebounceWhenPreconditionJustSent 本趟刚把前置上报补满
+// （门槛刚达成）→ 豁免 adoptTried 当日防抖、立即领养。
+// 背景：09:00 那趟已 400 过（那时 chat_5 还没满），21:00/手动那趟补满前置后必须能重试，
+// 否则要白等一天。
+func TestRunTravelAdoptBypassesDebounceWhenPreconditionJustSent(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{buddy: "null", firstStatus: 400}
+	srv := stub.server()
+	defer srv.Close()
+
+	s, _ := newTravelScheduler(t, srv, "u1")
+	s.markAdoptTried("u1") // 模拟当日早先已试过且 400
+	s.RunTravelNow()
+
+	if n := stub.reportCalls.Load(); n != 1 {
+		t.Errorf("report calls=%d want 1（本轮补前置）", n)
+	}
+	if n := stub.firstCalls.Load(); n != 1 {
+		t.Errorf("first calls=%d want 1（门槛刚达成应豁免防抖）", n)
+	}
+}
+
+// TestRunTravelAdoptTriedExpiresNextDay 前置当日已满足、且当日已试过领养 → 不再重试；
+// 跨自然日后回头重试。
 func TestRunTravelAdoptTriedExpiresNextDay(t *testing.T) {
 	fastTravel(t)
 	stub := &travelStub{buddy: "null", firstStatus: 400}
@@ -308,10 +432,14 @@ func TestRunTravelAdoptTriedExpiresNextDay(t *testing.T) {
 	defer srv.Close()
 
 	s, _ := newTravelScheduler(t, srv, "u1")
-	s.markAdoptTried("u1") // 当日已试过
+	s.markAdoptTried("u1")       // 当日已试过
+	s.markActivityReported("u1") // 前置当日也已满足 → 本趟不再补发，走非 force 分支
 	s.RunTravelNow()
 	if n := stub.firstCalls.Load(); n != 0 {
-		t.Fatalf("first calls=%d want 0（当日已试过）", n)
+		t.Fatalf("first calls=%d want 0（当日已试过且前置已满足）", n)
+	}
+	if n := stub.reportCalls.Load(); n != 0 {
+		t.Errorf("report calls=%d want 0（已上报过应忽略）", n)
 	}
 
 	s.adoptTried["u1"] = "2000-01-01" // 模拟昨日记录

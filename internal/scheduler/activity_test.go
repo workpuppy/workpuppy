@@ -303,6 +303,34 @@ func (s *activityBurstStub) handler() http.Handler {
 	})
 }
 
+// TestRunActivitySkipsReportsWhenAlreadyReported 当日已上报过（旅行链路 09:00 可能已替它发过）
+// → 活跃上报不再重复发，但 streak 自检 / 领养 / 领奖仍照跑。
+func TestRunActivitySkipsReportsWhenAlreadyReported(t *testing.T) {
+	fastActivity(t)
+	stub := &activityBurstStub{}
+	srv := httptest.NewServer(stub.handler())
+	defer srv.Close()
+
+	p := pool.New("")
+	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt", ExpiresAt: 9999999999})
+	up := &upstream.Client{HTTP: srv.Client(), ChatBaseCN: srv.URL, BillingBaseCN: srv.URL}
+	s := New(Config{Pool: p, Upstream: up, ActivityReportCount: 5})
+
+	s.markActivityReported("u1") // 模拟旅行链路已发过
+	s.RunActivityNow()
+
+	if n := len(stub.reportBodies); n != 0 {
+		t.Errorf("report bodies=%d want 0（当日已上报过应自动忽略）", n)
+	}
+	// 领养链路照跑：无猫 → agreement + first 各一次。
+	if n := stub.agreeCalls.Load(); n != 1 {
+		t.Errorf("agreement calls=%d want 1", n)
+	}
+	if n := stub.firstCalls.Load(); n != 1 {
+		t.Errorf("first calls=%d want 1", n)
+	}
+}
+
 // TestRunActivityNowBurstSharedCIDIndependentRID 5 连发：共用同一 conversationId，
 // requestId 各条独立（同会话多轮）；5 条都成功后只一次 streak 自检。
 func TestRunActivityNowBurstSharedCIDIndependentRID(t *testing.T) {

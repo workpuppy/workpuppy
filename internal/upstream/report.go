@@ -4,7 +4,9 @@
 // 200 但静默丢弃（实测见 REPORT-active-map.md §2）。
 //
 // 一条上报同时点亮 growth 连登 + 解锁 first_buddy 任务（领养前置）。
-// 风控口径：每号每天 1 次即可（activity_hours 单时点），不做多时点高频上报。
+// 条数口径：单时点、每号 N 条（默认 5，由 schedule.activity_report_count 控制）——
+// 领养的前置任务是 chat_5（5 次对话），N 条同一 conversationId 内的多轮事件把它刷满；
+// 只在 activity_hours 这一个时点发，不做多时点高频上报。
 package upstream
 
 import (
