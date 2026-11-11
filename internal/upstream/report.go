@@ -40,7 +40,7 @@ func (c *Client) billingJSON(a *auth.Auth, method, path string, body any) (json.
 	return c.doJSON(a, req)
 }
 
-// chatRequestEvent 客户端 chat_request_send 事件完整形状（与 probe_active.py chat_event 对齐）。
+// chatRequestEvent 客户端 chat_request_send 事件完整形状（与官方桌面端上报对齐）。
 // userId 为必填字段（= a.UID）；conversationId 由调用方生成，无需真实会话。
 type chatRequestEvent struct {
 	EventCode             string `json:"eventCode"`
@@ -89,7 +89,7 @@ type chatRequestEvent struct {
 // 与 issue #35 会话头族（X-Conversation-Request-ID）保持独立：本接口是 growth 域
 // 活跃上报（仅点亮连登/first_buddy，每号每天 1 次），event.requestId 是事件级标识，
 // 后台按 growth 事件去重，不走 chat 后台的 X-Conversation-Request-ID 聚合——对齐
-// 官方 chat_request_send 事件形状（probe_active.py），刻意不复用聚合主键。
+// 官方 chat_request_send 事件形状，刻意不复用聚合主键。
 func (c *Client) ReportChatActivity(a *auth.Auth, conversationID, requestID string) error {
 	if requestID == "" {
 		requestID = conversationID

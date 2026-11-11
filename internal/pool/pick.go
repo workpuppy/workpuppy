@@ -314,7 +314,7 @@ type weighted struct {
 // 又不至于压过总量项让"总量大但快过期少"的号被完全饿死。
 var expiringWeight = 8.0
 
-// pickWeighted 三因子加权随机（claude-api selectWeightedRandom 参考口径）：
+// pickWeighted 三因子加权随机（按权重抽签，不是轮询）：
 //
 //	weight = (credits 比例 × 10 + 快过期积分占比 × expiringWeight + idleWeight) × 手写权重
 //

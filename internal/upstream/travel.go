@@ -132,8 +132,8 @@ func (c *Client) BuddyAgreement(a *auth.Auth) error {
 	return err
 }
 
-// GrowthStreak 查询连登天数（只读 oracle）。响应 `data.streak.days`（probe_active.py
-// 实测口径：`(s.get("data", {}).get("streak", {}) or {}).get("days")`）。
+// GrowthStreak 查询连登天数（只读 oracle）。响应 `data.streak.days`
+// （实测口径：`(data.streak or {}).days`，缺失/为 null 均按 0）。
 // GET 失败（HTTP 非 2xx / 业务 code != 0）返回 *Error；缺 streak/days 字段返回 0
 // （days==0 即活跃自检的「上报 200 但静默丢弃」告警信号）。
 func (c *Client) GrowthStreak(a *auth.Auth) (int, error) {

@@ -8,7 +8,7 @@ import (
 	"wp/internal/auth"
 )
 
-// TestGrowthStreakParsesDays 解析 data.streak.days（probe_active.py 同口径）。
+// TestGrowthStreakParsesDays 解析 data.streak.days（上游实测口径）。
 func TestGrowthStreakParsesDays(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/activity/growth/streak" {

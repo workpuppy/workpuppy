@@ -12,7 +12,5 @@
 *.exe binary
 *.zip binary
 
-# Windows 脚本按 CRLF 有实际意义（PowerShell 5.1 / cmd）——归档目录里的旧脚本保持原样
-old/windows/*.ps1 text eol=crlf
-old/windows/*.cmd text eol=crlf
+# Windows 脚本按 CRLF 有实际意义（PowerShell 5.1 / cmd）
 *.cmd text eol=crlf

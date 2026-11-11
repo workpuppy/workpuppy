@@ -1,5 +1,5 @@
 // growth_reward.go growth 域「连登奖励兑换 + 连登抽奖」接口。
-// 逆向来源：CN web 成长中心 SPA（/tmp/wb-web/growthSpace-u5lxZ5hE.js）+ GrowthCenterPage
+// 逆向来源：CN web 成长中心 SPA + GrowthCenterPage
 //
 //	GET  /activity/growth/streak          → data.streak.days + data.redemption_status（各档状态）
 //	POST /activity/growth/redeem          → {"tier":"7d","client_token":"<uuid>"}（连登奖励兑换）
@@ -12,8 +12,8 @@
 // chances 即抽奖次数，凭它调 draw。
 //
 // 全部走 chatBase + BillingHeaders（growthJSON，与 travel.go 同域同信封）；
-// realm 路由照旧——global 的 /activity/growth/* 同构并存（/tmp/analysis-global-credit.md
-// §1.1 实证：lottery/streak/redeem 端点在国际版上线）。
+// realm 路由照旧——global 的 /activity/growth/* 同构并存（lottery/streak/redeem
+// 端点在国际版同样上线）。
 package upstream
 
 import (

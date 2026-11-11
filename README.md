@@ -504,7 +504,6 @@ internal/configdata/ 内嵌默认配置（config.default.json）
 internal/webui/      管理后台静态资源（vendored Bootstrap，embed）
 internal/session/    会话粘性与路由
 internal/redisstore/ 会话镜像（可选）
-old/                 归档的旧 Python/Next 面板（不入库、不参与构建）
 ```
 
 ---
@@ -526,7 +525,7 @@ old/                 归档的旧 Python/Next 面板（不入库、不参与构�
    ```bash
    node scripts/ui-login-check.mjs     # 需 Edge/Chrome + CDP，见脚本头注释
    ```
-5. **不入库**：`old/`、`auths/`、`data/`、真实 `config.json`（`.gitignore` / `.dockerignore` 已排除）。
+5. **不入库**：`auths/`、`data/`、真实 `config.json`（`.gitignore` / `.dockerignore` 已排除）。
 6. **不重写已发布的历史**：只有尚未推送的提交才允许 `reset`。
 7. **默认值只写在 `internal/configdata/config.default.json`**（随二进制内嵌）。改默认值就改那份
    JSON，不要再往 Go 代码里塞字面量；根目录副本用 `go run ./cmd/config-default -write` 同步，
@@ -576,7 +575,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 
 ## 许可
 
-MIT。上游基线见仓库 `LICENSE`；归档面板在 `old/`（不入库、不参与构建）。
+MIT。版权与许可声明见仓库 `LICENSE`。
 
 第三方依赖（均为 MIT/Apache-2.0，纯 Go，无 cgo）：
 

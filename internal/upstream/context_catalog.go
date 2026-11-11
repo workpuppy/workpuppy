@@ -15,9 +15,8 @@
 // 分表必要（与 effort 档位的 realm 分表刻意不同）。
 //
 // 值来源两类，逐条注释标注：
-//   - fork 实测：706412584 直连上游 /console/enterprises/personal/models 的
-//     maxInputTokens（/tmp/fork_diffs/70_927f57f9.diff，2026-09-13 实测；
-//     global 侧无法直测、按同 id 外推）；
+//   - 上游实测：直连 /console/enterprises/personal/models 的 maxInputTokens
+//     （2026-09-13 实测；global 侧无法直测、按同 id 外推）；
 //   - models.dev：https://models.dev/ 收录值（2026-09-16 查询，取多 provider 共识值；
 //     官方源如 moonshotai/zai 优先）。未收录或歧义大者不编造。
 package upstream

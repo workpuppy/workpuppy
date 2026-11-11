@@ -494,7 +494,7 @@ type stateFile struct {
 	Accounts map[string]stateAccount `json:"accounts"`
 }
 
-// defaultBreaker* 熔断器默认参数（FreeBuff2API 参考口径）。
+// defaultBreaker* 熔断器默认参数（3 连败熔断、30 分钟起、指数退避封顶 6 小时）。
 const (
 	defaultBreakerThreshold   = 3
 	defaultBreakerCooldown    = 30 * time.Minute
@@ -559,7 +559,7 @@ func SessionDeadThreshold() int { return sessionDeadThreshold }
 // 无论 streak 累积多少，封顶逻辑总会先生效，此值只是溢出兜底。
 const softStreakShiftMax = 16
 
-// defaultIdle* 闲置补偿默认参数（claude-api selectWeightedRandom 参考口径）。
+// defaultIdle* 闲置补偿默认参数：每闲置 1 小时 +0.5 权重、封顶 5。
 const (
 	defaultIdleWeightPerHour = 0.5
 	defaultIdleWeightMax     = 5.0
