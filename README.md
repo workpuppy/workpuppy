@@ -61,16 +61,31 @@ git clone https://github.com/workpuppy/workpuppy.git
 cd workpuppy
 cp config.default.json config.json     # 见下方「最小可用配置」：其实只需 api_key + admin.enabled
 
+# 两个数据目录必须先建好、并交给容器内的 app(uid 10001)：
+#   - 镜像里虽然已有 /app/auths、/app/data（属主 app:app），但 -v 绑定挂载会**覆盖**它们；
+#   - 宿主目录不存在时由 Docker 以 root 创建，容器内 uid 10001 写不进去。
+mkdir -p auths data
+sudo chown -R 10001:10001 auths data   # macOS / Windows 的 Docker Desktop 不需要；rootless Docker 也不需要
+
 docker run -d --name wp -p 7863:7863 \
   -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
   -v "$PWD/config.json:/app/config.json:ro" \
   ghcr.io/workpuppy/workpuppy:latest
 ```
 
+> **不建目录 / 不 chown 会怎样**（Linux rootful Docker）：
+> - `auths/` 不可写 → 扫码加号落盘失败；token 刷新成功但**回写失败**（重启后还在用旧 token）；
+> - `data/` 不可写 → 日志持续刷 `state.json 落盘失败`、`credit-daily 落盘失败`，积分/签到/禁用状态重启即丢；
+> - 症状通常表现为"服务能起、面板能开，但账号数一直是 0 或状态不持久"。
+>
+> 另有一个容易踩的坑：`-v "$PWD/config.json:/app/config.json:ro"` 如果**文件不存在**，Docker 会建一个**同名目录**挂进去；
+> 服务会 WARNING 回落内置默认配置（`api_key` 是占位符 `test_key`，等于不鉴权）。所以 `cp` 一定要在 `docker run` **之前**做。
+
 ### Docker Compose
 
 ```bash
 cp config.default.json config.json
+mkdir -p auths data && sudo chown -R 10001:10001 auths data   # 同上一节：Linux 必需
 docker compose up -d --build        # 或 docker compose up -d（用已发布镜像）
 ```
 
@@ -90,6 +105,9 @@ docker logs wp | grep 登录密码
 
 # 2) 添加账号（扫码）
 ./login.sh
+#    在宿主机跑会产生属主为当前用户的文件；Linux 上记得交还给容器用户：
+#    sudo chown -R 10001:10001 auths
+#    （更省事的做法：docker compose exec -it wp bash -c './login.sh'，容器内落盘属主天然是 10001）
 
 # 3) 浏览器打开管理后台：http://127.0.0.1:7863/
 #    粘贴上面那串密码（没有用户名）
@@ -600,6 +618,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 |---|---|
 | `WARNING: 找不到配置文件 … 改用内置默认配置` | 没挂载 `config.json`。此时 `api_key` 是占位符 `test_key`，复制一份 `config.default.json` 改名即可 |
 | 容器起不来，日志说 `config.json 是个**目录**` | `docker compose` 挂载不存在的宿主机文件时 Docker 会创建同名目录；先在宿主机 `cp config.default.json config.json` |
+| 面板能开，但**账号数一直是 0** / 日志刷 `state.json 落盘失败: permission denied` | `auths/`、`data/` 的宿主目录属主不是容器用户：`sudo chown -R 10001:10001 auths data`（Docker Desktop / rootless 无需）。详见「快速开始」的 Docker 一节 |
 | `/status` 回 401 | 正常：数据面要 `api_key`；管理面才用管理密码 |
 | `/healthz` 回 503 | 活着但没有可用账号（0 个账号 / 全部冷却或禁用） |
 | `/admin/*` 回 404 | `admin.enabled=false`，管理面未注册 |
