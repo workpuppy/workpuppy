@@ -287,7 +287,7 @@ const CREDIT_SERIES = [
   { key: 'credits', name: '日终总积分', color: '#0d6efd', axis: 'left' },
   { key: 'earned', name: '当日获得', color: '#198754', axis: 'right' },
   { key: 'spent', name: '当日消耗', color: '#dc3545', axis: 'right' },
-  { key: 'adjust', name: '当日修正', color: '#fd7e14', axis: 'right' },
+  { key: 'adjust', name: '当日调整', color: '#fd7e14', axis: 'right' },
 ];
 
 function svgNode(tag, attrs = {}) {
@@ -389,7 +389,7 @@ function drawLineChart(host, labels, series) {
     // 轴标签只在图内，这里再给一句人话，免得看左轴/右轴搞混。
   }, [
     el('span', { text: '左轴：日终总积分' }),
-    el('span', { text: '右轴：当日获得 / 消耗 / 修正' }),
+    el('span', { text: '右轴：当日获得 / 消耗 / 调整' }),
   ]));
 }
 
