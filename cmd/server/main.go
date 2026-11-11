@@ -337,7 +337,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go sch.Run(ctx)
-	go credits.Run(ctx, 5*time.Second)
+	// 积分日账落盘节奏：默认 30s（日粒度数据丢一段不损语义，日末余额可上游重查）。
+	// 5s 跟随 state.json 会把 8 成写入量花在这份"当天就能从上游重算"的文件上。
+	creditFlush := cfg.StateCreditFlushIntervalDur
+	if creditFlush <= 0 {
+		creditFlush = 30 * time.Second
+	}
+	go credits.Run(ctx, creditFlush)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,

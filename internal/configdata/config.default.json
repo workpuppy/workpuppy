@@ -131,7 +131,9 @@
     "watch_interval": "5s"
   },
   "state": {
-    "flush_interval": "5s"
+    "flush_interval": "5s",
+    "soft_flush_interval": "30s",
+    "credit_flush_interval": "30s"
   },
   "risk": {
     "waf_window": "60s",

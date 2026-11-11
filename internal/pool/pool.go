@@ -15,7 +15,17 @@ type Pool struct {
 	mu      sync.RWMutex
 	byUID   map[string]*entry
 	stateFp string
-	dirty   atomic.Bool // 内存有变更待落盘
+	// dirty 关键状态有变更：禁用/休养/签到日/冷却/熔断/刷新风控这类会改变选号与任务
+	// 行为的字段。落盘上界 = flushInterval（默认 5s）。
+	dirty atomic.Bool
+	// softDirty 软计数有变更：余额的请求内插估算、成功/失败计数、模型成本台账。
+	// 这些数据丢一段不影响判定（余额下次签到/刷新余额由上游权威值覆盖，成本台账有
+	// 6h TTL），所以按 softFlushInterval（默认 30s）合并落盘，平时顺手搭关键落盘的
+	// 顺风车。为什么分两级：纯接流的部署里每个成功请求都会改这些计数，若随关键状态
+	// 每 5s 全量重写 state.json，写放大没有任何收益。
+	softDirty atomic.Bool
+	// saves 落盘次数（仅测试观测用：验证"软计数合批"与"无变更不写盘"）。
+	saves atomic.Int64
 	// store 池状态快照镜像（redisstore.Store）；nil = 无需镜像（未配置 Redis / Noop 之外也可能 nil）。
 	// SaveState/LoadState 经它接线，与本地 state.json 并存作启动恢复备份。
 	store StoreSnapshotter

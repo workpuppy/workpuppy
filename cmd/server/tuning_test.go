@@ -32,6 +32,8 @@ func TestTuningsDefaultsComeFromDefaultConfig(t *testing.T) {
 		{"upstream.device_token_ttl", c.DeviceTokenTTLDur, 5 * time.Minute},
 		{"auths.watch_interval", c.AuthsWatchIntervalDur, 5 * time.Second},
 		{"state.flush_interval", c.StateFlushIntervalDur, 5 * time.Second},
+		{"state.soft_flush_interval", c.StateSoftFlushIntervalDur, 30 * time.Second},
+		{"state.credit_flush_interval", c.StateCreditFlushIntervalDur, 30 * time.Second},
 		{"risk.waf_window", c.RiskWafWindowDur, 60 * time.Second},
 		{"models.catalog_timeout", c.ModelsCatalogTimeoutDur, 5 * time.Second},
 		{"models.catalog_refresh_cooldown", c.ModelsCatalogRefreshDur, 5 * time.Minute},
@@ -103,6 +105,49 @@ func TestTuningsUserOverride(t *testing.T) {
 	// 没写的键仍取默认
 	if c.AuthsWatchIntervalDur != 5*time.Second {
 		t.Errorf("未写的键应保留默认：auths.watch_interval=%v", c.AuthsWatchIntervalDur)
+	}
+}
+
+// 落盘节奏（state.*）的覆盖与钳制：用户可调，但必须落在 [1s, 5m]。
+//
+// 背景：默认 5s/30s 的分工是「关键状态 5s 上界、软计数与积分日账 30s 合批」；
+// 配成 0.1s 只会把磁盘写爆，配成 1h 则让崩溃丢的数据超出可接受范围。
+func TestFlushIntervalsClamped(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "c.json")
+	body := `{"state":{"flush_interval":"100ms","soft_flush_interval":"500ms","credit_flush_interval":"10m"}}`
+	if err := os.WriteFile(fp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.StateFlushIntervalDur != time.Second {
+		t.Errorf("flush_interval=100ms 应钳到 1s，实际 %v", c.StateFlushIntervalDur)
+	}
+	if c.StateSoftFlushIntervalDur != time.Second {
+		t.Errorf("soft_flush_interval=500ms 应钳到 1s，实际 %v", c.StateSoftFlushIntervalDur)
+	}
+	if c.StateCreditFlushIntervalDur != 5*time.Minute {
+		t.Errorf("credit_flush_interval=10m 应钳到 5m，实际 %v", c.StateCreditFlushIntervalDur)
+	}
+
+	// 区间内原样生效；未写的键保留默认值（默认层来自 config.default.json）。
+	fp2 := filepath.Join(dir, "c2.json")
+	if err := os.WriteFile(fp2, []byte(`{"state":{"soft_flush_interval":"45s"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(fp2)
+	if err != nil {
+		t.Fatalf("load2: %v", err)
+	}
+	if c2.StateSoftFlushIntervalDur != 45*time.Second {
+		t.Errorf("soft_flush_interval=45s 应原样生效，实际 %v", c2.StateSoftFlushIntervalDur)
+	}
+	if c2.StateFlushIntervalDur != 5*time.Second || c2.StateCreditFlushIntervalDur != 30*time.Second {
+		t.Errorf("未写的落盘键应保留默认 5s/30s，实际 %v/%v",
+			c2.StateFlushIntervalDur, c2.StateCreditFlushIntervalDur)
 	}
 }
 

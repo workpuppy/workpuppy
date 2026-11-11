@@ -237,9 +237,18 @@ type Config struct {
 		WatchInterval string `json:"watch_interval"`
 	} `json:"auths"`
 
-	// State 状态落盘（默认 "5s"）。
+	// State 状态落盘节奏。
+	//
+	// 两级脏位 + 两个文件各有自己的间隔（都可配）：
+	//   - flush_interval：关键状态（禁用/休养/签到日/冷却/熔断/刷新风控）的上界，默认 5s；
+	//   - soft_flush_interval：软计数（余额内插估算、成功/失败计数、成本台账）的合并
+	//     落盘间隔，默认 30s——这些是纯流量下每请求都变的数据，跟 5s 走纯属写放大；
+	//   - credit_flush_interval：积分日账（data/credit-daily.json）的落盘间隔，默认 30s，
+	//     日粒度数据丢 30s 不损语义（日末余额可由上游重查）。
 	State struct {
-		FlushInterval string `json:"flush_interval"`
+		FlushInterval       string `json:"flush_interval"`
+		SoftFlushInterval   string `json:"soft_flush_interval"`
+		CreditFlushInterval string `json:"credit_flush_interval"`
 	} `json:"state"`
 
 	// Risk 风控阈值：单 IP 在窗口内命中 WAF 多少次进入风险暂停。
@@ -319,6 +328,8 @@ type Config struct {
 	DeviceTokenTTLDur              time.Duration `json:"-"`
 	AuthsWatchIntervalDur          time.Duration `json:"-"`
 	StateFlushIntervalDur          time.Duration `json:"-"`
+	StateSoftFlushIntervalDur      time.Duration `json:"-"`
+	StateCreditFlushIntervalDur    time.Duration `json:"-"`
 	RiskWafWindowDur               time.Duration `json:"-"`
 	ModelsCatalogTimeoutDur        time.Duration `json:"-"`
 	ModelsCatalogRefreshDur        time.Duration `json:"-"`
@@ -413,6 +424,19 @@ func (c *Config) wireTunings() error {
 		}
 		return d, nil
 	}
+	// clampFlushInterval 把落盘节奏钳到合理区间。0 = 未配置（保留调用方默认值）；
+	// 小于 1s 只会制造无意义的磁盘抖动，大于 5m 则让"崩溃最多丢一段"超出可接受范围。
+	clampFlushInterval := func(d time.Duration) time.Duration {
+		switch {
+		case d == 0:
+			return 0
+		case d < time.Second:
+			return time.Second
+		case d > 5*time.Minute:
+			return 5 * time.Minute
+		}
+		return d
+	}
 	items := []struct {
 		key string
 		raw string
@@ -428,6 +452,8 @@ func (c *Config) wireTunings() error {
 		{"upstream.device_token_ttl", c.Upstream.DeviceTokenTTL, &c.DeviceTokenTTLDur},
 		{"auths.watch_interval", c.Auths.WatchInterval, &c.AuthsWatchIntervalDur},
 		{"state.flush_interval", c.State.FlushInterval, &c.StateFlushIntervalDur},
+		{"state.soft_flush_interval", c.State.SoftFlushInterval, &c.StateSoftFlushIntervalDur},
+		{"state.credit_flush_interval", c.State.CreditFlushInterval, &c.StateCreditFlushIntervalDur},
 		{"risk.waf_window", c.Risk.WafWindow, &c.RiskWafWindowDur},
 		{"models.catalog_timeout", c.Models.CatalogTimeout, &c.ModelsCatalogTimeoutDur},
 		{"models.catalog_refresh_cooldown", c.Models.CatalogRefreshCooldown, &c.ModelsCatalogRefreshDur},
@@ -442,6 +468,11 @@ func (c *Config) wireTunings() error {
 		}
 		*it.dst = d
 	}
+	// 落盘节奏的合理区间：小于 1s 只会在磁盘上制造无意义抖动（磁盘也吃不消），
+	// 大于 5m 则让"崩溃最多丢一段"超出可接受范围。0 = 未配置，保留调用方默认值。
+	c.StateFlushIntervalDur = clampFlushInterval(c.StateFlushIntervalDur)
+	c.StateSoftFlushIntervalDur = clampFlushInterval(c.StateSoftFlushIntervalDur)
+	c.StateCreditFlushIntervalDur = clampFlushInterval(c.StateCreditFlushIntervalDur)
 
 	adminauth.Configure(adminauth.Options{
 		PasswordLength:    c.Admin.PasswordLength,
@@ -453,6 +484,7 @@ func (c *Config) wireTunings() error {
 		ExpiringWeight:       c.Pool.ExpiringWeight,
 		WatchInterval:        c.AuthsWatchIntervalDur,
 		FlushInterval:        c.StateFlushIntervalDur,
+		SoftFlushInterval:    c.StateSoftFlushIntervalDur,
 	})
 	server.Configure(server.Options{
 		NotFoundCooldown:            c.CooldownNotFoundDur,

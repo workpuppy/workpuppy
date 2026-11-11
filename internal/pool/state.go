@@ -225,7 +225,14 @@ func (p *Pool) NoteError(uid string) {
 		e.errTotal++
 		e.lastErr = time.Now()
 		p.recordBreakerFailureLocked(e)
-		p.dirty.Store(true)
+		// 熔断被触发（breakerUntil 落盘）是关键变更；只累加错误计数则是软计数。
+		// 注：fails 计数本身不持久化（stateAccount 只存 breaker_until/retry_count），
+		// 所以 fails 的变化不需要单独触发落盘。
+		if !e.breakerUntil.IsZero() {
+			p.dirty.Store(true)
+		} else {
+			p.softDirty.Store(true)
+		}
 	}
 }
 
@@ -321,7 +328,9 @@ func (p *Pool) NoteModelCost(uid, model string, credit float64, tokens int) {
 			Samples:   prev.Samples + 1,
 		}
 	}
-	p.dirty.Store(true) // 账本已持久化（P1-anti-monopoly）：写入口统一置脏
+	// 软计数：成本台账 + 余额的请求内插估算。都属"丢了也不影响判定"的数据
+	// （余额下次签到/刷新余额由上游权威值覆盖），按 softFlushInterval 合并落盘。
+	p.softDirty.Store(true)
 }
 
 // NoteSuccess 成功请求累加成功计数、刷新 lastSuccess，并清空连续失败与熔断运行态。
@@ -337,6 +346,11 @@ func (p *Pool) NoteSuccess(uid string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e, ok := p.byUID[uid]; ok {
+		// 先判这次成功是否真的改变了「会被持久化且影响选号」的状态：清掉熔断/降权/
+		// 连败/软退避计数时属关键变更（5s 内必须落盘）；纯粹累加成功计数则是软计数。
+		critical := e.retryCount != 0 || !e.breakerUntil.IsZero() ||
+			e.softStreak != 0 || e.sessionDeadFails != 0 ||
+			e.consecutiveFails != 0 || !e.degradeUntil.IsZero()
 		e.successCount++
 		e.lastSuccess = time.Now()
 		e.fails = 0
@@ -346,7 +360,11 @@ func (p *Pool) NoteSuccess(uid string) {
 		e.sessionDeadFails = 0
 		e.consecutiveFails = 0
 		e.degradeUntil = time.Time{}
-		p.dirty.Store(true)
+		if critical {
+			p.dirty.Store(true)
+		} else {
+			p.softDirty.Store(true)
+		}
 	}
 }
 

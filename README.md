@@ -291,7 +291,9 @@ docker logs wp | grep 登录密码
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `auths.watch_interval` | `"5s"` | `auth_dir` 热加载轮询间隔（新增账号文件几秒内生效） |
-| `state.flush_interval` | `"5s"` | `state.json` 落盘间隔 |
+| `state.flush_interval` | `"5s"` | **关键状态**（禁用/休养/签到日/冷却/熔断/刷新风控）落盘间隔，即"变化到落盘"的上界 |
+| `state.soft_flush_interval` | `"30s"` | **软计数**（余额的请求内插估算、成功/失败计数、模型成本台账）的合并落盘间隔；这些数据丢一段不影响判定，与关键状态一起写会白增写放大 |
+| `state.credit_flush_interval` | `"30s"` | 积分日账 `credit-daily.json` 的落盘间隔（日粒度数据，日末余额可由上游重查） |
 | `risk.waf_window` | `"60s"` | 单 IP 的 WAF 命中统计窗口 |
 | `risk.waf_threshold` | `2` | 窗口内命中多少次进入"风险暂停"（暂停期间不刷新 token、不跑任务） |
 | `metrics.capacity` | `512` | 请求指标环形缓冲容量 |

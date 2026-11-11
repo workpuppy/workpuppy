@@ -27,7 +27,8 @@ type Options struct {
 	ExpiringWeight       float64       // 快过期积分在选号权重里的倍数
 	SmoothAlpha          float64       // credits 平滑系数
 	WatchInterval        time.Duration // auths 目录热加载轮询间隔
-	FlushInterval        time.Duration // state.json 落盘间隔
+	FlushInterval        time.Duration // state.json 落盘间隔（关键状态的上界）
+	SoftFlushInterval    time.Duration // 软计数（余额估算/计数/成本台账）的合并落盘间隔
 
 	// CreditSink 积分流水回调（cmd/server 接到 creditledger 日账本）：
 	// delta=余额变化（>0 赚 / <0 调整）、spent=本次请求消耗、balance=当前余额。
@@ -50,6 +51,9 @@ func Configure(o Options) {
 	}
 	if o.FlushInterval > 0 {
 		flushInterval = o.FlushInterval
+	}
+	if o.SoftFlushInterval > 0 {
+		softFlushInterval = o.SoftFlushInterval
 	}
 	if o.CreditSink != nil {
 		creditSink = o.CreditSink

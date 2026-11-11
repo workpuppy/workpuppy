@@ -16,6 +16,13 @@ import (
 
 var flushInterval = 5 * time.Second
 
+// softFlushInterval 软计数（余额估算/成功失败计数/成本台账）的合并落盘间隔。
+// 默认 30s：这些数据丢一段不影响判定，而它们恰好是纯流量下每个请求都会改的东西
+// （成功计数、成本台账、余额内插），按 5s 跟随关键状态全量重写纯属写放大。
+// 关键状态（禁用/休养/签到日/冷却/熔断/刷新风控）仍走 flushInterval（5s 上界）。
+// 取值必须 >= flushInterval：由 startFlusher 兜底，配置更小也按 flushInterval 处理。
+var softFlushInterval = 30 * time.Second
+
 // persistLogEvery 连续落盘失败每 N 次打一条提醒（flusher 5s 一把 ≈ 1 分钟一次），
 // 避免磁盘持续满/权限丢失时日志刷屏。
 const persistLogEvery = 100
@@ -84,23 +91,44 @@ func (p *Pool) RestoreFromSnapshot() {
 	log.Printf("[pool] 恢复来源=本地 state.json（较新于 Redis 快照 %s）", snap.SavedAt.Format(time.RFC3339))
 }
 
-// startFlusher 启动后台周期落盘 goroutine（每 flushInterval 检查 dirty 标志）。
+// startFlusher 启动后台周期落盘 goroutine。
+//
+// 两级脏位 + 一个 tick（tick = flushInterval，默认 5s）：
+//   - 关键状态（dirty）有变更 → 本 tick 立刻落盘，给"变化到落盘"5s 上界；
+//   - 只有软计数（softDirty）→ 攒到 softFlushInterval（默认 30s）才写，期间若刚好
+//     有一次关键落盘，顺手把软计数一起写掉（并清零 softDirty）；
+//   - 两者都没有 → 一次原子读 + 分支，不碰磁盘。
+//
+// 为什么不是"变更就立刻写 + 最小间隔 5s"：那与现在的 tick 在持续有流量时等价
+// （都是每 5s 一次），而在稀疏变更时反而更难保证上界。真正省写的是把软计数降频，
+// 而不是换触发方式。
 // goroutine 在 p.Close 关闭 stopCh 时退出；此前若无人 Close，goroutine 会持续运行
 // （issue:goroutine 泄漏——New 每调一次泄漏一个，且无停止机制）。
 func (p *Pool) startFlusher() {
 	interval := flushInterval // 在启动 goroutine 前同步读取，避免与测试对 flushInterval 的恢复写竞争
+	softEvery := softFlushInterval
+	if softEvery < interval {
+		softEvery = interval // 软计数不可能比关键状态更勤
+	}
 	p.stopCh = make(chan struct{})
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
+		lastSave := time.Now()
 		for {
 			select {
 			case <-p.stopCh:
 				return
 			case <-t.C:
 				p.mu.Lock()
-				if p.dirty.Swap(false) {
+				critical := p.dirty.Swap(false)
+				softDue := p.softDirty.Load() && time.Since(lastSave) >= softEvery
+				if critical || softDue {
+					// 落盘是全量快照：既然这次要写，软计数一并清零，顺风车不额外花成本。
+					// 并发写入口都持 p.mu，所以清零不会丢掉尚未落盘的变更（它们会重新置脏）。
+					p.softDirty.Store(false)
 					p.saveLocked()
+					lastSave = time.Now()
 				}
 				p.mu.Unlock()
 			}
@@ -120,10 +148,13 @@ func (p *Pool) Close() {
 	p.Flush()
 }
 
-// Flush 同步把内存状态落盘（幂等：无变更不写盘）。供进程退出前调用。
+// Flush 同步把内存状态落盘（幂等：两级脏位都为假则不写盘）。供进程退出前调用——
+// 优雅停机时软计数也要落盘，不能等 softFlushInterval。
 func (p *Pool) Flush() {
 	p.mu.Lock()
-	if p.dirty.Swap(false) {
+	critical := p.dirty.Swap(false)
+	soft := p.softDirty.Swap(false)
+	if critical || soft {
 		p.saveLocked()
 	}
 	p.mu.Unlock()
@@ -288,6 +319,7 @@ func (p *Pool) saveLocked() {
 	if p.stateFp == "" {
 		return
 	}
+	p.saves.Add(1) // 仅测试观测：验证"无变更不写盘/软计数合批"
 	sf := p.stateOverviewLocked()
 	raw, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
