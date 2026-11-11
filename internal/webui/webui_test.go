@@ -19,7 +19,7 @@ func TestIndexServed(t *testing.T) {
 		t.Fatalf("Content-Type = %q，want text/html", ct)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"WP", "/assets/bootstrap.min.css", "/assets/app.js"} {
+	for _, want := range []string{"WorkPuppy", "/assets/bootstrap.min.css", "/assets/app.js"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("入口页缺少 %q", want)
 		}
@@ -265,6 +265,10 @@ func TestBrandWordmark(t *testing.T) {
 	}
 	if strings.Contains(html, ">WP<") || strings.Contains(html, "</span>WP") {
 		t.Error("字标旁不应再保留「WP」文字")
+	}
+	// 浏览器标签页标题同样用品牌全名（改字标时最容易漏的一处）。
+	if !strings.Contains(html, "<title>WorkPuppy 管理后台</title>") {
+		t.Error("标签页标题应为「WorkPuppy 管理后台」")
 	}
 }
 
