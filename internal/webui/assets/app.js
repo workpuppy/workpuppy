@@ -545,7 +545,7 @@ async function loadAccounts() {
     }
 
     const rows = state.accounts.map((a) => {
-      const ops = el('td', { class: 'text-end text-nowrap' }, [
+      const ops = el('td', { class: 'text-start text-nowrap' }, [
         a.disabled
           ? actionBtn('启用', 'success', a.uid, 'enable')
           : actionBtn('禁用', 'danger', a.uid, 'disable'),
@@ -555,14 +555,15 @@ async function loadAccounts() {
 
       ]);
       return el('tr', {}, [
-        // 第一列（UID）可点：打开该账号的近 7/15/30 天积分曲线弹窗。
+        // 第一列（昵称）可点：打开该账号的近 7/15/30 天积分曲线弹窗。
+        // 没有昵称时按钮显示「–」，仍可点（data-chart-uid 带的是真 uid）。
         el('td', {}, [el('button', {
-          class: 'btn btn-link btn-sm p-0 font-monospace',
-          text: a.uid,
+          class: 'btn btn-link btn-sm p-0',
+          text: a.nickname || '–',
           title: '点击查看近 7 / 15 / 30 天积分曲线',
           attrs: { type: 'button', 'data-chart-uid': a.uid },
         })]),
-        el('td', { text: a.nickname || '–' }),
+        el('td', { class: 'font-monospace small', text: a.uid }),
         el('td', { text: a.realm || '–' }),
         el('td', {}, [
           statusBadge(a),
@@ -572,8 +573,8 @@ async function loadAccounts() {
             title: a.last_checkin_status ? '最近一次：' + a.last_checkin_status : '',
           }) : null,
         ].filter(Boolean)),
-        el('td', { class: 'text-end', text: fmtNum(a.credits) }),
-        el('td', { class: 'text-end', text: fmtNum(a.in_flight) }),
+        el('td', { class: 'text-start', text: fmtNum(a.credits) }),
+        el('td', { class: 'text-start', text: fmtNum(a.in_flight) }),
         el('td', { class: 'small text-body-secondary', text: credentialText(a) }),
         el('td', { class: 'small text-body-secondary', text: (a.proxy || '直连') + (a.weight ? ' / x' + a.weight : '') }),
         ops,
@@ -656,8 +657,8 @@ function renderModelRows() {
     .map((m) => el('tr', {}, [
       el('td', { class: 'font-monospace small', text: m.id || '–' }),
       el('td', { class: 'small', text: m.description || '–' }),
-      el('td', { class: 'text-end', text: fmtNum(m.context_length) }),
-      el('td', { class: 'text-end', text: fmtNum(m.max_output_tokens) }),
+      el('td', { class: 'text-start', text: fmtNum(m.context_length) }),
+      el('td', { class: 'text-start', text: fmtNum(m.max_output_tokens) }),
       el('td', { class: 'small', text: (m.reasoning_supported_efforts || []).join(' / ') || '–' }),
       el('td', { class: 'small', text: m.credits || '–' }),
       el('td', { class: 'small text-body-secondary', text: modelCapabilities(m) }),

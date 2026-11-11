@@ -195,6 +195,25 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	if creditAt < 0 || statusAt < 0 || creditAt > statusAt {
 		t.Fatalf("积分日账本应在网关状态上方（credit=%d, status=%d）", creditAt, statusAt)
 	}
+	// 账号表：昵称在第一列、UID 在第二列（点昵称开曲线），且不再有右对齐列。
+	nickAt := strings.Index(html, "<th>昵称</th>")
+	uidAt := strings.Index(html, "<th>UID</th>")
+	if nickAt < 0 || uidAt < 0 || nickAt > uidAt {
+		t.Fatalf("账号表头顺序应为 昵称 → UID（nick=%d, uid=%d）", nickAt, uidAt)
+	}
+	// 账号 / 模型两表的表头与单元格一律左对齐（原来 积分 / 在途 / 操作、上下文 /
+	// 最大输出 是 text-end 右对齐；积分日账本那张表仍保持数字右对齐，不在本次约束内）。
+	for _, bad := range []string{
+		`<th class="text-end">积分</th>`,
+		`<th class="text-end" title=`,
+		`<th class="text-end">操作</th>`,
+		`<th class="text-end">上下文</th>`,
+		`<th class="text-end">最大输出</th>`,
+	} {
+		if strings.Contains(html, bad) {
+			t.Errorf("账号/模型表不应再有右对齐表头：%s", bad)
+		}
+	}
 	// 折叠容器默认不带 show（= 收起）。
 	if strings.Contains(html, `id="statusRawWrap" class="collapse show"`) {
 		t.Error("网关状态默认应折叠（collapse 不能带 show）")
