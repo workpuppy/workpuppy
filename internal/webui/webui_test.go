@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// 根路径给管理后台入口页（HTML，含 Bootstrap 引用）。
+// 根路径给管理后台入口页（HTML，含主题与脚本引用）。
 func TestIndexServed(t *testing.T) {
 	w := httptest.NewRecorder()
 	Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -19,7 +19,7 @@ func TestIndexServed(t *testing.T) {
 		t.Fatalf("Content-Type = %q，want text/html", ct)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"WorkPuppy", "/assets/bootstrap.min.css", "/assets/app.js"} {
+	for _, want := range []string{"WorkPuppy", "/assets/tabler.min.css", "/assets/app.js"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("入口页缺少 %q", want)
 		}
@@ -34,10 +34,10 @@ func TestIndexServed(t *testing.T) {
 	}
 }
 
-// 内嵌资源可访问且类型正确（Bootstrap 与 app.js 都在 embed.FS 里）。
+// 内嵌资源可访问且类型正确（主题样式、Bootstrap 交互脚本与 app.js 都在 embed.FS 里）。
 func TestAssetsServed(t *testing.T) {
 	cases := map[string]string{
-		"/assets/bootstrap.min.css":       "text/css",
+		"/assets/tabler.min.css":          "text/css",
 		"/assets/bootstrap.bundle.min.js": "javascript",
 		"/assets/app.js":                  "javascript",
 		"/assets/app.css":                 "text/css",
@@ -98,7 +98,7 @@ func TestNoTraversal(t *testing.T) {
 // 但登录页容器带着 Bootstrap 的 `d-flex`，而 `.d-flex{display:flex!important}` 会盖掉
 // UA 样式里的 `[hidden]{display:none}` —— 表现为"密码正确、/admin/status 也 200，
 // 页面却还停在登录页"。app.css 里用 `[hidden]{display:none!important}` 钉死优先级，
-// 且 app.css 必须在 bootstrap.min.css 之后加载，这条规则才生效。
+// 且 app.css 必须在主题样式表（tabler.min.css）之后加载，这条规则才生效。
 func TestHiddenAttributeIsAuthoritative(t *testing.T) {
 	css := httptest.NewRecorder()
 	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
@@ -111,14 +111,14 @@ func TestHiddenAttributeIsAuthoritative(t *testing.T) {
 			"登录后页面不会切到主界面（Bootstrap 的 d-flex 会盖掉 hidden）")
 	}
 
-	// 顺序：bootstrap.min.css 先、app.css 后，覆盖才成立。
+	// 顺序：tabler.min.css 先、app.css 后，覆盖才成立。
 	idx := httptest.NewRecorder()
 	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
 	html := idx.Body.String()
-	bs := strings.Index(html, "/assets/bootstrap.min.css")
+	theme := strings.Index(html, "/assets/tabler.min.css")
 	app := strings.Index(html, "/assets/app.css")
-	if bs < 0 || app < 0 || bs > app {
-		t.Fatalf("样式表加载顺序不对（bootstrap=%d, app=%d）：[hidden] 规则会被 Bootstrap 覆盖", bs, app)
+	if theme < 0 || app < 0 || theme > app {
+		t.Fatalf("样式表加载顺序不对（tabler=%d, app=%d）：[hidden] 规则会被主题样式覆盖", theme, app)
 	}
 
 	// 登录页与主界面都靠 hidden 切换，这两个 id 必须存在。

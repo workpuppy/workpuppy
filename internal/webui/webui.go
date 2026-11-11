@@ -1,8 +1,10 @@
 // Package webui 管理后台静态界面（Bootstrap + 原生 JS，全部 embed 进二进制）。
 //
 // 选型说明（与需求一致）：
-//   - **不用 npm / 不用 Node 构建**：Bootstrap 5 的 dist 文件直接 vendored 进仓库
-//     （internal/webui/assets/bootstrap.*），改样式就改 app.css/app.js，`go build` 即生效。
+//   - **不用 npm / 不用 Node 构建**：Tabler 1.7.4 的 dist 编译产物直接 vendored 进仓库
+//     （internal/webui/assets/tabler.min.css，内含 Bootstrap 5 的完整样式），交互组件
+//     仍用 Bootstrap 的 bundle（assets/bootstrap.bundle.min.js）；改样式就改 app.css，
+//     `go build` 即生效。
 //   - **容器里不要 nginx**：页面与 API 同源由本进程托管，`/` 是后台入口，
 //     `/v1/...` 仍是 OpenAI 兼容入口，`/admin/...` 是管理面 REST —— 一个进程一个端口。
 //   - 前端只做展示：所有判定都在服务端（见 internal/server/admin_panel.go），

@@ -1,22 +1,217 @@
-/* app.css —— 管理后台的少量自定义样式（其余全部用 Bootstrap 5 的工具类）。
-   为什么不引 Sass/npm：这套后台刻意不设构建步骤，改完直接 go build。 */
+/* app.css —— 管理后台的自定义层。
+ *
+ * 底层样式来自 assets/tabler.min.css（Tabler 1.7.4，内含 Bootstrap 5 的完整构建），
+ * 这里只做三件事：品牌标识、控制台密度微调、少量组件外观覆盖。没有 Sass / npm 构建，
+ * 改完直接 go build 生效。
+ *
+ * 覆盖顺序很重要：tabler.min.css 在前、本文件在后（见 index.html 的 <head>）。
+ */
 
-.pg-out {
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+:root {
+  /* 品牌主色：Tabler 默认蓝。需要换色时只改这一处。 */
+  --wp-primary: #206bc4;
+  --wp-primary-soft: rgba(32, 107, 196, 0.1);
 }
 
-.nav-link {
+/* ── 图标 ──────────────────────────────────────────────────────────────
+ * Tabler Icons 以 <symbol> 精灵内联在 index.html 里（不引图标字体，省一个请求
+ * 也避开 CSP），用 <svg class="wp-ico"><use href="#ti-…"/></svg> 取用。 */
+.wp-ico {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: 0 0 auto;
+}
+
+.btn .wp-ico {
+  margin-inline-end: 0.35rem;
+  vertical-align: -0.15em;
+}
+
+.btn-icon .wp-ico {
+  margin-inline-end: 0;
+}
+
+/* 深浅色切换按钮同时放太阳/月亮两枚图标，按当前主题显示其中一枚。 */
+.wp-ico-sun {
+  display: none;
+}
+
+[data-bs-theme="dark"] .wp-ico-moon {
+  display: none;
+}
+
+[data-bs-theme="dark"] .wp-ico-sun {
+  display: inline-block;
+}
+
+/* ── 品牌标识 ──────────────────────────────────────────────────────────
+ * 原来是一个 text-bg-primary 的 badge 里写 "WorkPuppy"；现在改成「爪印 + 字标」，
+ * 字标仍由 index.html 里的文本承担（测试锁定了两处 >WorkPuppy<）。 */
+.wp-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #4dabf7 0%, var(--wp-primary) 55%, #1b5ea8 100%);
+  box-shadow: 0 6px 18px rgba(32, 107, 196, 0.32);
+}
+
+.wp-brand-mark .wp-ico {
+  width: 23px;
+  height: 23px;
+  stroke-width: 1.9;
+}
+
+.wp-brand-mark-sm {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  box-shadow: 0 2px 8px rgba(32, 107, 196, 0.28);
+}
+
+.wp-brand-mark-sm .wp-ico {
+  width: 17px;
+  height: 17px;
+}
+
+/* ── 顶部导航 ──────────────────────────────────────────────────────────
+ * 保持顶部导航布局（不改成侧边栏）；Tabler 的 .navbar 本身只负责高度/边框，
+ * 这里补底色、粘顶时的背景与当前视图的高亮。 */
+.wp-navbar {
+  background: var(--tblr-bg-surface, #fff);
+  border-bottom: 1px solid var(--tblr-border-color, #e6e7e9);
+}
+
+.wp-navbar .navbar-brand {
+  font-size: 1rem;
+  color: var(--tblr-body-color, #182433);
+}
+
+#nav .nav-link {
   /* Bootstrap 的 nav-link 按 <a> 设计，这里用 <button> 承载视图切换，
      需要把按钮的默认外观压掉，保持和链接一致。 */
   background: none;
   border: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--tblr-border-radius, 6px);
+  color: var(--tblr-body-color, #182433);
+  font-size: 0.9375rem;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.nav-link.active {
+#nav .nav-link:hover {
+  background: var(--tblr-bg-surface-secondary, #f6f8fb);
+  color: var(--wp-primary);
+}
+
+#nav .nav-link.active {
   font-weight: 600;
+  color: var(--wp-primary);
+  background: var(--wp-primary-soft);
+}
+
+/* ── KPI 卡片 ──────────────────────────────────────────────────────────
+ * Tabler 的卡片默认带边框与很浅的阴影；KPI 卡片再收紧一点内边距，
+ * 右上角放一枚同色系的图标块，避免「一堆纯数字」的单调感。 */
+.wp-kpi {
+  position: relative;
+}
+
+.wp-kpi .card-body {
+  padding: 0.85rem 1rem;
+}
+
+.wp-kpi-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  /* currentColor 来自 .text-success / .text-danger 这类工具类：同一个图标块
+     自动跟随语义色，不必为每种状态再写一条规则。 */
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.wp-kpi-ico .wp-ico {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.8;
+}
+
+.wp-kpi-accent {
+  box-shadow: inset 0 0 0 1px rgba(32, 107, 196, 0.28), var(--tblr-card-box-shadow, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+
+/* 刷新数据时数字位数会变，等宽数字能避免整块文字左右抖动。 */
+.wp-kpi .fs-3,
+.wp-kpi .fs-4 {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* 悬停微抬升：只在有指针的设备上启用，触屏上不做位移。 */
+@media (hover: hover) {
+  .wp-kpi {
+    transition: box-shadow 0.18s ease, transform 0.18s ease;
+  }
+
+  .wp-kpi:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  }
+}
+
+/* Bootstrap 5.3 里没有 `text-bg-*-subtle` 这套工具类，但 app.js 给「今日已签」
+ * 徽章用的就是这个类名 —— 之前它等于没有背景（渲染成一段纯绿文字）。这里补齐，
+ * 比去改 app.js 的类名更小、更安全。 */
+.badge.text-bg-success-subtle {
+  background: color-mix(in srgb, var(--tblr-success, #2fb344) 14%, transparent);
+  color: var(--tblr-success, #2fb344);
+}
+
+/* ── 账号 / 模型两张表 ───────────────────────────────────────────────────
+ * 表头折行（「最大输/出」「积分倍/率」）会把整行行高撑歪，也让人一眼读不成词。
+ * 列表页宽度固定，给表头 nowrap + 明确列宽比例，比让浏览器按内容均分更稳。 */
+#view-accounts table th,
+#view-models table th {
+  white-space: nowrap;
+}
+
+/* 表头视觉：Tabler 默认表头偏素，这里加底色与小型大写，肉眼看得出「表头」这一层。 */
+#view-accounts table thead th,
+#view-models table thead th,
+#creditCard table thead th {
+  background: var(--tblr-bg-surface-secondary, #f6f8fb);
+  color: var(--tblr-secondary, #667382);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+/* 模型表：描述最长、给最多；两个数字列留够 4 个字头宽；能力列放得下
+ * 「图像 · 工具 · 推理 · 仅推理」一行。fixed 布局让百分比列宽真正生效。 */
+#view-models table {
+  table-layout: fixed;
+  min-width: 1020px; /* 窄屏时宁可由 .table-responsive 横向滚动，也不挤成换行 */
+}
+
+#view-models table th:nth-child(1) { width: 13%; } /* 模型 */
+#view-models table th:nth-child(2) { width: 28%; } /* 描述 */
+#view-models table th:nth-child(3) { width: 9%; }  /* 上下文 */
+#view-models table th:nth-child(4) { width: 9%; }  /* 最大输出 */
+#view-models table th:nth-child(5) { width: 12%; } /* 思考档位 */
+#view-models table th:nth-child(6) { width: 9%; }  /* 积分倍率 */
+#view-models table th:nth-child(7) { width: 20%; } /* 能力：四个能力标签也要放得下一行 */
+
+/* fixed 布局下长模型 ID / 描述会顶出单元格：允许在列内换行，不撑破表格。 */
+#view-models table td {
+  overflow-wrap: anywhere;
 }
 
 #accountsBody td,
@@ -30,13 +225,27 @@
 
 /* ── hidden 属性必须"说到做到" ─────────────────────────────────────────
  * 登录页/主界面/各视图都靠 `hidden` 属性切换（app.js 的 showLogin/showApp），
- * 但登录页容器带着 Bootstrap 的 `d-flex`，而 `.d-flex{display:flex!important}`
- * 会盖掉浏览器 UA 样式里的 `[hidden]{display:none}`——结果就是"登录成功、
- * 接口 200，页面却还停在登录页"。用 !important 把 hidden 钉死在最上层，
- * 以后给这些元素加任何 display 工具类都不会再破坏切换逻辑。 */
+ * 但登录页容器带着 Bootstrap 的 `d-flex`（Tabler 的 `.page-center` 也是 flex），
+ * 而 `.d-flex{display:flex!important}` 会盖掉浏览器 UA 样式里的 `[hidden]{display:none}`
+ * ——结果就是"登录成功、接口 200，页面却还停在登录页"。用 !important 把 hidden
+ * 钉死在最上层，以后给这些元素加任何 display 工具类都不会再破坏切换逻辑。 */
 [hidden] {
   display: none !important;
 }
+
+/* ── 登录页 ──────────────────────────────────────────────────────────── */
+.wp-login {
+  /* 极淡的双径向渐变：比纯灰底有层次，又不至于抢走表单的注意力。 */
+  background:
+    radial-gradient(900px 460px at 10% -10%, rgba(32, 107, 196, 0.14), transparent 62%),
+    radial-gradient(820px 440px at 100% 0%, rgba(77, 171, 247, 0.12), transparent 58%),
+    var(--tblr-bg-surface-secondary, #f6f8fb);
+}
+
+.wp-login .card {
+  border-radius: var(--tblr-border-radius-lg, 12px);
+}
+
 /* 授权二维码：白底 + 内边距（扫码需要静区），像素放大不做插值（否则模块边缘糊掉）。 */
 .qr-img {
   width: 240px;
@@ -118,7 +327,7 @@
 }
 
 .credit-chart .series-dot {
-  stroke: #fff;
+  stroke: var(--tblr-bg-surface, #fff);
   stroke-width: 1.2;
 }
 
@@ -149,30 +358,16 @@ button[data-chart-uid]:focus-visible {
   text-decoration: underline;
 }
 
-/* ── 账号 / 模型两表的表头不换行 ────────────────────────────────────────
- * 表头折行（「最大输/出」「积分倍/率」）会把整行行高撑歪，也让人一眼读不成词。
- * 列表页宽度固定，给表头 nowrap + 明确列宽比例，比让浏览器按内容均分更稳。 */
-#view-accounts table th,
-#view-models table th {
-  white-space: nowrap;
+/* 测试台输出区：长文本要能滚，不能把卡片撑破。 */
+.pg-out {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-/* 模型表：描述最长、给最多；两个数字列留够 4 个字头宽；能力列放得下
- * 「图像 · 工具 · 推理 · 仅推理」一行。fixed 布局让百分比列宽真正生效。 */
-#view-models table {
-  table-layout: fixed;
-  min-width: 1020px; /* 窄屏时宁可由 .table-responsive 横向滚动，也不挤成换行 */
-}
-
-#view-models table th:nth-child(1) { width: 13%; } /* 模型 */
-#view-models table th:nth-child(2) { width: 28%; } /* 描述 */
-#view-models table th:nth-child(3) { width: 9%; }  /* 上下文 */
-#view-models table th:nth-child(4) { width: 9%; }  /* 最大输出 */
-#view-models table th:nth-child(5) { width: 12%; } /* 思考档位 */
-#view-models table th:nth-child(6) { width: 9%; }  /* 积分倍率 */
-#view-models table th:nth-child(7) { width: 20%; } /* 能力：四个能力标签也要放得下一行 */
-
-/* fixed 布局下长模型 ID / 描述会顶出单元格：允许在列内换行，不撑破表格。 */
-#view-models table td {
-  overflow-wrap: anywhere;
+/* 页脚保持无底色，避免和卡片区抢层次。 */
+.footer {
+  background: transparent;
+  border-top: 1px solid var(--tblr-border-color, #e6e7e9);
 }

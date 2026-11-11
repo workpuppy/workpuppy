@@ -46,7 +46,7 @@
 | 故障隔离 | 软冷却、硬冷却、熔断（指数退避）、连败降权，401/429/5xx 分类处理，互不叠加取更长者 |
 | 指纹伪装 | 伪造官方桌面端 UA / `X-IDE-*` 头组，请求体黑名单指纹脱敏，可配出口线路 |
 | 定时积分 | 签到、活跃上报、猫猫旅行、token 保活、开学季、夜猫子六类任务，账号之间随机分布 |
-| 管理后台 | 概览 / 账号 / 模型 / 测试台 / 扫码加号，Bootstrap 内嵌、无前端构建 |
+| 管理后台 | 概览 / 账号 / 模型 / 测试台 / 扫码加号，Tabler（内嵌 Bootstrap 5）+ 原生 JS、无前端构建 |
 | 管理凭据 | 与 `/v1` 的 `api_key` **完全分离**；启动时随机生成密码并打印在终端 |
 | 观测 | `/status`（给 SDK/监控）、`/healthz` 存活探测、请求指标环形缓冲、可选 Redis 会话镜像 |
 
@@ -536,7 +536,7 @@ flowchart LR
     subgraph GW["WP（单进程 :7863）"]
         H["HTTP Handler\n鉴权 · 提示词改写 · 指纹净化"] --> P
         H --> S
-        H --> W["Web 管理后台\n内嵌 Bootstrap"]
+        H --> W["Web 管理后台\nTabler + 原生 JS"]
         P["账号池\n三因子加权 · 熔断 · 冷却 · 降权"] --> U["上游 Client\nSSE 流式 · 指纹伪装"]
         S["会话粘性路由"] -.绑定.-> R[("Upstash Redis\n可选")]
         T["调度器\n签到/旅行/上报/保活/开学季/夜猫子"] --> P
@@ -560,7 +560,7 @@ internal/upstream/   上游客户端：请求构造、指纹、SSE、模型目�
 internal/auth/       账号凭据模型
 internal/config/     排程配置段（server 与 activity 共用）
 internal/configdata/ 内嵌默认配置（config.default.json）
-internal/webui/      管理后台静态资源（vendored Bootstrap，embed）
+internal/webui/      管理后台静态资源（vendored Tabler，embed）
 internal/session/    会话粘性与路由
 internal/redisstore/ 会话镜像（可选）
 ```
@@ -603,7 +603,7 @@ internal/redisstore/ 会话镜像（可选）
 | 手动（Run workflow） | 输入决定 | 同上（可关推送只验证） |
 
 流程：`go build/vet/test` → 多架构镜像构建（构建阶段原生架构交叉编译）→ **容器冒烟**
-（`/healthz`、`/status` 无 key 应 401、`/` 返回后台页面、内嵌 Bootstrap > 100 KB、镜像内无 python3）
+（`/healthz`、`/status` 无 key 应 401、`/` 返回后台页面、内嵌 Tabler CSS > 100 KB、镜像内无 python3）
 → 推送 GHCR。客户端只需 `:latest`，Docker 会按本机架构自动选。
 
 ```bash
@@ -643,4 +643,4 @@ MIT。版权与许可声明见仓库 `LICENSE`。
 |---|---|
 | `github.com/redis/go-redis/v9` | 可选：会话镜像（Upstash Redis） |
 | `rsc.io/qr` | 管理后台把 `auth_url` 渲成二维码（`/admin/qr`） |
-| Bootstrap 5.3.3（vendored） | 管理后台样式，见 `internal/webui/assets/NOTICE.txt` |
+| Tabler 1.7.4（vendored，内含 Bootstrap 5） | 管理后台样式，见 `internal/webui/assets/NOTICE.txt` |
