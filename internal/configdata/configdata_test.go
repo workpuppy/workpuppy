@@ -29,7 +29,7 @@ func TestEmbeddedDefaultIsValidJSON(t *testing.T) {
 	}
 }
 
-// 仓库根目录的 config.example.json 是内嵌文件的对外副本：两者必须逐字节一致，
+// 仓库根目录的 config.default.json 是内嵌文件的对外副本：两者必须逐字节一致，
 // 否则用户照着根目录那份复制，跑起来却不是他看到的默认值。
 //
 // 不一致时执行：go run ./cmd/config-default -write
@@ -61,7 +61,7 @@ func TestResolvePrefersExistingFile(t *testing.T) {
 	}
 }
 
-// 文件缺失 → 用内置默认配置（不再是「找磁盘上的 config.example.json」）。
+// 文件缺失 → 用内置默认配置（不再是「找磁盘上的 config.default.json」）。
 func TestResolveMissingFallsBackToBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	raw, src, err := Resolve(filepath.Join(dir, "config.json"))

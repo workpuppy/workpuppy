@@ -63,7 +63,7 @@ COPY login.sh signin.sh credit.sh trial.sh /app/
 RUN sed -i 's/\r$//' /app/*.sh && chmod 755 /app/*.sh
 # 镜像只带示例配置：真正的 data/config.json 由进程首次启动时生成（见 cmd/server/bootstrap.go），
 # 这样 /app/data 挂载卷里的配置不会被镜像内容覆盖，也不需要 entrypoint 脚本。
-COPY config.example.json /app/config.example.json
+COPY config.default.json /app/config.default.json
 USER app
 EXPOSE 7863
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \

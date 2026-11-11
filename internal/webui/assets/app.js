@@ -1086,6 +1086,9 @@ function renderSettings() {
   buildGroupNav(d.schema);
   buildConfigForm(d);
   refreshSaveState();
+  // 重新渲染（保存 / 复位 / 改密后）不应丢掉搜索过滤条件。
+  const q = $('#cfgSearch') ? $('#cfgSearch').value : '';
+  if (q) filterSettings(q);
 }
 
 function buildGroupNav(schema) {
@@ -1158,7 +1161,7 @@ function renderField(field, values) {
   const control = el('div', { class: 'wp-cfg-control' }, [node]);
 
   const isDefault = sameValue(value, getPath(state.config.defaults || {}, field.path));
-  const badge = el('span', { class: 'badge wp-cfg-badge ' + (isDefault ? 'text-bg-secondary' : 'text-bg-info'), text: isDefault ? '默认' : '已改' });
+  const badge = el('span', { class: 'badge wp-cfg-badge wp-cfg-state ' + (isDefault ? 'text-bg-secondary' : 'text-bg-info'), text: isDefault ? '默认' : '已改' });
   const reset = el('button', {
     class: 'btn btn-sm btn-outline-secondary',
     attrs: { type: 'button', title: '恢复默认值' },
@@ -1166,7 +1169,16 @@ function renderField(field, values) {
   reset.addEventListener('click', () => resetField(field.path));
 
   const errBox = el('div', { class: 'wp-cfg-error small text-danger', attrs: { hidden: '' } });
-  row.append(labelBox, control, el('div', { class: 'wp-cfg-actions' }, [badge, reset]), errBox);
+  const actions = el('div', { class: 'wp-cfg-actions' });
+  if (!field.restart) {
+    actions.appendChild(el('span', {
+      class: 'badge wp-cfg-badge wp-cfg-instant text-bg-success',
+      text: '即时生效',
+      title: '保存后立即生效，无需重启',
+    }));
+  }
+  actions.append(badge, reset);
+  row.append(labelBox, control, actions, errBox);
   row.dataset.search = (field.label + ' ' + field.path + ' ' + (field.hint || '')).toLowerCase();
   row.dataset.badge = 'cfg-badge-' + field.path;
 
@@ -1418,19 +1430,19 @@ function refreshSaveState() {
   if (btn) btn.disabled = dirty === 0 || errors > 0;
   // 更新每行的"默认 / 已改 / 待保存"徽章（编辑回原值时要能退回去）。
   document.querySelectorAll('#cfgForm .wp-cfg-row').forEach((row) => {
-    const badge = row.querySelector('.wp-cfg-badge');
+    const badge = row.querySelector('.wp-cfg-state');
     if (!badge) return;
     const path = row.dataset.path;
     if (state.configDirty.has(path)) {
       badge.textContent = '待保存';
-      badge.className = 'badge wp-cfg-badge text-bg-warning';
+      badge.className = 'badge wp-cfg-badge wp-cfg-state text-bg-warning';
       return;
     }
     const cur = getPath(state.config.values || {}, path);
     const def = getPath(state.config.defaults || {}, path);
     const isDefault = sameValue(cur, def);
     badge.textContent = isDefault ? '默认' : '已改';
-    badge.className = 'badge wp-cfg-badge ' + (isDefault ? 'text-bg-secondary' : 'text-bg-info');
+    badge.className = 'badge wp-cfg-badge wp-cfg-state ' + (isDefault ? 'text-bg-secondary' : 'text-bg-info');
   });
 }
 

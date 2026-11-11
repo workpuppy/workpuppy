@@ -5,7 +5,7 @@
 //   - 后端：/admin/config 的 PUT/RESET 用它做字段级校验（错误精确到 path）；
 //   - 前端：同一份 schema 下发给设置页，渲染控件并做同样的即时校验。
 //
-// 默认值不在这里硬编码：一律从内嵌的 config.example.json 读取（configdata），
+// 默认值不在这里硬编码：一律从内嵌的 config.default.json 读取（configdata），
 // 保证"默认值只有一处来源"（与 cmd/server.Default() 同源）。
 package configschema
 
@@ -109,8 +109,8 @@ var groups = []Group{
 var fields = []Field{
 	// ── 基础与网络 ────────────────────────────────────────────────
 	{Path: "listen", Group: "basic", Label: "监听地址", Kind: KindString,
-		Pattern: `^(:\d{1,5}|[A-Za-z0-9.\-]+:\d{1,5})$`, Placeholder: ":7863",
-		Hint: "形如 :7863 或 127.0.0.1:7863；改完需重启容器才会换端口。", Restart: true},
+		Pattern: `^(:[0-9]{1,5}|\[[0-9A-Fa-f:.]+\]:[0-9]{1,5}|[A-Za-z0-9.\-]+:[0-9]{1,5})$`, Placeholder: ":7863",
+		Hint: "形如 :7863、127.0.0.1:7863 或 [::]:7863；改完需重启容器才会换端口。", Restart: true},
 	{Path: "api_key", Group: "basic", Label: "下游 API Key", Kind: KindString, Secret: true,
 		Hint: "/v1 与 /status 用这把 key（与管理密码无关）。空 = 不鉴权。", Restart: true},
 	{Path: "auth_dir", Group: "basic", Label: "账号目录", Kind: KindString, Placeholder: "./auths",
@@ -314,12 +314,12 @@ var (
 	defaultsMap  map[string]any
 )
 
-// Defaults 返回内嵌 config.example.json 解析出的默认值（嵌套 map）。
+// Defaults 返回内嵌 config.default.json 解析出的默认值（嵌套 map）。
 func Defaults() map[string]any {
 	defaultsOnce.Do(func() {
 		var m map[string]any
 		if err := json.Unmarshal(configdata.Bytes(), &m); err != nil {
-			panic("configschema: 内嵌 config.example.json 无法解析: " + err.Error())
+			panic("configschema: 内嵌 config.default.json 无法解析: " + err.Error())
 		}
 		defaultsMap = m
 	})

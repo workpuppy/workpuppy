@@ -42,7 +42,7 @@ type Schedule struct {
 	IntraRequestJitterMax string `json:"intra_request_jitter_max"`
 
 	// ── 遍历节奏（时长字符串；"0" = 关闭/不等）────────────────────────────
-	// 这些以前硬编码在 internal/scheduler 里，现在统一由 config.example.json 提供。
+	// 这些以前硬编码在 internal/scheduler 里，现在统一由 config.default.json 提供。
 	CheckinAccountDelay  string `json:"checkin_account_delay"`  // 签到相邻账号最小间隔（默认 3s）
 	TravelAccountDelay   string `json:"travel_account_delay"`   // 旅行相邻账号间隔（默认 800ms）
 	ActivityAccountDelay string `json:"activity_account_delay"` // 活跃上报相邻账号间隔（默认 800ms）
@@ -99,10 +99,10 @@ type Schedule struct {
 	ActivityReportCount int `json:"activity_report_count"`
 }
 
-// DefaultSchedule 返回排程段的默认值 —— **直接取自内嵌的 config.example.json**。
+// DefaultSchedule 返回排程段的默认值 —— **直接取自内嵌的 config.default.json**。
 //
-// 默认值只有一处权威来源（internal/configdata/config.example.json），这里不再写死任何
-// 数字：想改默认时刻/开关/上报条数，改那份 JSON 即可（根目录的 config.example.json 是
+// 默认值只有一处权威来源（internal/configdata/config.default.json），这里不再写死任何
+// 数字：想改默认时刻/开关/上报条数，改那份 JSON 即可（根目录的 config.default.json 是
 // 它的对外副本，用 `go run ./cmd/config-default -write` 同步）。
 //
 // 开关「缺省 true」也来自示例里的 true：调用方先取 DefaultSchedule 再用 json.Unmarshal
@@ -113,7 +113,7 @@ func DefaultSchedule() Schedule {
 	}
 	if err := json.Unmarshal(configdata.Bytes(), &wrapper); err != nil {
 		// 内嵌文件在编译期就确定了：解析失败只能是构建问题，带病运行更难查。
-		panic("内置 config.example.json 的 schedule 段无法解析: " + err.Error())
+		panic("内置 config.default.json 的 schedule 段无法解析: " + err.Error())
 	}
 	return wrapper.Schedule
 }
@@ -151,7 +151,7 @@ func FormatClock(min int) string {
 // schedulePairs 六类任务的字段对应关系（时刻 *_time / 解析结果 *_At / 默认值）。
 //
 // 默认值只用于「显式写了 null 或空数组」这种边角情况；**主路径的默认值来自
-// config.example.json**（内嵌，见 DefaultSchedule/Default）。
+// config.default.json**（内嵌，见 DefaultSchedule/Default）。
 func (s *Schedule) schedulePairs() []struct {
 	field   string
 	times   *[]string

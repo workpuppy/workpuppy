@@ -2,7 +2,7 @@
 //
 // 为什么需要：本项目**不保留旧键兼容**（尚未正式上线，键名按语义直接演进）。
 // 代价是旧键（如 schedule.checkin_hours、pool.expiring_soon）会被 JSON 静默忽略，
-// 用户以为配了其实没生效。这里用内嵌的 config.example.json 当"键的清单"，
+// 用户以为配了其实没生效。这里用内嵌的 config.default.json 当"键的清单"，
 // 把用户配置里多出来的键列出来打 WARN —— 既有提示，又不用为每个旧键写兼容垫片。
 package main
 
@@ -69,5 +69,5 @@ func unknownKeysWarning(keys []string) string {
 		suffix = fmt.Sprintf(" 等 %d 个", len(keys))
 	}
 	return fmt.Sprintf("配置里有未知键（会被忽略，多半是拼错或旧版键名）：%s%s；"+
-		"全部可用键见 config.example.json", strings.Join(shown, ", "), suffix)
+		"全部可用键见 config.default.json", strings.Join(shown, ", "), suffix)
 }

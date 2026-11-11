@@ -12,7 +12,7 @@
   镜像里没有 nginx、没有 npm、没有前端构建产物。
 - **一个镜像多架构**：`ghcr.io/workpuppy/workpuppy:latest` 同时含 `linux/amd64` + `linux/arm64`，
   客户端按自己的架构自动选。
-- **默认值只有一处来源**：内嵌的 [`config.example.json`](config.example.json)。
+- **默认值只有一处来源**：内嵌的 [`config.default.json`](config.default.json)。
 
 ---
 
@@ -72,7 +72,7 @@ docker run -d --name wp -p 7863:7863 \
 ```
 
 > **不需要再挂载 `config.json`**：首次启动会自动生成 `data/config.json`（内容 = 镜像里的
-> `config.example.json`），之后用设置页或直接改这个文件即可。升级也不会覆盖它。
+> `config.default.json`），之后用设置页或直接改这个文件即可。升级也不会覆盖它。
 >
 > **不建目录 / 不 chown 会怎样**（Linux rootful Docker）：
 > - `auths/` 不可写 → 扫码加号落盘失败；token 刷新成功但**回写失败**（重启后还在用旧 token）；
@@ -121,22 +121,22 @@ go build -o wp ./cmd/server
 
 ## 配置说明
 
-> **写错键名会被点名**：配置里出现 `config.example.json` 中不存在的键（拼错、多打字、**改过名的旧键**）
+> **写错键名会被点名**：配置里出现 `config.default.json` 中不存在的键（拼错、多打字、**改过名的旧键**）
 > 不会导致启动失败，但**启动日志会把它们列出来**，避免"以为配了其实没生效"：
 >
 > ```
-> WARN: 配置里有未知键（会被忽略，多半是拼错）：pool.max_in_flight_glboal；全部可用键见 config.example.json
+> WARN: 配置里有未知键（会被忽略，多半是拼错）：pool.max_in_flight_glboal；全部可用键见 config.default.json
 > ```
 >
 > 改名/退役不做兼容垫片：例如 `admin.random_password_length` 已随"随机密码"方案一起移除，
 > 写旧名只会在日志里被点名，不会静默生效。
 
-配置模板是 [`config.example.json`](config.example.json)，**它就是全部默认值的权威来源**
+配置模板是 [`config.default.json`](config.default.json)，**它就是全部默认值的权威来源**
 （编译进二进制；仓库根目录那份是同步副本，改完执行 `go run ./cmd/config-default -write`）。
 
 ### 开箱即用，只需改 `api_key`
 
-首次启动会生成 `data/config.json`（完整内容 = `config.example.json`）。默认值全部可用，
+首次启动会生成 `data/config.json`（完整内容 = `config.default.json`）。默认值全部可用，
 唯一强烈建议改的是 `api_key`（默认占位符 `test_key`，等于 `/v1` 不鉴权）：
 
 ```json
@@ -175,14 +175,14 @@ go build -o wp ./cmd/server
 ### 读取优先级（与 Spring 的属性覆盖一致）
 
 ```
-内置默认配置 config.example.json  ←  data/config.json 逐属性覆盖  ←  WP_* 环境变量
+内置默认配置 config.default.json  ←  data/config.json 逐属性覆盖  ←  WP_* 环境变量
 ```
 
 | 情况 | 结果 |
 |---|---|
 | 键写了 | 用 `data/config.json` 里的值（写 `0` / `""` / `false` 也算写了） |
-| 键没写，或写成 `null` | 用 `config.example.json` 里的值（`null` 视为"未定义"） |
-| `data/config.json` 不存在 | **首次启动自动生成**（内容 = `config.example.json`，权限 `0600`），之后不会覆盖 |
+| 键没写，或写成 `null` | 用 `config.default.json` 里的值（`null` 视为"未定义"） |
+| `data/config.json` 不存在 | **首次启动自动生成**（内容 = `config.default.json`，权限 `0600`），之后不会覆盖 |
 | `data/config.json` 存在但不是合法 JSON / 值非法 | 启动失败，错误信息点名配置项 |
 | 升级前的旧 `./config.json` | **不会自动迁移**（按需求）：需要时手工把内容搬到 `data/config.json` |
 
@@ -573,7 +573,7 @@ internal/scheduler/  六类定时任务 + 随机分布 + 账号节奏
 internal/upstream/   上游客户端：请求构造、指纹、SSE、模型目录
 internal/auth/       账号凭据模型
 internal/config/     排程配置段（server 与 activity 共用）
-internal/configdata/ 内嵌默认配置（config.example.json）
+internal/configdata/ 内嵌默认配置（config.default.json）
 internal/configschema/ 配置项元数据（设置页分组/校验/默认值，前后端共用）
 internal/webui/      管理后台静态资源（vendored Tabler，embed）
 internal/session/    会话粘性与路由
@@ -601,7 +601,7 @@ internal/redisstore/ 会话镜像（可选）
    ```
 5. **不入库**：`auths/`、`data/`（含 `data/config.json`）、真实密钥（`.gitignore` / `.dockerignore` 已排除）。
 6. **不重写已发布的历史**：只有尚未推送的提交才允许 `reset`。
-7. **默认值只写在 `internal/configdata/config.example.json`**（随二进制内嵌）。改默认值就改那份
+7. **默认值只写在 `internal/configdata/config.default.json`**（随二进制内嵌）。改默认值就改那份
    JSON，不要再往 Go 代码里塞字面量；根目录副本用 `go run ./cmd/config-default -write` 同步，
    `go test ./internal/configdata` 会在两者不一致时报错。
 
@@ -631,7 +631,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 服务启动说「已生成默认配置文件 data/config.json」 | 首次启动的正常行为；内容等于 `config.example.json`，之后不会覆盖 |
+| 服务启动说「已生成默认配置文件 data/config.json」 | 首次启动的正常行为；内容等于 `config.default.json`，之后不会覆盖 |
 | `data/config.json` 没生成 / 启动失败 | `data/` 不可写：`sudo chown -R 10001:10001 data` |
 | 设置页保存报「配置文件当前不可写」 | 同上；容器内 app(uid 10001) 需要 `data/` 写权限 |
 | 设置页保存成功但行为没变 | 正常：除「启用管理面」「密码强度」外都要**重启容器**；顶部横幅即提示（重启后消失） |
@@ -640,7 +640,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 | `/status` 回 401 | 正常：数据面要 `api_key`；管理面才用管理密码 |
 | `/healthz` 回 503 | 活着但没有可用账号（0 个账号 / 全部冷却或禁用） |
 | `/admin/*` 回 404 | 管理面关闭（初始化之前属正常，初始化会自动打开）；若被手动关掉，改 `data/config.json` 的 `admin.enabled` 后重启 |
-| 启动日志出现「配置里有未知键」 | 该键名在 `config.example.json` 里不存在（多半拼错/多打字），当前会被忽略；对照默认配置改正即可 |
+| 启动日志出现「配置里有未知键」 | 该键名在 `config.default.json` 里不存在（多半拼错/多打字），当前会被忽略；对照默认配置改正即可 |
 | 管理密码忘了 | 删掉 `data/config.json` 的 `admin.password` 字段并重启 → 页面重新引导初始化 |
 | 签到失败 `code 10001` | 上游短时并发限流：调大 `schedule.checkin_account_delay` / `checkin_retry_delays` |
 | 上游 403 WAF | 降低 `pool.max_in_flight` / `max_in_flight_global`，核对 `upstream.client_*` 指纹，必要时配 `proxies` 出口 |

@@ -63,7 +63,7 @@ type Config struct {
 		// CreditExhausted 积分耗尽后的冷却时长（如 "10m"）。空 = 旧行为：硬冷却到次日 04:00
 		// （等签到恢复）。配了就只退出这一小段，到期回到候选池（issue #78）。
 		CreditExhausted string `json:"credit_exhausted"`
-		// NotFound / WafBase / UpstreamRestriction 各类冷却时长（默认值见 config.example.json）。
+		// NotFound / WafBase / UpstreamRestriction 各类冷却时长（默认值见 config.default.json）。
 		NotFound            string `json:"not_found"`            // 404/未知模型后的冷却，默认 "60s"
 		WafBase             string `json:"waf_base"`             // WAF 403 基础冷却，默认 "60s"
 		UpstreamRestriction string `json:"upstream_restriction"` // 上游限制类错误冷却，默认 "45m"
@@ -301,7 +301,7 @@ type Config struct {
 	// SpreadWindowDur 定时任务账号随机分布窗口（schedule.spread_window 解析结果）。
 	// 0 = 关闭（回到"到点立刻 + 固定间隔"）。默认 15m。
 	SpreadWindowDur time.Duration `json:"-"`
-	// SourcePath 本次配置的实际来源（config.json / 内置默认 builtin:config.example.json）。
+	// SourcePath 本次配置的实际来源（config.json / 内置默认 builtin:config.default.json）。
 	// 只用于启动日志与排障，不参与 JSON 序列化。
 	// QRCodeTTL 管理后台「扫码加号」二维码的有效期（时长字符串，默认 "15m"）。
 	//
@@ -343,14 +343,14 @@ type Config struct {
 // UnknownKeys 返回配置里的未知键（供启动日志提示）。
 func (c *Config) UnknownKeys() []string { return c.unknownKeys }
 
-// Default 默认配置 —— **完全来自内嵌的 config.example.json**（唯一权威来源）。
+// Default 默认配置 —— **完全来自内嵌的 config.default.json**（唯一权威来源）。
 //
 // 为什么这样做：默认值以前硬编码在这个函数里（listen、超时、池阈值、排程时刻……几十个），
 // 用户读 README 也拼不出"完整默认配置"，改默认值要翻 Go 代码。现在唯一的权威来源是
-// internal/configdata/config.example.json（随二进制内嵌）：
-//   - 想看/想改默认值 → 改那份 JSON（根目录的 config.example.json 是它的对外副本，
+// internal/configdata/config.default.json（随二进制内嵌）：
+//   - 想看/想改默认值 → 改那份 JSON（根目录的 config.default.json 是它的对外副本，
 //     用 `go run ./cmd/config-default -write` 同步，测试会强制两者一致）；
-//   - config.example.json 缺失时，Load 也回退到这份示例（见 internal/configdata.Resolve）；
+//   - config.default.json 缺失时，Load 也回退到这份示例（见 internal/configdata.Resolve）；
 //     正常启动路径会先由 ensureConfigFile 在 data/config.json 生成一份，不会走到这里。
 //
 // 需要指针语义的少数字段（如 ReasoningAsContent）由 JSON 里的 true/false 直接表达。
@@ -358,19 +358,19 @@ func Default() *Config {
 	c := &Config{}
 	if err := json.Unmarshal(configdata.Bytes(), c); err != nil {
 		// 内嵌文件在编译期就固定了：解析失败只能是构建问题，带病启动更难查。
-		panic("内置 config.example.json 无法解析: " + err.Error())
+		panic("内置 config.default.json 无法解析: " + err.Error())
 	}
 	return c
 }
 
 // Load 读取配置，语义与 Spring 的属性文件一致：
 //
-//	配置 = 内置默认配置(config.example.json) ← 被 data/config.json 逐属性覆盖
+//	配置 = 内置默认配置(config.default.json) ← 被 data/config.json 逐属性覆盖
 //
 // 也就是说：
 //   - data/config.json **文件缺失**（或该路径其实是个目录）→ 全部属性取内置默认值，并打 WARNING
 //     （正常启动时 ensureConfigFile 已经生成文件，这条只是兜底）；
-//   - 文件存在但**某个属性没写** → 该属性取 config.example.json 里的值；
+//   - 文件存在但**某个属性没写** → 该属性取 config.default.json 里的值；
 //   - 属性**写成 null** 也按"未定义"处理（回退到默认值），而不是清成零值——
 //     JSON 里 `"ttl": null` 的直觉含义就是"没设"；
 //   - 最终再用 WP_* 环境变量覆盖（最高优先级）。
@@ -408,7 +408,7 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
-// wireTunings 解析 A 组运行期阈值并注入各包（默认值全部来自 config.example.json）。
+// wireTunings 解析 A 组运行期阈值并注入各包（默认值全部来自 config.default.json）。
 //
 // 为什么单独一步：这些阈值是**进程级**参数，散在 pool/server/upstream/redisstore/adminauth
 // 五个包里；统一在这里解析+注入，配置面（JSON 键）与实现面（包级变量）就能一一对上，
@@ -560,7 +560,7 @@ func dropNulls(v any) any {
 
 // defaults 返回「纯默认配置」（供 normalize 做"显式空值 → 默认值"的兜底）。
 //
-// 兜底值同样取自 config.example.json，不放字面量：这样"默认值只有一处来源"始终成立。
+// 兜底值同样取自 config.default.json，不放字面量：这样"默认值只有一处来源"始终成立。
 func defaults() *Config {
 	defaultCfgOnce.Do(func() {
 		defaultCfg = Default()

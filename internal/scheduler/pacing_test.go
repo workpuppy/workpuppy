@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// 包级节奏的**初始值必须来自 config.example.json**（不是散落的字面量）。
+// 包级节奏的**初始值必须来自 config.default.json**（不是散落的字面量）。
 func TestPacingDefaultsComeFromDefaultConfig(t *testing.T) {
 	d := schedDefaults()
 	if d.CheckinAccountDelayDur != 3*time.Second {
-		t.Errorf("checkin_account_delay=%v want 3s（应来自 config.example.json）", d.CheckinAccountDelayDur)
+		t.Errorf("checkin_account_delay=%v want 3s（应来自 config.default.json）", d.CheckinAccountDelayDur)
 	}
 	if d.TravelAccountDelayDur != 800*time.Millisecond || d.ActivityAccountDelayDur != 800*time.Millisecond {
 		t.Errorf("travel/activity account delay=%v/%v want 800ms",

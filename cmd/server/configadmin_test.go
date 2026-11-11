@@ -29,7 +29,7 @@ func TestEnsureConfigFileCreatesFromExample(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, configdata.Bytes()) {
-		t.Fatal("生成内容应等于内嵌 config.example.json")
+		t.Fatal("生成内容应等于内嵌 config.default.json")
 	}
 	if st, _ := os.Stat(path); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("权限 = %v，want 0600（文件含 api_key 与密码哈希）", st.Mode().Perm())

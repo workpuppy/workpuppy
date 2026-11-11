@@ -1,6 +1,6 @@
 // tuning.go 管理密码强度参数的注入点。
 //
-// 默认值来自 config.example.json（admin.min_password_length），
+// 默认值来自 config.default.json（admin.min_password_length），
 // 由 cmd/server 启动时调用 Configure 覆盖。包内初值留给测试裸用。
 package adminauth
 

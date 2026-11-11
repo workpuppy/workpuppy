@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// A 组阈值的默认值必须**来自 config.example.json**（不是源码里的字面量）。
+// A 组阈值的默认值必须**来自 config.default.json**（不是源码里的字面量）。
 func TestTuningsDefaultsComeFromDefaultConfig(t *testing.T) {
 	c := Default()
 	if err := c.normalize(); err != nil {
@@ -42,7 +42,7 @@ func TestTuningsDefaultsComeFromDefaultConfig(t *testing.T) {
 	}
 	for _, ck := range checks {
 		if ck.got != ck.want {
-			t.Errorf("%s=%v want %v（应来自 config.example.json）", ck.name, ck.got, ck.want)
+			t.Errorf("%s=%v want %v（应来自 config.default.json）", ck.name, ck.got, ck.want)
 		}
 	}
 	// 非时长类阈值
@@ -133,7 +133,7 @@ func TestFlushIntervalsClamped(t *testing.T) {
 		t.Errorf("credit_flush_interval=10m 应钳到 5m，实际 %v", c.StateCreditFlushIntervalDur)
 	}
 
-	// 区间内原样生效；未写的键保留默认值（默认层来自 config.example.json）。
+	// 区间内原样生效；未写的键保留默认值（默认层来自 config.default.json）。
 	fp2 := filepath.Join(dir, "c2.json")
 	if err := os.WriteFile(fp2, []byte(`{"state":{"soft_flush_interval":"45s"}}`), 0o600); err != nil {
 		t.Fatal(err)

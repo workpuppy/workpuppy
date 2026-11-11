@@ -9,7 +9,7 @@ import (
 	"wp/internal/configdata"
 )
 
-// exampleLeaves 把 config.example.json 摊平成 path 集合（数组/标量都算叶子）。
+// exampleLeaves 把 config.default.json 摊平成 path 集合（数组/标量都算叶子）。
 func exampleLeaves(t *testing.T) map[string]any {
 	t.Helper()
 	var doc map[string]any
@@ -41,13 +41,13 @@ func TestSchemaCoversEveryExampleKey(t *testing.T) {
 	leaves := exampleLeaves(t)
 	for path := range leaves {
 		if _, ok := Lookup(path); !ok {
-			t.Errorf("config.example.json 的 %q 没有对应的 schema 字段", path)
+			t.Errorf("config.default.json 的 %q 没有对应的 schema 字段", path)
 		}
 	}
 	// 反向：schema 里的字段必须在 example 里有默认值（默认值唯一来源）。
 	for _, f := range Fields() {
 		if _, ok := leaves[f.Path]; !ok {
-			t.Errorf("schema 字段 %q 在 config.example.json 里没有默认值", f.Path)
+			t.Errorf("schema 字段 %q 在 config.default.json 里没有默认值", f.Path)
 		}
 		if _, ok := DefaultAt(f.Path); !ok {
 			t.Errorf("默认值取不到：%s", f.Path)
@@ -90,6 +90,8 @@ func TestValidateDocTypesAndRanges(t *testing.T) {
 		{"时长非法", map[string]any{"state": map[string]any{"flush_interval": "5x"}}, "state.flush_interval"},
 		{"时长负数", map[string]any{"state": map[string]any{"flush_interval": "-5s"}}, "state.flush_interval"},
 		{"监听格式", map[string]any{"listen": "not a listen"}, "listen"},
+		{"监听 IPv6 合法", map[string]any{"listen": "[::]:7863"}, ""},
+		{"监听 IPv4 合法", map[string]any{"listen": "127.0.0.1:7863"}, ""},
 		{"枚举非法", map[string]any{"prompt": map[string]any{"mode": "xxx"}}, "prompt.mode"},
 		{"时刻非法", map[string]any{"schedule": map[string]any{"checkin_time": []any{"25:99"}}}, "schedule.checkin_time"},
 		{"布尔类型", map[string]any{"admin": map[string]any{"enabled": "yes"}}, "admin.enabled"},

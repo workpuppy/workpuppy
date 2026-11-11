@@ -41,7 +41,7 @@ func main() {
 	cfgPath := flag.String("config", defaultConfigPath, "path to config json（默认 data/config.json；缺失时自动生成）")
 	flag.Parse()
 
-	// 首次启动生成 data/config.json（内容 = 内嵌 config.example.json）。
+	// 首次启动生成 data/config.json（内容 = 内嵌 config.default.json）。
 	created, err := ensureConfigFile(*cfgPath)
 	if err != nil {
 		log.Fatalf("初始化配置失败: %v", err)
@@ -189,7 +189,7 @@ func main() {
 	if scheduleSeed == "" {
 		scheduleSeed = cfg.AuthDir
 	}
-	// 遍历节奏：默认值来自 config.example.json，用户 config.json 有则覆盖。
+	// 遍历节奏：默认值来自 config.default.json，用户 config.json 有则覆盖。
 	scheduler.Configure(scheduler.Options{
 		CheckinAccountDelay:  cfg.Schedule.CheckinAccountDelayDur,
 		TravelAccountDelay:   cfg.Schedule.TravelAccountDelayDur,
