@@ -81,3 +81,70 @@
   opacity: 0.55;
   pointer-events: none;
 }
+
+/* ── 单账号积分曲线（手写 SVG，无第三方图表库）───────────────────────── */
+.credit-chart-host {
+  width: 100%;
+  min-height: 200px;
+}
+
+/* viewBox 固定比例，宽度铺满，高度按比例缩放（不拉伸文字）。 */
+.credit-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+/* 网格线与坐标轴文字统一用 currentColor 的弱化色，深浅色主题都读得清。 */
+.credit-chart .grid {
+  stroke: currentColor;
+  stroke-opacity: 0.15;
+  stroke-width: 1;
+}
+
+.credit-chart .axis-label,
+.credit-chart .x-label {
+  fill: currentColor;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.credit-chart .series-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.credit-chart .series-dot {
+  stroke: #fff;
+  stroke-width: 1.2;
+}
+
+/* 图例：色块 + 名称（名称后标注该线读哪个轴）。 */
+.credit-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.credit-legend .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: baseline;
+}
+
+/* 账号表第一列（UID）是可点的：给个手型与悬停反馈，暗示"能点开曲线"。 */
+button[data-chart-uid] {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+button[data-chart-uid]:hover,
+button[data-chart-uid]:focus-visible {
+  text-decoration: underline;
+}

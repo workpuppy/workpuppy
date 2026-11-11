@@ -366,8 +366,8 @@ docker logs wp | grep 登录密码
 
 | 页面 | 能做什么 |
 |---|---|
-| 概览 | 账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + **积分日账本**（今日赚/花/调整/净 + 近 30 天）+ 原始状态 JSON |
-| 账号 | 顶部三个动作：**一键签到**（跳过今天已签）/ **一键猫猫旅行**（补自动任务）/ **刷新余额**（上游只读）；列表（状态、今日已签、积分、在途、凭证、线路、权重）+ 行内 停用 / 启用 / 休养 |
+| 概览 | 账号总数 / 可用 / 冷却 / 禁用 / 在途占满 / 粘性会话 + **积分总计四卡**（当前总积分额度、当日总获得 / 总消耗 / 总修正）+ **积分日账本**（今日赚/花/调整/净 + 近 30 天）+ 网关状态（默认折叠，排障用）；后端返回的原始状态 JSON 也在这里 |
+| 账号 | 顶部三个动作：**一键签到**（跳过今天已签）/ **一键猫猫旅行**（补自动任务）/ **刷新余额**（上游只读）；列表（状态、今日已签、积分、在途、凭证、线路、权重）+ 行内 禁用 / 启用 / 休养；**点每行第一列的 UID** 弹出该号近 7/15/30 天积分曲线（日终总积分 / 当日获得 / 当日消耗 / 当日修正，缺记录的日期按 0） |
 | 模型 | 模型中心：描述、上下文、最大输出、思考档位、积分倍率、能力标记 |
 | 测试台 | 选模型 → 填提示词 → 流式或非流式试跑（复用 `/v1` 整条链路） |
 | 扫码加号 | 选域名 → 拿授权链接 → **页面直接显示二维码 + 有效期倒计时**（也可复制链接）→ 轮询 → 账号自动落盘并进入池；过期后链接打删除线、二维码盖「已失效」遮罩 |
@@ -395,9 +395,9 @@ docker logs wp | grep 登录密码
 | `GET` | `/admin/accounts` | 账号清单：池运行态 + 凭证元信息（含未入池的账号文件） |
 | `GET` | `/admin/accounts/{uid}` | 单账号详情 |
 | `POST` | `/admin/accounts/checkin` | **一键签到**：自动跳过今天已签到的账号（签到状态持久化在 `state.json`），与调度器共享单飞锁，忙时 409 |
-| `POST` | `/admin/accounts/{uid}/disable` | 摘除对话流量（签到/保活照常），可带 `{"reason":"…"}` |
-| `POST` | `/admin/accounts/{uid}/enable` | **启用**：同时解除手动停用与系统自动禁用（原 `revive` 已并入），响应里如实带原禁用原因 |
-| `POST` | `/admin/accounts/{uid}/rest` | **休养**：不接下游流量，但签到 / 活跃上报 / 旅行 / 保活照跑（凭证与积分都是活的）；持久化，重启保留 |
+| `POST` | `/admin/accounts/{uid}/disable` | **禁用**：不接下游流量，且签到 / 活跃上报 / 旅行 / 保活**全部不跑**；可带 `{"reason":"…"}`。系统判定（连续 12153 等）与手动禁用共用同一个 `disabled` 位，`disabled_source` 区分来源 |
+| `POST` | `/admin/accounts/{uid}/enable` | **启用**：唯一解除入口，手动与系统禁用一并解除（连续 12153 计数清零），响应里如实带原禁用原因 |
+| `POST` | `/admin/accounts/{uid}/rest` | **休养**：不接下游流量，但签到 / 活跃上报 / 旅行 / 保活照跑（凭证与积分都是活的，即"养号"）；持久化，重启保留。**想长期闲置但保持活性请用它，而不是禁用** |
 | `POST` | `/admin/accounts/{uid}/unrest` | 解除休养，恢复接流 |
 | `GET` | `/admin/credit-daily` | 积分日账本：`totals`/`accounts` 是**当日内存热值**，`histories` 是落盘的每日汇总（保留 30 天，每账号 `earned/spent/adjust/credits_end`）；`?days=N` 控制历史条数 |
 | `POST` | `/admin/auth/start` | 扫码加号第一步：`{"realm":"cn\|global"}` → `{state, auth_url}` |
@@ -422,8 +422,8 @@ export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ 
 ./wpctl accounts                 # 账号清单（-json 出原始 JSON）
 ./wpctl account <uid>            # 单账号详情
 ./wpctl checkin                  # 一键签到（自动跳过今天已签的）
-./wpctl disable <uid> [原因]     # 摘除流量
-./wpctl enable <uid>             # 解除手动停用
+./wpctl disable <uid> [原因]     # 禁用：不接流量，签到/保活等自动任务全部停止
+./wpctl enable <uid>             # 启用（手动/系统禁用一并解除）
 ./wpctl travel                   # 一键猫猫旅行（领养/派出/领奖）
 ./wpctl refresh                  # 刷新所有账号余额（上游只读）
 ./wpctl rest <uid>               # 休养：不接下游流量，自动任务照跑
@@ -435,7 +435,7 @@ export WP_ADMIN_PASSWORD=$(docker logs wp 2>&1 | sed -n 's/.*登录密码: \([^ 
 ```
 
 其他辅助命令：`./signin.sh`（批量签到）、`./credit.sh`（积分日报）、`./trial.sh`（国际版激活）、
-`./acct.sh`（停用/恢复）、`./task_runner`、`./school_bin`。
+`./acct.sh`（禁用/启用/清单）、`./task_runner`、`./school_bin`。
 
 ---
 

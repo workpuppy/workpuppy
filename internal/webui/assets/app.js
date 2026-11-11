@@ -24,6 +24,9 @@ const state = {
   accounts: [],
   authPoll: null, // {state, realm, timer}
   aborter: null,
+  creditDaily: null, // /admin/credit-daily 最近一次响应（概览与单号曲线共用）
+  chartUID: '',      // 积分曲线弹窗当前账号
+  chartDays: 7,      // 积分曲线区间（7 / 15 / 30，默认 7）
 };
 
 // ── 基础工具 ────────────────────────────────────────────────
@@ -218,6 +221,9 @@ async function loadStatus() {
     $('#kpiDisabled').textContent = fmtNum(s.disabled);
     $('#kpiInFlight').textContent = fmtNum(s.in_flight_full);
     $('#kpiSticky').textContent = fmtNum(s.sticky_sessions);
+    // 当前总积分额度 = 池内各账号余额之和（/status 的 accounts[] 与账号页同源）。
+    const sumCredits = (s.accounts || []).reduce((acc, a) => acc + Number(a.credits || 0), 0);
+    $('#kpiCredits').textContent = fmtNum(sumCredits);
     $('#statusRaw').textContent = JSON.stringify(s, null, 2);
     loadCredits();
   } catch (e) {
@@ -234,11 +240,16 @@ async function loadCredits() {
   if (!tbody) return;
   try {
     const d = await api('/admin/credit-daily?days=30');
+    state.creditDaily = d; // 缓存给「单账号曲线」弹窗复用，避免点开时再等一次
     const t = d.totals || {};
     $('#creditToday').textContent =
       d.today + '：赚 ' + fmtNum(t.earned || 0) + ' / 花 ' + fmtNum(t.spent || 0) +
       ' / 调整 ' + fmtNum(t.adjust || 0) + ' / 净 ' + fmtNum(t.net || 0) +
       '　（账号 ' + Object.keys(d.accounts || {}).length + ' 个）';
+    // 当日三项总计卡片（与账本同一份热值，口径不会分叉）。
+    $('#kpiEarned').textContent = fmtNum(t.earned || 0);
+    $('#kpiSpent').textContent = fmtNum(t.spent || 0);
+    $('#kpiAdjust').textContent = fmtNum(t.adjust || 0);
     const rows = (d.histories || []).slice().reverse().map((h) => {
       const ht = h.totals || {};
       return el('tr', {}, [
@@ -262,10 +273,231 @@ async function loadCredits() {
   }
 }
 
+// ── 单账号积分曲线（弹窗 + 手写 SVG 折线图）──────────────────────────────
+// 数据源：GET /admin/credit-daily?days=30 —— histories[] 已按天给出**每账号**
+// earned/spent/adjust/credits_end，所以 7/15/30 天只是同一份数据切片，不需要额外接口。
+// 为什么手写 SVG：CSP 是 `default-src 'self'`，引不了任何 CDN 图表库，而这套后台
+// 刻意不设构建步骤（见 app.css 头注释），自己画四十行比塞一个库更省事。
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// 四条固定序列（颜色/名称/读哪个轴）。颜色选 Bootstrap 语义色的实色值：
+// 深浅色主题下都够对比度，且不依赖 CSS 变量（SVG 属性拿不到 --bs-* 的解析值）。
+const CREDIT_SERIES = [
+  { key: 'credits', name: '日终总积分', color: '#0d6efd', axis: 'left' },
+  { key: 'earned', name: '当日获得', color: '#198754', axis: 'right' },
+  { key: 'spent', name: '当日消耗', color: '#dc3545', axis: 'right' },
+  { key: 'adjust', name: '当日修正', color: '#fd7e14', axis: 'right' },
+];
+
+function svgNode(tag, attrs = {}) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+  return n;
+}
+
+// fmtAxis 坐标轴刻度用的紧凑数字（12000 → 1.2万，3400 → 3.4k）。
+function fmtAxis(v) {
+  const abs = Math.abs(v);
+  if (abs >= 10000) return (v / 10000).toFixed(abs >= 100000 ? 0 : 1) + '万';
+  if (abs >= 1000) return (v / 1000).toFixed(abs >= 10000 ? 0 : 1) + 'k';
+  return String(Math.round(v));
+}
+
+// niceMax 把轴上限向上取整到 1/2/5×10^k：刻度才会是 250/500/1250 这种整数，
+// 而不是 103/205/308（410 的四个等分）那种看着像随机数的值。
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const exp = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / exp;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * exp;
+}
+
+// drawLineChart 双 Y 轴折线图：left 轴给量级大的余额，right 轴给当日增减。
+// labels 与每个 series.values 等长且已按时间升序。
+function drawLineChart(host, labels, series) {
+  host.replaceChildren();
+  if (!labels.length) {
+    host.appendChild(el('div', { class: 'text-body-secondary small py-5 text-center', text: '该区间没有账本数据' }));
+    return;
+  }
+
+  const W = 900, H = 320;
+  const padL = 58, padR = 58, padT = 14, padB = 36;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const svg = svgNode('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'credit-chart', role: 'img' });
+
+  const leftVals = series.filter((s) => s.axis === 'left').flatMap((s) => s.values);
+  const rightVals = series.filter((s) => s.axis !== 'left').flatMap((s) => s.values);
+  const maxOf = (vals) => vals.reduce((m, v) => Math.max(m, Number(v) || 0), 0);
+  // 全 0（例如新号、区间内没有任何记录）时给 1，避免除零。
+  const maxL = niceMax(maxOf(leftVals));
+  const maxR = niceMax(maxOf(rightVals));
+
+  const xAt = (i) => (labels.length === 1 ? padL + plotW / 2 : padL + (plotW * i) / (labels.length - 1));
+  const yAt = (v, max) => padT + plotH - (Math.max(0, Number(v) || 0) / max) * plotH;
+
+  // 网格 + 双轴刻度（5 条横线：0 / ¼ / ½ / ¾ / 满）。
+  for (let k = 0; k <= 4; k++) {
+    const ratio = k / 4;
+    const y = padT + plotH * (1 - ratio);
+    svg.appendChild(svgNode('line', { class: 'grid', x1: padL, x2: padL + plotW, y1: y, y2: y }));
+    const lv = svgNode('text', { class: 'axis-label', x: padL - 8, y: y + 4, 'text-anchor': 'end' });
+    lv.textContent = fmtAxis(maxL * ratio);
+    svg.appendChild(lv);
+    const rv = svgNode('text', { class: 'axis-label', x: padL + plotW + 8, y: y + 4, 'text-anchor': 'start' });
+    rv.textContent = fmtAxis(maxR * ratio);
+    svg.appendChild(rv);
+  }
+
+  // X 轴：最多 8 个日期标签，首尾必显示（其余按步长抽稀，避免 30 天挤成一团）。
+  // 靠近末尾的抽稀标签要跳过，否则会和"最后一天"的标签叠在一起（30 天档踩过）。
+  const step = Math.max(1, Math.ceil(labels.length / 8));
+  const minGap = Math.max(1, Math.round(step / 2));
+  labels.forEach((lab, i) => {
+    const last = labels.length - 1;
+    if (i !== last && (i % step !== 0 || last - i < minGap)) return;
+    const t = svgNode('text', { class: 'x-label', x: xAt(i), y: padT + plotH + 20, 'text-anchor': 'middle' });
+    t.textContent = String(lab).slice(5); // 2026-11-10 → 11-10
+    svg.appendChild(t);
+  });
+
+  // 曲线 + 数据点（点带 <title>，鼠标悬停即读数）。点多了缩小半径，避免连成一条白带。
+  const dotR = labels.length > 15 ? 1.8 : 2.8;
+  for (const s of series) {
+    const max = s.axis === 'left' ? maxL : maxR;
+    const pts = s.values.map((v, i) => xAt(i) + ',' + yAt(v, max));
+    svg.appendChild(svgNode('polyline', {
+      class: 'series-line', points: pts.join(' '), stroke: s.color,
+    }));
+    s.values.forEach((v, i) => {
+      const dot = svgNode('circle', {
+        class: 'series-dot', cx: xAt(i), cy: yAt(v, max), r: dotR, fill: s.color,
+      });
+      const tip = svgNode('title', {});
+      tip.textContent = labels[i] + ' · ' + s.name + '：' + fmtNum(v);
+      dot.appendChild(tip);
+      svg.appendChild(dot);
+    });
+  }
+
+  host.appendChild(svg);
+  host.appendChild(el('div', {
+    class: 'd-flex justify-content-between small text-body-secondary mt-1',
+    // 轴标签只在图内，这里再给一句人话，免得看左轴/右轴搞混。
+  }, [
+    el('span', { text: '左轴：日终总积分' }),
+    el('span', { text: '右轴：当日获得 / 消耗 / 修正' }),
+  ]));
+}
+
+// dayLabels 生成"今天往前 days 天"的完整日期序列（升序，yyyy-mm-dd）。
+// 为什么要自己铺日历：需求是「没有积分的日期按 0 处理」——只画账本里存在的日期
+// 会让缺失的那天在图上凭空消失（X 轴不连续，看不出"这天啥都没干"）。
+// 用 UTC 口径做日期加减，避免本地时区/DST 把日期算偏。
+function dayLabels(todayISO, days) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(todayISO || ''));
+  const base = m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : Date.now();
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    out.push(new Date(base - i * 86400000).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+// accountChartData 从 credit-daily 响应里切出某账号最近 days 天的序列。
+//
+// 缺失日期的处理（需求：「没有积分的日期按 0 处理」）：
+//   - 区间内每一天都要有一个点（dayLabels 铺满日历），当天没有任何记录时：
+//     获得 / 消耗 / 修正 = 0（"这天没赚也没花"）；
+//   - 日终总积分：沿用上一已知值（余额是存量，按 0 画会出现"某天余额归零"的假暴跌）。
+//     credits_end 只在权威回写且余额非 0 时才写，所以 0 同时表示"未知"。
+//     今天那一点优先用账号页的实时积分（比日末快照新）。
+function accountChartData(payload, uid, days) {
+  const byDate = new Map(((payload && payload.histories) || []).map((h) => [h.date, h]));
+  const labels = dayLabels(payload && payload.today, days);
+  const acc = (state.accounts || []).find((a) => a.uid === uid);
+  const rows = labels.map((date) => {
+    const h = byDate.get(date);
+    const rec = h ? (h.accounts || []).find((a) => a.uid === uid) : null;
+    return {
+      date,
+      earned: rec ? Number(rec.earned || 0) : 0,
+      spent: rec ? Number(rec.spent || 0) : 0,
+      adjust: rec ? Number(rec.adjust || 0) : 0,
+      credits: rec ? Number(rec.credits_end || 0) : 0,
+    };
+  });
+  let last = null;
+  for (const r of rows) {
+    if (r.credits > 0) last = r.credits;
+    else r.credits = last;
+  }
+  const fallback = acc ? Number(acc.credits || 0) : 0;
+  for (const r of rows) if (r.credits === null) r.credits = fallback;
+  if (rows.length && acc) {
+    rows[rows.length - 1].credits = Number(acc.credits || rows[rows.length - 1].credits || 0);
+  }
+  return { labels, rows };
+}
+
+// renderCreditChart 用当前缓存的账本数据 + 当前区间重画弹窗内容。
+function renderCreditChart() {
+  const uid = state.chartUID;
+  if (!uid) return;
+  const days = state.chartDays || 7;
+  $$('#creditModalRange button').forEach((b) => {
+    b.classList.toggle('active', Number(b.dataset.days) === days);
+  });
+  // 图例（名称 + 该线读哪个轴）
+  $('#creditModalLegend').replaceChildren(...CREDIT_SERIES.map((s) => el('span', {}, [
+    el('span', { class: 'swatch', attrs: { style: 'background:' + s.color } }),
+    el('span', { text: s.name + (s.axis === 'left' ? '（左轴）' : '（右轴）') }),
+  ])));
+
+  const { labels, rows } = accountChartData(state.creditDaily, uid, days);
+  $('#creditModalHint').textContent = labels.length
+    ? (labels[0] + ' ~ ' + labels[labels.length - 1] + '（' + labels.length + ' 天）')
+    : '';
+  drawLineChart($('#creditModalChart'), labels, CREDIT_SERIES.map((s) => ({
+    name: s.name,
+    color: s.color,
+    axis: s.axis,
+    values: rows.map((r) => r[s.key]),
+  })));
+}
+
+// openCreditChart 打开某账号的积分曲线弹窗（默认近 7 天）。
+async function openCreditChart(uid) {
+  state.chartUID = uid;
+  state.chartDays = 7;
+  const acc = (state.accounts || []).find((a) => a.uid === uid);
+  $('#creditModalTitle').textContent = '积分曲线 · ' + uid;
+  $('#creditModalMeta').textContent = acc
+    ? [acc.nickname || '', acc.realm || '', '当前积分 ' + fmtNum(acc.credits)].filter(Boolean).join(' · ')
+    : '';
+  const host = $('#creditModalChart');
+  host.replaceChildren(el('div', { class: 'text-body-secondary small py-5 text-center', text: '加载中…' }));
+  bootstrap.Modal.getOrCreateInstance($('#creditChartModal')).show();
+  try {
+    // 每次打开都取最新（30 天覆盖三档区间）；顺手刷新概览缓存。
+    state.creditDaily = await api('/admin/credit-daily?days=30');
+  } catch (e) {
+    host.replaceChildren(el('div', { class: 'text-danger small py-4 text-center', text: String(e.message || e) }));
+    return;
+  }
+  renderCreditChart();
+}
+
 function statusBadge(a) {
-  // 顺序与「能否接单」的判断一致：先看人为动作，再看系统状态，最后看是否入池。
-  if (a.manual_disabled) return el('span', { class: 'badge text-bg-secondary status-badge', text: '手动停用', title: a.manual_reason || '' });
-  if (a.disabled) return el('span', { class: 'badge text-bg-danger status-badge', text: '系统禁用', title: a.disabled_reason || '' });
+  // 顺序与「能否接单」的判断一致：先看禁用，再看系统状态，最后看是否入池。
+  if (a.disabled) {
+    return a.disabled_source === 'manual'
+      ? el('span', { class: 'badge text-bg-secondary status-badge', text: '手动禁用', title: a.disabled_reason || '' })
+      : el('span', { class: 'badge text-bg-danger status-badge', text: '系统禁用', title: a.disabled_reason || '' });
+  }
   if (a.cooling) return el('span', { class: 'badge text-bg-warning status-badge', text: '冷却 ' + fmtDuration(a.cool_remaining_sec) });
   if (a.resting) return el('span', { class: 'badge text-bg-info status-badge', text: '休养中' });
   if (!a.in_pool) return el('span', { class: 'badge text-bg-secondary status-badge', text: '未入池' });
@@ -314,16 +546,22 @@ async function loadAccounts() {
 
     const rows = state.accounts.map((a) => {
       const ops = el('td', { class: 'text-end text-nowrap' }, [
-        a.manual_disabled
+        a.disabled
           ? actionBtn('启用', 'success', a.uid, 'enable')
-          : actionBtn('停用', 'secondary', a.uid, 'disable', a.disabled || !a.in_pool),
+          : actionBtn('禁用', 'danger', a.uid, 'disable'),
         a.resting
           ? actionBtn('恢复', 'outline-success', a.uid, 'unrest')
           : actionBtn('休养', 'outline-secondary', a.uid, 'rest', a.disabled || !a.in_pool),
 
       ]);
       return el('tr', {}, [
-        el('td', { class: 'font-monospace small', text: a.uid }),
+        // 第一列（UID）可点：打开该账号的近 7/15/30 天积分曲线弹窗。
+        el('td', {}, [el('button', {
+          class: 'btn btn-link btn-sm p-0 font-monospace',
+          text: a.uid,
+          title: '点击查看近 7 / 15 / 30 天积分曲线',
+          attrs: { type: 'button', 'data-chart-uid': a.uid },
+        })]),
         el('td', { text: a.nickname || '–' }),
         el('td', { text: a.realm || '–' }),
         el('td', {}, [
@@ -356,13 +594,13 @@ async function doAccountAction(uid, action) {
       await api('/admin/accounts/' + encodeURIComponent(uid) + '/unrest', { method: 'POST', body: {} });
       toast(uid + ' 已恢复接流', 'success');
     } else if (action === 'disable') {
-      const reason = prompt('停用原因（只摘对话流量，签到与保活照常）：', '手动停用');
+      const reason = prompt('禁用原因（禁用期间签到/上报/旅行/保活全部停止；只想养号请用「休养」）：', '手动禁用');
       if (reason === null) return;
       await api('/admin/accounts/' + encodeURIComponent(uid) + '/disable', { method: 'POST', body: { reason } });
-      toast(uid + ' 已停用', 'secondary');
+      toast(uid + ' 已禁用：不接下游流量，所有自动任务停止', 'secondary');
     } else if (action === 'enable') {
       await api('/admin/accounts/' + encodeURIComponent(uid) + '/enable', { method: 'POST', body: {} });
-      toast(uid + ' 已启用', 'success');
+      toast(uid + ' 已启用（手动/系统禁用一并解除）', 'success');
     }
     loadAccounts();
   } catch (e) {
@@ -783,11 +1021,24 @@ function bind() {
   $('#btnRefreshModels').addEventListener('click', () => loadModels(true));
   $('#modelFilter').addEventListener('input', renderModelRows);
 
-  // 账号行操作走事件委托（行是动态生成的，逐个绑定会漏）
+  // 账号行操作走事件委托（行是动态生成的，逐个绑定会漏）。
+  // 第一列 UID 是「打开积分曲线」，其余按钮是「动作」——同一委托里按目标分流。
   $('#accountsBody').addEventListener('click', (ev) => {
     const btn = ev.target.closest('button[data-action]');
-    if (!btn) return;
-    doAccountAction(btn.dataset.uid, btn.dataset.action);
+    if (btn) {
+      doAccountAction(btn.dataset.uid, btn.dataset.action);
+      return;
+    }
+    const chartBtn = ev.target.closest('button[data-chart-uid]');
+    if (chartBtn) openCreditChart(chartBtn.dataset.chartUid);
+  });
+
+  // 积分曲线弹窗的区间切换（7 / 15 / 30 天）
+  $$('#creditModalRange button').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.chartDays = Number(b.dataset.days) || 7;
+      renderCreditChart();
+    });
   });
 
   $('#btnSend').addEventListener('click', sendPlayground);

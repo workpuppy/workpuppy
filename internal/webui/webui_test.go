@@ -160,6 +160,66 @@ func TestAdminPageHasQRCodeWiring(t *testing.T) {
 	}
 }
 
+// 单账号积分曲线必须"点得到、画得出"。
+//
+// 回归背景：概览的积分日账本只有全局汇总，看不出某个号的钱是怎么走的；
+// 现在账号页每行第一列的 UID 可点，弹窗里按 7/15/30 天画 4 条折线
+// （日终总积分 / 当日获得 / 当日消耗 / 当日修正）。数据来自
+// /admin/credit-daily 的 histories[]（已含每账号明细），所以这里断言
+// "接线还在"：入口页有弹窗与区间按钮、脚本里有图表与铺日历的实现、
+// 样式里有图表容器。
+func TestAccountCreditChartWiring(t *testing.T) {
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	for _, want := range []string{
+		`id="creditChartModal"`, `id="creditModalChart"`, `id="creditModalRange"`,
+		`data-days="7"`, `data-days="15"`, `data-days="30"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("入口页缺少 %s（积分曲线弹窗/区间按钮）", want)
+		}
+	}
+	// 概览：4 个积分总计卡片 + 网关状态默认折叠。
+	for _, want := range []string{
+		`id="kpiCredits"`, `id="kpiEarned"`, `id="kpiSpent"`, `id="kpiAdjust"`,
+		`data-bs-target="#statusRawWrap"`, `id="statusRawWrap"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("入口页缺少 %s（积分总计卡片/网关状态折叠）", want)
+		}
+	}
+	// 顺序：积分日账本在网关状态上方。
+	creditAt := strings.Index(html, `id="creditCard"`)
+	statusAt := strings.Index(html, `id="statusRawWrap"`)
+	if creditAt < 0 || statusAt < 0 || creditAt > statusAt {
+		t.Fatalf("积分日账本应在网关状态上方（credit=%d, status=%d）", creditAt, statusAt)
+	}
+	// 折叠容器默认不带 show（= 收起）。
+	if strings.Contains(html, `id="statusRawWrap" class="collapse show"`) {
+		t.Error("网关状态默认应折叠（collapse 不能带 show）")
+	}
+
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{
+		"data-chart-uid", "openCreditChart", "drawLineChart", "accountChartData", "dayLabels", "CREDIT_SERIES",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("app.js 缺少 %s（积分曲线/缺失日期补 0）", want)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	for _, want := range []string{".credit-chart-host", ".credit-chart", ".credit-legend"} {
+		if !strings.Contains(css.Body.String(), want) {
+			t.Errorf("app.css 缺少 %s（图表容器/图例）", want)
+		}
+	}
+}
+
 // 扫码授权的有效期必须"看得见、过期后明确失效"。
 //
 // 回归背景：原先只写"已开始轮询授权结果"，用户不知道还能扫多久；state 过期后
