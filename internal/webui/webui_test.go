@@ -248,6 +248,26 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	}
 }
 
+// 品牌字标：登录页与导航栏都只显示 WorkPuppy（旧的「WB」徽标 + 「WP」文字已移除）。
+//
+// 回归背景：品牌原来是 `<span class="badge">WB</span>WP` 的两段式，改字标时容易只改
+// 一处（登录页或导航栏），或者漏掉后半段「WP」——这里两处一起锁。
+func TestBrandWordmark(t *testing.T) {
+	w := httptest.NewRecorder()
+	Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := w.Body.String()
+
+	if got := strings.Count(html, ">WorkPuppy<"); got != 2 {
+		t.Errorf("登录页与导航栏应各有一处 WorkPuppy 字标，实际 %d 处", got)
+	}
+	if strings.Contains(html, ">WB</span>") {
+		t.Error("旧「WB」徽标应已移除")
+	}
+	if strings.Contains(html, ">WP<") || strings.Contains(html, "</span>WP") {
+		t.Error("字标旁不应再保留「WP」文字")
+	}
+}
+
 // 扫码授权的有效期必须"看得见、过期后明确失效"。
 //
 // 回归背景：原先只写"已开始轮询授权结果"，用户不知道还能扫多久；state 过期后
