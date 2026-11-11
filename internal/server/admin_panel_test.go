@@ -122,11 +122,12 @@ func TestAPIKeyCannotReachAdmin(t *testing.T) {
 	}
 }
 
-// 管理凭据未初始化时**一律拒绝**（503），绝不沿用「api_key 为空 = 不鉴权」。
+// 管理凭据未初始化时**一律拒绝**（428 setup_required），绝不沿用
+// 「api_key 为空 = 不鉴权」；前端据此切到初始化向导。
 func TestAdminRejectsWhenPasswordUninitialized(t *testing.T) {
 	p := pool.New("")
 	t.Cleanup(p.Close)
-	// 不传 AdminAuth（nil）：模拟启动异常/漏接线。
+	// 不传 AdminAuth（nil）：等价于"还没初始化"。
 	h := NewHandler(Config{
 		Pool: p, Upstream: upstream.New(), APIKey: testAPIKey, AdminEnabled: true,
 	})
@@ -137,8 +138,8 @@ func TestAdminRejectsWhenPasswordUninitialized(t *testing.T) {
 		{http.MethodPost, "/admin/login"},
 	} {
 		w := adminReq(h, tc.method, tc.path, nil)
-		if w.Code != http.StatusServiceUnavailable {
-			t.Fatalf("%s %s 未初始化应 503，实际 %d（body=%s）", tc.method, tc.path, w.Code, w.Body.String())
+		if w.Code != http.StatusPreconditionRequired {
+			t.Fatalf("%s %s 未初始化应 428，实际 %d（body=%s）", tc.method, tc.path, w.Code, w.Body.String())
 		}
 	}
 }

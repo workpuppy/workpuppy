@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wp/internal/adminauth"
@@ -70,7 +71,12 @@ type Config struct {
 
 	// AdminEnabled 运维管理端点开关（config admin.enabled，默认 false）。
 	// 关闭时 /admin/* 一律 404（而非 403——不向外暴露"这里存在管理面"）。
+	// 运行期可在设置页热切换，见 Handler.adminEnabled。
 	AdminEnabled bool
+
+	// ConfigStore 设置页的配置读写实现（cmd/server 注入）。
+	// nil = 未接线：/admin/config 返回 501，但登录与账号操作不受影响。
+	ConfigStore ConfigStore
 
 	// Scheduler 后台调度器（签到/旅行/活跃/保活）。管理面的「立即签到」复用它，
 	// 从而共享它的单飞锁与「相邻账号间隔」节流——并发签到正是风控最敏感的特征。
@@ -84,7 +90,7 @@ type Config struct {
 	// Credits 积分日账本（nil = 未接线，/admin/credit-daily 回 501）。
 	Credits *creditledger.Ledger
 
-	// AdminAuth 管理面凭据（启动时随机生成、只存内存）。与 APIKey 完全分离：
+	// AdminAuth 管理面凭据（加盐 10 轮 SHA256 哈希，存于 data/config.json）。与 APIKey 完全分离：
 	// 管理端点只认它，且它未初始化时一律拒绝（绝不放行）。
 	AdminAuth *adminauth.Store
 
@@ -145,6 +151,33 @@ type Handler struct {
 
 	// adminLoginLimit 管理后台登录失败的按 IP 限速（进程内存，重启清零）。
 	adminLoginLimit adminLoginLimiter
+
+	// adminEnabled 管理面开关（设置页可热切换）。关闭时 /admin/* 除
+	// 初始化/登录/初始化状态外一律按"不存在"处理（纯文本 404，与未注册路由同形）。
+	adminEnabled atomic.Bool
+
+	// configPending 是否有"已保存、待重启生效"的配置改动；进程重启即清空。
+	configPending atomic.Bool
+
+	// setupMu 序列化首次初始化：并发请求不能都成功写密码。
+	setupMu sync.Mutex
+}
+
+// SetAdminEnabled 热切换管理面开关（设置页保存/初始化成功后调用）。
+func (h *Handler) SetAdminEnabled(v bool) { h.adminEnabled.Store(v) }
+
+// adminPathHidden 关闭管理面时，/admin/* 是否应按"不存在"处理。
+//
+// 例外是初始化与登录：它们必须能在管理面关闭时访问，否则首次安装永远进不去。
+func (h *Handler) adminPathHidden(path string) bool {
+	if h.adminEnabled.Load() || !strings.HasPrefix(path, "/admin/") {
+		return false
+	}
+	switch path {
+	case "/admin/setup", "/admin/setup/status", "/admin/login":
+		return false
+	}
+	return true
 }
 
 // largeExclusions 返回「LargeRequestCooldown 窗口内已承接过大请求」的号集合，
@@ -235,46 +268,50 @@ func NewHandler(cfg Config) *Handler {
 	}
 	h := &Handler{cfg: cfg, mux: http.NewServeMux(), largeUsed: make(map[string][]time.Time)}
 	h.adminLoginLimit.fail = make(map[string][]time.Time)
+	h.adminEnabled.Store(cfg.AdminEnabled)
 	h.mux.HandleFunc("POST /v1/chat/completions", h.withAuth(h.chatCompletions))
 	h.mux.HandleFunc("GET /v1/models", h.withAuth(h.models))
 	h.mux.HandleFunc("GET /status", h.withAuth(h.status))
 	h.mux.HandleFunc("GET /v1/stats", h.withAuth(h.stats))
 	h.mux.HandleFunc("POST /v1/stats/reset", h.withAuth(h.statsReset))
-	// 运维管理端点（默认关闭，config admin.enabled 开启后生效）。
-	// 路径用 {uid} 通配而非查询参数：uid 是账号身份，放进路径便于审计与直观。
-	// 条件注册而非 handler 内 404（设计 supplement §2.3）：未注册的路由对未鉴权
-	// 探测回 mux 默认纯文本 404、对 GET 探测无 405+Allow 头，与真 404 完全不可
-	// 区分——路由一旦注册，"带 key 得 401 / GET 得 405 / JSON 信封 404" 三者都会
-	// 暴露管理面存在。
-	if cfg.AdminEnabled {
-		// 管理面**只认管理密码**（adminauth.Store），与 /v1 的 api_key 彻底分离：
-		// 下游手里的 key 不再附带停号/加号/看全量账号的能力。
-		h.mux.HandleFunc("POST /admin/login", h.adminLogin)
-		h.mux.HandleFunc("GET /admin/status", h.withAdminAuth(h.adminStatus))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/disable", h.withAdminAuth(h.adminAccountDisable))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/enable", h.withAdminAuth(h.adminAccountEnable))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk", h.withAdminAuth(h.adminRefreshRisk))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/clear", h.withAdminAuth(h.adminClearRefreshRisk))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/success", h.withAdminAuth(h.adminRefreshRiskSuccess))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/models/{model}/available", h.withAdminAuth(h.adminModelAvailable))
-		// 管理面（REST）：账号清单/详情、签到、扫码加号、模型中心、聊天测试台。
-		h.mux.HandleFunc("GET /admin/accounts", h.withAdminAuth(h.adminAccounts))
-		h.mux.HandleFunc("GET /admin/accounts/{uid}", h.withAdminAuth(h.adminAccountDetail))
-		h.mux.HandleFunc("POST /admin/accounts/checkin", h.withAdminAuth(h.adminCheckinAll))
-		h.mux.HandleFunc("POST /admin/auth/start", h.withAdminAuth(h.adminAuthStart))
-		h.mux.HandleFunc("GET /admin/auth/poll", h.withAdminAuth(h.adminAuthPoll))
-		// 二维码：扫码加号把 auth_url 渲成 PNG（前端 fetch 带凭据取 blob，见 app.js renderQR）。
-		h.mux.HandleFunc("GET /admin/qr", h.withAdminAuth(h.adminQR))
-		// 积分日账本：当日取内存热值，历史取落盘的每日汇总（保留 30 天）。
-		h.mux.HandleFunc("GET /admin/credit-daily", h.withAdminAuth(h.adminCreditDaily))
-		// 休养开关：不接下游流量，签到/上报/旅行/保活照跑。
-		h.mux.HandleFunc("POST /admin/accounts/refresh", h.withAdminAuth(h.adminRefreshBalances))
-		h.mux.HandleFunc("POST /admin/travel/run", h.withAdminAuth(h.adminTravelRun))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/rest", h.withAdminAuth(h.adminAccountRest))
-		h.mux.HandleFunc("POST /admin/accounts/{uid}/unrest", h.withAdminAuth(h.adminAccountUnrest))
-		h.mux.HandleFunc("GET /admin/models", h.withAdminAuth(h.adminModels))
-		h.mux.HandleFunc("POST /admin/playground/chat", h.withAdminAuth(h.adminPlaygroundChat))
-	}
+	// 运维管理端点。**始终注册**，是否可见由 adminEnabled 在 ServeHTTP 里判定：
+	// 这样设置页把 admin.enabled 打开后立刻可用（不需要重启）；关闭时对 /admin/*
+	// 统一回"mux 同款"纯文本 404，探测面与未注册路由一致。
+	//
+	// 例外：初始化与登录必须始终可达，否则首次安装永远进不去。
+	h.mux.HandleFunc("GET /admin/setup/status", h.adminSetupStatus)
+	h.mux.HandleFunc("POST /admin/setup", h.adminSetup)
+	h.mux.HandleFunc("POST /admin/login", h.adminLogin)
+	h.mux.HandleFunc("POST /admin/password", h.withAdminAuth(h.adminChangePassword))
+	h.mux.HandleFunc("GET /admin/config", h.withAdminAuth(h.adminConfigGet))
+	h.mux.HandleFunc("PUT /admin/config", h.withAdminAuth(h.adminConfigPut))
+	h.mux.HandleFunc("POST /admin/config/reset", h.withAdminAuth(h.adminConfigReset))
+	// 管理面**只认管理密码**（adminauth.Store），与 /v1 的 api_key 彻底分离：
+	// 下游手里的 key 不再附带停号/加号/看全量账号的能力。
+	h.mux.HandleFunc("GET /admin/status", h.withAdminAuth(h.adminStatus))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/disable", h.withAdminAuth(h.adminAccountDisable))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/enable", h.withAdminAuth(h.adminAccountEnable))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk", h.withAdminAuth(h.adminRefreshRisk))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/clear", h.withAdminAuth(h.adminClearRefreshRisk))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk/success", h.withAdminAuth(h.adminRefreshRiskSuccess))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/models/{model}/available", h.withAdminAuth(h.adminModelAvailable))
+	// 管理面（REST）：账号清单/详情、签到、扫码加号、模型中心、聊天测试台。
+	h.mux.HandleFunc("GET /admin/accounts", h.withAdminAuth(h.adminAccounts))
+	h.mux.HandleFunc("GET /admin/accounts/{uid}", h.withAdminAuth(h.adminAccountDetail))
+	h.mux.HandleFunc("POST /admin/accounts/checkin", h.withAdminAuth(h.adminCheckinAll))
+	h.mux.HandleFunc("POST /admin/auth/start", h.withAdminAuth(h.adminAuthStart))
+	h.mux.HandleFunc("GET /admin/auth/poll", h.withAdminAuth(h.adminAuthPoll))
+	// 二维码：扫码加号把 auth_url 渲成 PNG（前端 fetch 带凭据取 blob，见 app.js renderQR）。
+	h.mux.HandleFunc("GET /admin/qr", h.withAdminAuth(h.adminQR))
+	// 积分日账本：当日取内存热值，历史取落盘的每日汇总（保留 30 天）。
+	h.mux.HandleFunc("GET /admin/credit-daily", h.withAdminAuth(h.adminCreditDaily))
+	// 休养开关：不接下游流量，签到/上报/旅行/保活照跑。
+	h.mux.HandleFunc("POST /admin/accounts/refresh", h.withAdminAuth(h.adminRefreshBalances))
+	h.mux.HandleFunc("POST /admin/travel/run", h.withAdminAuth(h.adminTravelRun))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/rest", h.withAdminAuth(h.adminAccountRest))
+	h.mux.HandleFunc("POST /admin/accounts/{uid}/unrest", h.withAdminAuth(h.adminAccountUnrest))
+	h.mux.HandleFunc("GET /admin/models", h.withAdminAuth(h.adminModels))
+	h.mux.HandleFunc("POST /admin/playground/chat", h.withAdminAuth(h.adminPlaygroundChat))
 	h.mux.HandleFunc("GET /healthz", h.healthz)
 	// 管理后台（可选）。放在最后注册，纯粹是为了让「具体路由」都先声明；
 	// Go 1.22 的 ServeMux 按**具体度**选路，与注册顺序无关，所以 /v1/* 与
@@ -286,6 +323,12 @@ func NewHandler(cfg Config) *Handler {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 管理面关闭时按"路由不存在"处理：纯文本 404、GET 探测不产生 405，
+	// 与未注册路由的表现一致（不暴露管理面存在）。
+	if h.adminPathHidden(r.URL.Path) {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+		return
+	}
 	h.mux.ServeHTTP(w, r)
 }
 

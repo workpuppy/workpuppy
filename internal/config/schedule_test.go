@@ -167,7 +167,7 @@ func TestNormalizeScheduleInvalidTime(t *testing.T) {
 }
 
 // TestScheduleDefaultsSurvivePartialUnmarshal 键缺席必须保留上一层的默认值
-// （默认配置来自内嵌 config.default.json；用户文件只写一部分键是常态）。
+// （默认配置来自内嵌 config.example.json；用户文件只写一部分键是常态）。
 func TestScheduleDefaultsSurvivePartialUnmarshal(t *testing.T) {
 	s := DefaultSchedule()
 	if err := json.Unmarshal([]byte(`{"checkin_time":["09:30"]}`), &s); err != nil {

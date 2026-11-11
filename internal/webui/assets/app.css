@@ -371,3 +371,129 @@ button[data-chart-uid]:focus-visible {
   background: transparent;
   border-top: 1px solid var(--tblr-border-color, #e6e7e9);
 }
+
+/* ── 配置改动"待重启"横幅 ─────────────────────────────────────────────
+ * 保存成功即出现；进程重启后 /admin/config 的 restart_pending 变回 false，
+ * 横幅自然消失（不做"手动关闭"，避免用户误以为已经生效）。 */
+.wp-restart-banner {
+  background: color-mix(in srgb, #f59f00 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #f59f00 38%, transparent);
+  color: var(--tblr-body-color, #182433);
+}
+
+.wp-restart-cmd {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #f59f00 16%, transparent);
+  color: inherit;
+  white-space: nowrap;
+}
+
+/* ── 设置页布局 ─────────────────────────────────────────────────────── */
+.wp-cfg-side {
+  position: sticky;
+  top: 76px; /* 顶部导航高度 + 一点留白 */
+}
+
+.wp-cfg-groups .nav-link {
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: var(--tblr-body-color, #182433);
+}
+
+.wp-cfg-groups .nav-link:hover {
+  background: var(--tblr-bg-surface-secondary, #f6f8fb);
+  color: var(--wp-primary);
+}
+
+.wp-cfg-path {
+  font-family: var(--tblr-font-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+  word-break: break-all;
+}
+
+.wp-cfg-card {
+  scroll-margin-top: 84px;
+}
+
+/* 底部保存条是 sticky 的：给页面留出空间，滚到最后一项时不会被它压住。 */
+#view-settings {
+  padding-bottom: 4.5rem;
+}
+
+/* 一行 = 标签 / 控件 / 默认徽章与复位；窄屏折成两段。 */
+.wp-cfg-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.3fr) auto;
+  gap: 0.75rem 1rem;
+  align-items: start;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--tblr-border-color, #e6e7e9);
+}
+
+.wp-cfg-row:first-child {
+  border-top: 0;
+}
+
+.wp-cfg-label .form-label {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.wp-cfg-key {
+  font-family: var(--tblr-font-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.72rem;
+  color: var(--tblr-secondary, #667382);
+}
+
+.wp-cfg-hint {
+  font-size: 0.75rem;
+  color: var(--tblr-secondary, #667382);
+  margin-top: 0.15rem;
+  line-height: 1.45;
+}
+
+.wp-cfg-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.wp-cfg-badge {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.wp-cfg-error {
+  grid-column: 1 / -1;
+  margin-top: -0.35rem;
+}
+
+/* 保存条：贴在视口底部，滚动到表单深处也能直接保存。 */
+.wp-cfg-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--tblr-border-color, #e6e7e9);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tblr-bg-surface, #fff) 88%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+}
+
+@media (max-width: 991.98px) {
+  .wp-cfg-row {
+    grid-template-columns: 1fr;
+  }
+
+  .wp-cfg-actions {
+    justify-content: flex-start;
+  }
+
+  .wp-cfg-side {
+    position: static;
+  }
+}

@@ -23,7 +23,8 @@
 // "Inspected target navigated"）。
 const PORT = process.env.WP_PORT;
 const PW = process.env.WP_PW;
-const CDP = 'http://127.0.0.1:9222';
+// CDP 端口可覆盖（默认 9222）：便于本机同时跑多个实例，或在 CI 上换端口。
+const CDP = process.env.WP_CDP || 'http://127.0.0.1:9222';
 const base = `http://127.0.0.1:${PORT}/`;
 
 function connect(url) {
@@ -87,24 +88,42 @@ async function main() {
   })()`);
   console.log('登录前:', JSON.stringify(before));
 
+  // 首屏可能是"登录"，也可能是"首次初始化密码"（全新部署、data/config.json 里还没有
+  // admin.password）。两种都覆盖：脚本是回归用例，不该假设部署已经初始化过。
+  const mode = await evalJS(`(() => ({
+    setup: !document.getElementById('setupForm')?.hidden,
+    login: !document.getElementById('loginForm')?.hidden,
+  }))()`);
+  console.log('首屏模式:', JSON.stringify(mode));
+
   // 提交（fire-and-forget，结果写进 window.__check）
   await evalJS(`(() => {
     window.__check = { done: false };
     const t0 = Date.now();
     const login = document.getElementById('loginWrap');
     const app = document.getElementById('app');
-    const input = document.getElementById('loginPassword');
-    input.value = ${JSON.stringify(PW)};
-    document.getElementById('loginForm').requestSubmit();
+    const setup = ${JSON.stringify(!!mode.setup)};
+    if (setup) {
+      document.getElementById('setupPassword').value = ${JSON.stringify(PW)};
+      document.getElementById('setupConfirm').value = ${JSON.stringify(PW)};
+      document.getElementById('setupForm').requestSubmit();
+    } else {
+      document.getElementById('loginPassword').value = ${JSON.stringify(PW)};
+      document.getElementById('loginForm').requestSubmit();
+    }
+    const errText = () => {
+      const a = document.getElementById('loginError');
+      const b = document.getElementById('setupError');
+      return [a, b].filter((n) => n && !n.classList.contains('d-none')).map((n) => n.textContent).join(' / ');
+    };
     const tick = () => {
       const appVisible = app.offsetParent !== null;
       const loginHidden = login.offsetParent === null;
       if (appVisible && loginHidden) {
         window.__check = {
-          done: true, ok: true, ms: Date.now() - t0, appVisible, loginHidden,
+          done: true, ok: true, ms: Date.now() - t0, appVisible, loginHidden, setup,
           stored: !!localStorage.getItem('wp.adminPassword'),
-          loginErr: document.getElementById('loginError').classList.contains('d-none')
-            ? '' : document.getElementById('loginError').textContent,
+          loginErr: errText(),
           overviewText: (document.getElementById('view-overview').offsetParent !== null
             ? document.getElementById('view-overview').innerText : '').slice(0, 80),
         };
@@ -112,9 +131,9 @@ async function main() {
       }
       if (Date.now() - t0 > 8000) {
         window.__check = {
-          done: true, ok: false, appVisible, loginHidden,
+          done: true, ok: false, appVisible, loginHidden, setup,
           stored: !!localStorage.getItem('wp.adminPassword'),
-          loginErr: document.getElementById('loginError').textContent,
+          loginErr: errText(),
         };
         return;
       }

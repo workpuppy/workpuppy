@@ -1,13 +1,13 @@
 // admin_login.go 管理后台的登录与凭据校验。
 //
 // 与 /v1 彻底分离：`/v1`、`/status` 继续用 config.json 的 `api_key`（发给下游客户端
-// 的那把），管理面用**另一套凭据**——进程启动时随机生成、只存内存、打印到终端。
+// 的那把），管理面用**另一套凭据**——首次打开页面时由用户设置，只保存哈希。
 // 这样「下游手里的 key」不再附带停号/加号/看全量账号的权限。
 //
 // 三条硬约束（都有测试钉住）：
-//  1. 凭据未初始化时，管理面**一律拒绝**（503），绝不沿用「api_key 为空 = 不鉴权」；
+//  1. 凭据未初始化时，管理面**一律拒绝**（428 setup_required），绝不沿用「api_key 为空 = 不鉴权」；
 //  2. 管理端点**只认** adminauth.Store，拿 api_key 打 /admin/* 必须 401；
-//  3. 登录失败要有限速（内存窗口），避免把终端日志里那串密码跑成在线爆破靶子。
+//  3. 登录失败要有限速（内存窗口），避免把密码跑成在线爆破靶子。
 package server
 
 import (
@@ -27,7 +27,7 @@ type adminLoginBody struct {
 // adminLoginWindow / adminLoginMaxFails 登录失败的限速窗口与阈值（按来源 IP）。
 //
 // 为什么按 IP 而不是全局：全局锁会让一个人试错就把所有运维锁在门外；按 IP
-// 则各自计数。密码是 20 字符随机串，在线爆破本就不现实，这里只是关掉脚本化
+// 则各自计数。密码由用户设置（至少 8 位），在线爆破本就不现实，这里只是关掉脚本化
 // 撞库这类噪音。
 const (
 	adminLoginWindow   = 5 * time.Minute
@@ -107,8 +107,8 @@ func adminClientIP(r *http.Request) string {
 // 空白界面上；② 给失败加限速与明确文案。
 func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.AdminAuth.Configured() {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "admin_auth_unconfigured",
-			"管理密码未初始化：服务启动异常，请查看容器日志并重启")
+		writeOpenAIError(w, http.StatusPreconditionRequired, "admin_auth_unconfigured",
+			"管理密码尚未初始化：请打开管理后台，按页面提示设置管理员密码")
 		return
 	}
 	ip := adminClientIP(r)
@@ -127,15 +127,11 @@ func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.AdminAuth.Verify(body.Password) {
 		h.adminLoginLimit.noteFail(ip, now)
 		// 文案刻意不区分"空/错"：不给探测者任何"密码存在但不对"的额外信息。
-		writeOpenAIError(w, http.StatusUnauthorized, "invalid_admin_password",
-			"密码错误（密码在容器启动日志里，重启会更换）")
+		writeOpenAIError(w, http.StatusUnauthorized, "invalid_admin_password", "密码错误")
 		return
 	}
 	h.adminLoginLimit.reset(ip)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"issued": h.cfg.AdminAuth.IssuedAt().Format(time.RFC3339),
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // withAdminAuth 管理端点的鉴权：只认 adminauth.Store 里的密码。
@@ -146,15 +142,15 @@ func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !h.cfg.AdminAuth.Configured() {
-			writeOpenAIError(w, http.StatusServiceUnavailable, "admin_auth_unconfigured",
-				"管理密码未初始化：服务启动异常，请查看容器日志并重启")
+			writeOpenAIError(w, http.StatusPreconditionRequired, "admin_auth_unconfigured",
+				"管理密码尚未初始化：请打开管理后台完成初始化")
 			return
 		}
 		authz := r.Header.Get("Authorization")
 		provided := strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
 		if !strings.HasPrefix(authz, "Bearer ") || !h.cfg.AdminAuth.Verify(provided) {
 			writeOpenAIError(w, http.StatusUnauthorized, "invalid_admin_password",
-				"管理密码错误或未提供（密码在容器启动日志里）")
+				"管理密码错误或未提供")
 			return
 		}
 		next(w, r)

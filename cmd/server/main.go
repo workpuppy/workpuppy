@@ -38,19 +38,21 @@ func modelJSONPath(stateFile string) string {
 }
 
 func main() {
-	cfgPath := flag.String("config", "config.json", "path to config json")
+	cfgPath := flag.String("config", defaultConfigPath, "path to config json（默认 data/config.json；缺失时自动生成）")
 	flag.Parse()
+
+	// 首次启动生成 data/config.json（内容 = 内嵌 config.example.json）。
+	created, err := ensureConfigFile(*cfgPath)
+	if err != nil {
+		log.Fatalf("初始化配置失败: %v", err)
+	}
+	if created {
+		log.Printf("已生成默认配置文件 %s（首次启动；权限 0600）", *cfgPath)
+	}
 
 	cfg, err := Load(*cfgPath)
 	if err != nil {
-		// 配置文件不存在时给一次机会用纯默认 + env
-		if os.IsNotExist(err) {
-			log.Printf("config %s not found, using defaults+env", *cfgPath)
-			cfg, err = Load("")
-		}
-		if err != nil {
-			log.Fatalf("load config: %v", err)
-		}
+		log.Fatalf("load config: %v", err)
 	}
 
 	auths, err := auth.LoadDir(cfg.AuthDir)
@@ -187,7 +189,7 @@ func main() {
 	if scheduleSeed == "" {
 		scheduleSeed = cfg.AuthDir
 	}
-	// 遍历节奏：默认值来自 config.default.json，用户 config.json 有则覆盖。
+	// 遍历节奏：默认值来自 config.example.json，用户 config.json 有则覆盖。
 	scheduler.Configure(scheduler.Options{
 		CheckinAccountDelay:  cfg.Schedule.CheckinAccountDelayDur,
 		TravelAccountDelay:   cfg.Schedule.TravelAccountDelayDur,
@@ -269,11 +271,12 @@ func main() {
 		log.Printf("同账号连续请求间隔：未加随机间隔（schedule.intra_request_jitter_min/max 均为 0）")
 	}
 
-	// 管理面凭据：每次启动随机生成（只存内存），启动完成后打印到终端。
-	// WP_ADMIN_PASSWORD 可固定密码（开发/自动化用，长度不足会启动失败）。
-	adminStore, adminErr := adminauth.New(os.Getenv("WP_ADMIN_PASSWORD"))
+	// 管理面凭据：从配置里的 admin.password 哈希加载（加盐 10 轮 SHA256）。
+	// 字段为空 = 尚未初始化：页面会引导用户设置密码，不需要重启、也不再看日志找密码。
+	adminStore, adminErr := adminauth.NewFromStored(cfg.Admin.Password)
 	if adminErr != nil {
-		log.Fatalf("管理密码配置无效: %v", adminErr)
+		log.Fatalf("管理密码哈希无效（%v）：删除 %s 里的 admin.password 字段后重启即可重新初始化",
+			adminErr, cfg.SourcePath)
 	}
 
 	// 积分日账本：每账号每日「赚/花/调整」，落盘 data/credit-daily.json（保留 30 天）。
@@ -323,6 +326,8 @@ func main() {
 		GlobalEnabled: cfg.Global.Enabled,
 		// 运维管理端点开关（config admin.enabled，默认 false）。
 		AdminEnabled: cfg.Admin.Enabled,
+		// 设置页的配置读写（data/config.json）。
+		ConfigStore: newConfigStore(cfg.SourcePath),
 		// 管理面（REST）接线：调度器（立即签到复用其单飞锁与账号间隔）、
 		// 账号目录（扫码加号落盘位置）、登录服务（二维码 state 的内存管理器）。
 		Scheduler: sch,
@@ -379,7 +384,7 @@ func main() {
 		log.Printf("global realm 已禁用（config global.enabled=false，纯 CN）")
 	}
 	// 先显式绑定端口，再打印状态与管理密码：横幅必须在"服务真的能接连接"之后出现，
-	// 否则端口被占用导致启动失败时，日志里会留下一个看起来可用的密码。
+	// 否则端口被占用导致启动失败时，日志里会留下一个看起来可用的入口。
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		log.Fatalf("listen %s: %v", cfg.Listen, err)
@@ -390,10 +395,10 @@ func main() {
 	}
 	log.Printf("扫码二维码有效期：%v（qrcode_ttl）", cfg.QRCodeTTLDur)
 	log.Printf("wp listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
-	if cfg.Admin.Enabled {
-		printAdminBanner(adminStore, ln.Addr().String())
-	} else {
-		log.Printf("管理后台未启用（config admin.enabled=false）：/admin/* 不注册，/ 仍可打开页面但没有数据接口")
+	printAdminBanner(adminStore, ln.Addr().String(), cfg.SourcePath)
+	if !cfg.Admin.Enabled {
+		log.Printf("管理面当前关闭（config admin.enabled=false）：初始化密码后会自动打开；" +
+			"已初始化的情况下可在设置页重新开启，或直接改配置文件")
 	}
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("http: %v", err)

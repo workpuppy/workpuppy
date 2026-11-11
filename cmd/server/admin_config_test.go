@@ -3,27 +3,28 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// TestAdminEnabledWithoutKeyFailsFast fail-fast（设计 supplement §4.1）：
-// admin.enabled=true 且 api_key 为空 → 启动即报错，而非运行一个
-// 未鉴权的 mutation 端点（disable/revive 是可用性操作，风险高于 /status 读泄漏）。
-func TestAdminEnabledWithoutKeyFailsFast(t *testing.T) {
+// 新模型：管理面鉴权独立于 api_key（改用管理员密码哈希），所以
+// admin.enabled=true 且 api_key 为空**不再**拒绝启动 —— 否则首次初始化
+// （用户还没填 api_key）会直接起不来。
+func TestAdminEnabledWithoutAPIKeyAllowed(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"api_key":"","admin":{"enabled":true}}`), 0o600)
-	_, err := Load(fp)
-	if err == nil {
-		t.Fatal("admin.enabled=true + 空 api_key 应拒绝启动（fail-fast）")
+	if err := os.WriteFile(fp, []byte(`{"api_key":"","admin":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "admin") || !strings.Contains(err.Error(), "api_key") {
-		t.Errorf("错误文案应同时点到 admin 与 api_key, got %q", err.Error())
+	c, err := Load(fp)
+	if err != nil {
+		t.Fatalf("admin.enabled=true + 空 api_key 应允许启动: %v", err)
+	}
+	if !c.Admin.Enabled {
+		t.Fatal("admin.enabled 应为 true")
 	}
 }
 
-// TestAdminEnabledWithKeyOK 对照组：admin.enabled=true 且 api_key 非空 → 正常加载。
+// admin.enabled=true 且 api_key 非空：同样正常（对照组）。
 func TestAdminEnabledWithKeyOK(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
@@ -33,7 +34,7 @@ func TestAdminEnabledWithKeyOK(t *testing.T) {
 	}
 }
 
-// TestAdminDisabledWithoutKeyOK 对照组：admin 未开时空 api_key 仍合法（现状语义不变）。
+// admin 未开时空 api_key 仍合法。
 func TestAdminDisabledWithoutKeyOK(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
@@ -43,8 +44,7 @@ func TestAdminDisabledWithoutKeyOK(t *testing.T) {
 	}
 }
 
-// TestAdminEnvOverride WP_ADMIN_ENABLED env 覆盖（对齐 WP_PASSTHROUGH_IP 风格：
-// ParseBool，非法值忽略不报错）。
+// WP_ADMIN_ENABLED env 覆盖（ParseBool；非法值忽略不报错）。
 func TestAdminEnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
@@ -59,7 +59,6 @@ func TestAdminEnvOverride(t *testing.T) {
 		t.Error("WP_ADMIN_ENABLED=true 应开启 admin")
 	}
 
-	// env 关闭覆盖 config 的 true
 	os.WriteFile(fp, []byte(`{"api_key":"k","admin":{"enabled":true}}`), 0o600)
 	t.Setenv("WP_ADMIN_ENABLED", "false")
 	c, err = Load(fp)
@@ -70,7 +69,6 @@ func TestAdminEnvOverride(t *testing.T) {
 		t.Error("WP_ADMIN_ENABLED=false 应覆盖 config 的 true")
 	}
 
-	// 非法值忽略：config 的 true 保持
 	t.Setenv("WP_ADMIN_ENABLED", "yes-please")
 	c, err = Load(fp)
 	if err != nil {
@@ -78,17 +76,5 @@ func TestAdminEnvOverride(t *testing.T) {
 	}
 	if !c.Admin.Enabled {
 		t.Error("非法 env 值应被忽略（保持 config 值）")
-	}
-}
-
-// TestAdminEnvOverrideFailsFastWhenNoKey env 开启 admin 但无 key 同样触发 fail-fast
-// （env 覆盖先于 normalize 校验，两条入口一致拦截）。
-func TestAdminEnvOverrideFailsFastWhenNoKey(t *testing.T) {
-	dir := t.TempDir()
-	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"api_key":"","admin":{"enabled":false}}`), 0o600)
-	t.Setenv("WP_ADMIN_ENABLED", "1")
-	if _, err := Load(fp); err == nil {
-		t.Fatal("env 开启 admin + 空 api_key 也应 fail-fast")
 	}
 }

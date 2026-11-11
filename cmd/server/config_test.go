@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Default() 完全来自内嵌的 config.default.json：这里钉几处关键默认值，防止
+// Default() 完全来自内嵌的 config.example.json：这里钉几处关键默认值，防止
 // 「示例被改、程序没跟上」或「代码里又被塞回硬编码默认值」。
 func TestDefaultComesFromExampleConfig(t *testing.T) {
 	c := Default()
@@ -76,7 +76,7 @@ func TestLegacyHoursKeysIgnored(t *testing.T) {
 }
 
 // Spring 式属性覆盖语义：config.json **写了什么就用什么**，没写的键与写成 null 的键
-// 都回退到 config.default.json 的值（不是零值）。
+// 都回退到 config.example.json 的值（不是零值）。
 func TestLoadFallsBackPerProperty(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
@@ -776,12 +776,12 @@ func TestUpstreamVersionConfig(t *testing.T) {
 	if c.Upstream.ClientVersion != "6.0.0" || c.Upstream.CliVersion != "3.0.0" {
 		t.Errorf("client_version=%q cli_version=%q want 6.0.0/3.0.0", c.Upstream.ClientVersion, c.Upstream.CliVersion)
 	}
-	// 缺省值来自内嵌的 config.default.json（默认值不再是源码里的空串）。
+	// 缺省值来自内嵌的 config.example.json（默认值不再是源码里的空串）。
 	if c2, err := Load(""); err != nil || c2.Upstream.ClientVersion == "" || c2.Upstream.CliVersion == "" {
 		t.Errorf("default versions=%q/%q 应取自示例配置 (err=%v)",
 			c2.Upstream.ClientVersion, c2.Upstream.CliVersion, err)
 	} else if c2.Upstream.ClientVersion != "5.5.4" || c2.Upstream.CliVersion != "2.137.1" {
-		t.Errorf("示例配置的默认版本=%q/%q，若刚改过 config.default.json 请同步本断言",
+		t.Errorf("示例配置的默认版本=%q/%q，若刚改过 config.example.json 请同步本断言",
 			c2.Upstream.ClientVersion, c2.Upstream.CliVersion)
 	}
 	// env 覆盖。

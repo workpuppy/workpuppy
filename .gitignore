@@ -23,7 +23,7 @@
 /school_bin
 /*.exe
 
-# ── 含密钥的配置（模板见 config.default.json）─────────────────
+# ── 含密钥的配置（模板见 config.example.json）─────────────────
 /config.json
 /.apikey
 /.server.pid

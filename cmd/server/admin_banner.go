@@ -1,7 +1,10 @@
-// admin_banner.go 启动横幅：把本次运行的管理密码打印到终端。
+// admin_banner.go 启动横幅：告诉运维"后台在哪、密码处于什么状态"。
 //
 // 为什么打在"端口已绑定之后"：横幅是给人看的，必须只在服务真的能接连接时才出现——
-// 否则端口占用导致启动失败时，日志里还躺着一个看起来可用的密码，排障会被带偏。
+// 否则端口占用导致启动失败时，日志里还躺着一个看起来可用的入口。
+//
+// 注意：这里**不再打印密码**。密码只在初始化时由用户自己设定，服务端只保存
+// 加盐 10 轮 SHA256 的哈希（data/config.json 的 admin.password）。
 package main
 
 import (
@@ -10,25 +13,29 @@ import (
 	"wp/internal/adminauth"
 )
 
-// printAdminBanner 打印管理后台入口与本次运行的凭据。
-//
-// 注意：密码**只在这里出现一次**，之后只存在进程内存里。重启即换新密码，
-// 旧密码立刻失效；要固定密码只能设 WP_ADMIN_PASSWORD（开发/自动化用）。
-func printAdminBanner(store *adminauth.Store, listen string) {
+// printAdminBanner 打印管理后台入口与密码状态。
+func printAdminBanner(store *adminauth.Store, listen, configPath string) {
 	url := adminURL(listen)
-	src := "本次启动随机生成"
-	if store.Source() == "override" {
-		src = "来自 WP_ADMIN_PASSWORD（固定值，仅建议开发/自动化使用）"
+	if store.Configured() {
+		log.Printf("\n"+
+			"============================================================\n"+
+			"  管理后台: %s\n"+
+			"  管理密码: 已初始化（哈希存于 %s 的 admin.password）\n"+
+			"  忘记密码: 删除该字段后重启 → 页面会重新引导初始化\n"+
+			"  提示: /v1 与 /status 仍用 config.json 的 api_key，与本密码相互独立。\n"+
+			"============================================================",
+			url, configPath)
+		return
 	}
 	log.Printf("\n"+
 		"============================================================\n"+
 		"  管理后台: %s\n"+
-		"  登录密码: %s    （%s）\n"+
-		"  用户名:  不需要，直接填密码\n"+
-		"  该密码只存在内存中，重启服务会自动更换；忘记请看本次容器日志。\n"+
-		"  提示：/v1 与 /status 仍用 config.json 的 api_key，与本密码相互独立。\n"+
+		"  管理密码: 尚未初始化\n"+
+		"  下一步:   用浏览器打开上面的地址，按页面提示设置管理员密码\n"+
+		"            （设置成功后写入 %s 的 admin.password，并自动开启管理面）\n"+
+		"  提示: /v1 与 /status 仍用 config.json 的 api_key，与本密码相互独立。\n"+
 		"============================================================",
-		url, store.Password(), src)
+		url, configPath)
 }
 
 // adminURL 把监听地址拼成可直接点开的地址（0.0.0.0/:: → 127.0.0.1）。

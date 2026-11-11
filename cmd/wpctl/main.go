@@ -2,7 +2,7 @@
 //
 // 为什么有它：轻量版刻意不做 Web 界面，管理动作就落在两种人手上 ——
 // 脚本（curl / CI）与运维（命令行）。wpctl 是后者的入口：读同一份 config.json，
-// 拿管理密码（服务启动日志里那串），打同一组 /admin/* 端点。它**不含任何业务逻辑**，只是一层
+// 拿管理密码（首次打开页面时设置的），打同一组 /admin/* 端点。它**不含任何业务逻辑**，只是一层
 // 便于人读的封装；真正的判定全在服务端（这样 curl 与 wpctl 的行为不可能不一致）。
 //
 // 用法：
@@ -41,7 +41,7 @@ type cfgFile struct {
 
 // client 管理面客户端。
 //
-// 凭据是**管理密码**（服务启动时随机生成、打印在容器日志里），不是 /v1 的 api_key：
+// 凭据是**管理密码**（首次打开后台时设置、只以哈希存于 data/config.json），不是 /v1 的 api_key：
 // 两者已彻底分离，拿 api_key 调 /admin/* 会被 401。密码来源：-password > WP_ADMIN_PASSWORD。
 type client struct {
 	base     string
@@ -141,7 +141,7 @@ func usage() {
   enable <uid>                     启用（手动/系统禁用一并解除）
   rest <uid> / unrest <uid>        休养 / 恢复接流（休养期间自动任务照跑）
 
-前置条件：服务端 config.json 里 admin.enabled=true；密码取服务启动日志里的「登录密码」，
+前置条件：管理面已初始化（页面首次打开时设置密码后即自动开启）；密码用初始化时设置的那个，
            也可用 -password 或环境变量 WP_ADMIN_PASSWORD 直接给。
 `)
 }

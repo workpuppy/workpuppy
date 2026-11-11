@@ -1,7 +1,7 @@
 // pacing.go 遍历节奏（账号间隔、重试退避、补跑窗口）的**单一来源与注入点**。
 //
 // 这些值曾经硬编码在本包里（3s / 800ms / 5s,15s,60s …）。现在默认值统一来自
-// config.default.json（内嵌），由 cmd/server 在启动时用用户配置覆盖：
+// config.example.json（内嵌），由 cmd/server 在启动时用用户配置覆盖：
 //
 //	scheduler.Configure(scheduler.Options{
 //	    CheckinAccountDelay: cfg.Schedule.CheckinAccountDelayDur, …
@@ -58,7 +58,7 @@ func Configure(o Options) {
 	}
 }
 
-// schedDefaults 返回 config.default.json 里的排程节奏默认值（包级变量的初始值）。
+// schedDefaults 返回 config.example.json 里的排程节奏默认值（包级变量的初始值）。
 //
 // 放在这里而不是写成字面量：默认值只允许有一处来源。裸用 New(Config{})（测试/
 // 极端降级）时这些变量仍按真实默认值工作。
@@ -67,7 +67,7 @@ func schedDefaults() config.Schedule {
 		s := config.DefaultSchedule()
 		// 必须 Normalize：解析出的时长在 *_Dur 字段里（未解析前全是 0）。
 		if err := s.Normalize(); err != nil {
-			panic("config.default.json 的排程节奏无法解析: " + err.Error())
+			panic("config.example.json 的排程节奏无法解析: " + err.Error())
 		}
 		schedDefaultsVal = s
 	})

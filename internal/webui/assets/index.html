@@ -86,6 +86,26 @@
     <path d="M16.456 6.733c.214 -1.376 -.375 -2.594 -1.32 -2.722a1.164 1.164 0 0 0 -.162 -.011c-.885 0 -1.728 .97 -1.93 2.267c-.214 1.376 .375 2.594 1.32 2.722c.054 .007 .108 .011 .162 .011c.885 0 1.73 -.974 1.93 -2.267" />
     <path d="M5.69 12.918c.816 -.352 1.054 -1.719 .536 -3.052c-.436 -1.124 -1.271 -1.866 -2.009 -1.866c-.14 0 -.277 .027 -.407 .082c-.816 .352 -1.054 1.719 -.536 3.052c.436 1.124 1.271 1.866 2.009 1.866c.14 0 .277 -.027 .407 -.082" />
   </symbol>
+  <symbol id="ti-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" />
+    <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+  </symbol>
+  <symbol id="ti-alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 9v4" />
+    <path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0" />
+    <path d="M12 16h.01" />
+  </symbol>
+  <symbol id="ti-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.172a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.172a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0" />
+    <path d="M15 9h.01" />
+  </symbol>
+  <symbol id="ti-rotate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19.95 11a8 8 0 1 0 -.5 4m.5 5v-5h-5" />
+  </symbol>
+  <symbol id="ti-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+    <path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" />
+  </symbol>
   <symbol id="ti-qrcode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M4 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4" />
     <path d="M7 17l0 .01" />
@@ -110,7 +130,7 @@
         <div class="text-center mb-4">
           <span class="wp-brand-mark mx-auto"><svg class="wp-ico" aria-hidden="true"><use href="#ti-paw"/></svg></span>
           <h1 class="h2 mt-3 mb-1">WorkPuppy</h1>
-          <div class="text-body-secondary small">管理后台登录</div>
+          <div class="text-body-secondary small" id="loginSubtitle">管理后台登录</div>
         </div>
         <form id="loginForm" autocomplete="off">
           <label class="form-label" for="loginPassword">管理密码</label>
@@ -122,6 +142,21 @@
           </div>
           <div class="alert alert-danger py-2 small mt-3 d-none" id="loginError"></div>
           <button class="btn btn-primary w-100 mt-3" type="submit" id="btnLogin">登录</button>
+        </form>
+        <form id="setupForm" autocomplete="off" hidden>
+          <div class="alert alert-info py-2 small mb-3">
+            首次使用：先给管理后台设置一个密码（至少 <span id="setupMinLen">8</span> 位）。
+            密码只以「加盐 10 轮 SHA256」的哈希保存在 <code>data/config.json</code>，不会明文落盘。
+          </div>
+          <label class="form-label" for="setupPassword">管理员密码</label>
+          <input type="password" class="form-control" id="setupPassword" placeholder="设置一个足够长的密码"
+                 autocomplete="new-password" required>
+          <label class="form-label mt-2" for="setupConfirm">再输一次</label>
+          <input type="password" class="form-control" id="setupConfirm" placeholder="确认密码"
+                 autocomplete="new-password" required>
+          <div class="alert alert-danger py-2 small mt-3 d-none" id="setupError"></div>
+          <button class="btn btn-primary w-100 mt-3" type="submit" id="btnSetup">初始化并进入</button>
+          <div class="form-text mt-2">初始化成功会同时开启管理面（admin.enabled=true），无需重启。</div>
         </form>
         <div class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top">
           <span class="small text-body-secondary">v1 · Go 单栈</span>
@@ -155,6 +190,7 @@
           <li class="nav-item"><button class="nav-link" data-view="models">模型</button></li>
           <li class="nav-item"><button class="nav-link" data-view="playground">测试台</button></li>
           <li class="nav-item"><button class="nav-link" data-view="add">扫码加号</button></li>
+          <li class="nav-item"><button class="nav-link" data-view="settings">设置</button></li>
         </ul>
         <div class="d-flex align-items-center gap-2">
           <button class="btn btn-ghost-secondary btn-icon" id="btnTheme" title="切换深浅色" aria-label="切换深浅色">
@@ -168,6 +204,16 @@
       </div>
     </div>
   </header>
+
+  <!-- 配置改动"待重启"横幅：保存成功即出现，进程重启（配置真正生效）后自然消失。 -->
+  <div id="restartBanner" class="wp-restart-banner d-none" role="status" aria-live="polite">
+    <div class="container-xxl d-flex flex-wrap align-items-center gap-2 py-2">
+      <svg class="wp-ico text-warning" aria-hidden="true"><use href="#ti-alert-triangle"/></svg>
+      <span class="small">配置已保存：<strong>重启容器后生效</strong>，当前进程仍按旧配置运行。</span>
+      <code class="small wp-restart-cmd">docker compose restart wp</code>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" id="btnCopyRestart">复制命令</button>
+    </div>
+  </div>
 
   <div class="page-wrapper">
     <div class="page-body">
@@ -458,6 +504,61 @@
                     <code>login.sh</code> 里由 <code>login save</code> 完成，本页只做「加号」这一步。</p>
                   <p class="mb-0">要求：<code>config.json</code> 里 <code>admin.enabled=true</code>。
                     本页用的是**管理密码**，不是 <code>/v1</code> 的 <code>api_key</code>。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <!-- 设置（配置页） -->
+        <section id="view-settings" hidden>
+          <div id="cfgNotice"></div>
+          <div class="row g-3">
+            <div class="col-lg-3">
+              <div class="card wp-cfg-side">
+                <div class="card-body p-3">
+                  <input class="form-control form-control-sm mb-2" id="cfgSearch" placeholder="搜索配置项（名称 / key）">
+                  <nav class="nav flex-column wp-cfg-groups" id="cfgGroups"></nav>
+                  <hr class="my-3">
+                  <button class="btn btn-outline-danger btn-sm w-100" id="btnResetAll" type="button">
+                    <svg class="wp-ico" aria-hidden="true"><use href="#ti-rotate"/></svg>全部恢复默认
+                  </button>
+                  <div class="small text-body-secondary mt-2 wp-cfg-path" id="cfgPath"></div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-9">
+              <div id="cfgForm"></div>
+
+              <div class="card mt-3">
+                <div class="card-header"><h3 class="card-title">修改管理员密码</h3></div>
+                <div class="card-body">
+                  <div class="row g-2">
+                    <div class="col-md-5">
+                      <label class="form-label" for="newPassword">新密码</label>
+                      <input type="password" class="form-control form-control-sm" id="newPassword" autocomplete="new-password">
+                    </div>
+                    <div class="col-md-5">
+                      <label class="form-label" for="newPassword2">确认新密码</label>
+                      <input type="password" class="form-control form-control-sm" id="newPassword2" autocomplete="new-password">
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                      <button class="btn btn-outline-primary btn-sm w-100" id="btnChangePassword" type="button">
+                        <svg class="wp-ico" aria-hidden="true"><use href="#ti-key"/></svg>更新
+                      </button>
+                    </div>
+                  </div>
+                  <div class="small text-body-secondary mt-2">
+                    改密只写哈希（加盐 10 轮 SHA256），立即生效；其他已打开的页面会因旧密码失效而退回登录页。
+                  </div>
+                </div>
+              </div>
+
+              <div class="wp-cfg-savebar">
+                <div class="d-flex align-items-center gap-2">
+                  <span class="small text-body-secondary" id="cfgDirtyHint">没有未保存的修改</span>
+                  <button class="btn btn-primary btn-sm ms-auto" id="btnSaveConfig" type="button" disabled>
+                    <svg class="wp-ico" aria-hidden="true"><use href="#ti-settings"/></svg>保存配置
+                  </button>
                 </div>
               </div>
             </div>

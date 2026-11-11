@@ -1,6 +1,6 @@
 // tuning.go 网关侧的冷却/风控/限流阈值的**注入点**。
 //
-// 这些值曾经硬编码在本包的 const 里；现在默认值来自 config.default.json，
+// 这些值曾经硬编码在本包的 const 里；现在默认值来自 config.example.json，
 // 由 cmd/server 在启动时用用户配置调用 Configure 覆盖。包内初值保留给测试裸用。
 package server
 

@@ -312,3 +312,44 @@ func TestAuthExpiryWiring(t *testing.T) {
 		}
 	}
 }
+
+// 设置页与首次初始化的"接线"：页面骨架、脚本调用、样式锚点都在。
+//
+// 这些 id/函数名是前后端的契约（app.js 直接按 id 取节点、按路径调接口），
+// 改 HTML 结构时最容易漏掉其中一处，表现是"页面能开但按钮没反应"。
+func TestSettingsAndSetupWiring(t *testing.T) {
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	for _, want := range []string{
+		`id="setupForm"`, `id="setupPassword"`, `id="setupError"`,
+		`data-view="settings"`, `id="view-settings"`, `id="cfgForm"`,
+		`id="cfgGroups"`, `id="btnSaveConfig"`, `id="btnResetAll"`,
+		`id="btnChangePassword"`, `id="restartBanner"`, `id="btnCopyRestart"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("入口页缺少 %s（设置页/初始化向导）", want)
+		}
+	}
+
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{
+		"/admin/setup/status", "/admin/setup", "/admin/config", "/admin/password",
+		"renderSettings", "validateField", "resetConfig", "updateRestartBanner",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("app.js 缺少 %s", want)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	cssBody := css.Body.String()
+	for _, want := range []string{".wp-cfg-row", ".wp-cfg-savebar", ".wp-restart-banner"} {
+		if !strings.Contains(cssBody, want) {
+			t.Errorf("app.css 缺少 %s", want)
+		}
+	}
+}

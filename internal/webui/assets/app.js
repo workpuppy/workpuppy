@@ -27,6 +27,14 @@ const state = {
   creditDaily: null, // /admin/credit-daily 最近一次响应（概览与单号曲线共用）
   chartUID: '',      // 积分曲线弹窗当前账号
   chartDays: 7,      // 积分曲线区间（7 / 15 / 30，默认 7）
+
+  // 设置页
+  config: null,          // {values, defaults, schema, meta}
+  configDirty: new Map(),// path -> 待保存值
+  configErrors: new Map(),// path -> 错误文案
+  configFilter: '',
+  setupMode: false,      // 首次初始化密码
+  restartPending: false, // 有改动等待重启
 };
 
 // ── 基础工具 ────────────────────────────────────────────────
@@ -86,8 +94,12 @@ function clearAlert() {
 
 // ── 登录态 ──────────────────────────────────────────────────
 function showLogin(message) {
+  state.setupMode = false;
   $('#app').hidden = true;
   $('#loginWrap').hidden = false;
+  $('#loginForm').hidden = false;
+  $('#setupForm').hidden = true;
+  $('#loginSubtitle').textContent = '管理后台登录';
   const box = $('#loginError');
   if (message) {
     box.textContent = message;
@@ -127,7 +139,11 @@ async function login(password) {
     body: JSON.stringify({ password }),
   });
   if (resp.status === 404) {
-    throw new Error('管理面未开启：在 config.json 里设 "admin": {"enabled": true} 并重启服务');
+    throw new Error('管理面未开启：在 data/config.json 里设 "admin": {"enabled": true} 后重启容器');
+  }
+  if (resp.status === 428) {
+    boxSetupError('管理员密码还没初始化：刷新页面，按提示设置密码');
+    throw new Error('管理密码尚未初始化');
   }
   if (resp.status === 429) {
     throw new Error('密码错误次数过多，请 5 分钟后再试');
@@ -158,18 +174,19 @@ async function api(path, opts = {}) {
   });
 
   if (resp.status === 401) {
-    // 密码错 / 服务重启换了密码：清本地存储并回登录页（需求：凭据无效时不得留在面板里）。
+    // 密码错 / 改过密码：清本地存储并回登录页（需求：凭据无效时不得留在面板里）。
     clearSession();
     stopAuthPoll();
-    showLogin('管理密码已失效或为空（服务重启会更换密码，请用日志里的新密码登录）');
+    showLogin('管理密码已失效或为空，请重新登录');
     throw new Error('401 未授权：请重新登录');
   }
-  if (resp.status === 503) {
-    const text = await resp.text();
-    throw new Error('管理密码未初始化（服务启动异常）：' + text.slice(0, 200));
+  if (resp.status === 428) {
+    clearSession();
+    showSetup(8);
+    throw new Error('管理密码尚未初始化：请按页面提示设置密码');
   }
   if (resp.status === 404 && path.startsWith('/admin')) {
-    throw new Error('管理面未开启：在 config.json 里设 "admin": {"enabled": true} 并重启服务');
+    throw new Error('管理面已关闭：在 data/config.json 里把 admin.enabled 改回 true 后重启容器');
   }
   if (!resp.ok) {
     const err = new Error('HTTP ' + resp.status + '：' + (await resp.text()).slice(0, 400));
@@ -180,7 +197,7 @@ async function api(path, opts = {}) {
 }
 
 // ── 视图切换（hash 路由，零框架）─────────────────────────────
-const VIEWS = ['overview', 'accounts', 'models', 'playground', 'add'];
+const VIEWS = ['overview', 'accounts', 'models', 'playground', 'add', 'settings'];
 
 function currentView() {
   const raw = (location.hash || '').replace(/^#\/?/, '');
@@ -207,7 +224,9 @@ function render() {
     case 'models': loadModels(); break;
     case 'playground': loadModels(true); break;
     case 'add': break;
+    case 'settings': loadConfig(); break;
   }
+  updateRestartBanner();
 }
 
 // ── 概览 ────────────────────────────────────────────────────
@@ -942,6 +961,604 @@ function applyTheme(theme) {
   localStorage.setItem(THEME_STORE, theme);
 }
 
+// ── 首次初始化 / 设置页 ─────────────────────────────────────
+// 首次安装没有密码：后端 /admin/setup/status 会告诉我们 initialized=false，
+// 页面切成"设置密码"表单；初始化成功后自动登录（管理面同时被打开）。
+
+async function fetchSetupStatus() {
+  try {
+    const r = await fetch('/admin/setup/status');
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null; // 网络问题交给后续登录流程报错
+  }
+}
+
+function showSetup(minLen) {
+  state.setupMode = true;
+  $('#app').hidden = true;
+  $('#loginWrap').hidden = false;
+  $('#loginForm').hidden = true;
+  $('#setupForm').hidden = false;
+  $('#loginSubtitle').textContent = '首次使用：初始化管理员密码';
+  if (minLen) $('#setupMinLen').textContent = String(minLen);
+  const err = $('#setupError');
+  err.classList.add('d-none');
+  err.textContent = '';
+  setTimeout(() => $('#setupPassword').focus(), 30);
+}
+
+function boxSetupError(msg) {
+  const box = $('#setupError');
+  box.textContent = msg;
+  box.classList.remove('d-none');
+}
+
+async function submitSetup(ev) {
+  ev.preventDefault();
+  const pw = ($('#setupPassword').value || '').trim();
+  const confirm = ($('#setupConfirm').value || '').trim();
+  const minLen = Number($('#setupMinLen').textContent) || 8;
+  if (pw.length < minLen) return boxSetupError('密码至少 ' + minLen + ' 个字符');
+  if (pw !== confirm) return boxSetupError('两次输入的密码不一致');
+  const btn = $('#btnSetup');
+  btn.disabled = true;
+  btn.textContent = '初始化中…';
+  try {
+    const resp = await fetch('/admin/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw, confirm }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data?.error?.message || ('HTTP ' + resp.status));
+    }
+    await login(pw); // 初始化完成后直接登录并进入后台
+    state.setupMode = false;
+    showApp();
+    render();
+    toast('管理员密码已初始化', 'success');
+  } catch (e) {
+    boxSetupError(String(e.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '初始化并进入';
+  }
+}
+
+// updateRestartBanner 顶部的"待重启"横幅：保存成功即出现；进程重启后（flag 清空）消失。
+function updateRestartBanner() {
+  const show = !!state.restartPending;
+  const box = $('#restartBanner');
+  if (box) box.classList.toggle('d-none', !show);
+}
+
+async function refreshConfigMeta() {
+  try {
+    const d = await api('/admin/config');
+    state.config = d;
+    state.restartPending = !!d.meta?.restart_pending;
+    updateRestartBanner();
+  } catch {
+    /* 管理面关闭或配置接口未接线时忽略：设置页会再显示具体错误 */
+  }
+}
+
+function confirmLeaveSettings() {
+  if (state.view !== 'settings' || state.configDirty.size === 0) return true;
+  return confirm('设置页有未保存的修改，确定离开并丢弃吗？');
+}
+
+async function loadConfig() {
+  const form = $('#cfgForm');
+  if (!form) return;
+  if (!state.config) {
+    form.replaceChildren(el('div', { class: 'text-body-secondary small py-4 text-center', text: '加载配置中…' }));
+  }
+  try {
+    const d = await api('/admin/config');
+    state.config = d;
+    state.configDirty.clear();
+    state.configErrors.clear();
+    state.restartPending = !!d.meta?.restart_pending;
+    renderSettings();
+    updateRestartBanner();
+  } catch (e) {
+    $('#cfgNotice').replaceChildren(el('div', { class: 'alert alert-danger py-2 small', text: String(e.message || e) }));
+    form.replaceChildren();
+  }
+}
+
+function renderSettings() {
+  const d = state.config;
+  if (!d) return;
+  const notice = $('#cfgNotice');
+  notice.replaceChildren();
+  if (!d.meta?.writable) {
+    notice.appendChild(el('div', {
+      class: 'alert alert-warning py-2 small',
+      text: '配置文件当前不可写（' + (d.meta?.path || '') + '）：容器内请 chown -R 10001:10001 ./data 后重试。',
+    }));
+  }
+  $('#cfgPath').textContent = '配置文件：' + (d.meta?.path || '–');
+  buildGroupNav(d.schema);
+  buildConfigForm(d);
+  refreshSaveState();
+}
+
+function buildGroupNav(schema) {
+  const nav = $('#cfgGroups');
+  nav.replaceChildren();
+  for (const g of schema.groups || []) {
+    const b = el('button', {
+      class: 'nav-link text-start',
+      text: g.title,
+      attrs: { type: 'button', 'data-goto': 'cfg-group-' + g.key },
+    });
+    b.addEventListener('click', () => {
+      const target = $('#' + b.dataset.goto);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    nav.appendChild(b);
+  }
+}
+
+function buildConfigForm(d) {
+  const form = $('#cfgForm');
+  form.replaceChildren();
+  const values = d.values || {};
+  const groups = d.schema.groups || [];
+  const fields = d.schema.fields || [];
+  for (const g of groups) {
+    const list = fields.filter((f) => f.group === g.key);
+    if (!list.length) continue;
+    const card = el('div', { class: 'card mb-3 wp-cfg-card', attrs: { id: 'cfg-group-' + g.key } });
+    card.appendChild(el('div', { class: 'card-header d-flex align-items-start gap-2' }, [
+      el('div', { class: 'flex-grow-1' }, [
+        el('h3', { class: 'card-title mb-1', text: g.title }),
+        el('div', { class: 'small text-body-secondary', text: g.desc || '' }),
+      ]),
+      el('button', {
+        class: 'btn btn-sm btn-outline-secondary flex-shrink-0',
+        attrs: { type: 'button', 'data-reset-section': g.key },
+      }, [icon('ti-rotate'), document.createTextNode('恢复本组默认')]),
+    ]));
+    const body = el('div', { class: 'card-body py-2' });
+    for (const f of list) body.appendChild(renderField(f, values));
+    card.appendChild(body);
+    form.appendChild(card);
+  }
+}
+
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'wp-ico');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#' + name);
+  svg.appendChild(use);
+  return svg;
+}
+
+function renderField(field, values) {
+  const row = el('div', { class: 'wp-cfg-row', attrs: { 'data-path': field.path } });
+  const labelId = 'cfg-lbl-' + field.path.replace(/[^a-zA-Z0-9]/g, '-');
+  const inputId = 'cfg-in-' + field.path.replace(/[^a-zA-Z0-9]/g, '-');
+
+  const labelBox = el('div', { class: 'wp-cfg-label' }, [
+    el('label', { class: 'form-label mb-0', text: field.label, attrs: { for: inputId, id: labelId } }),
+    el('div', { class: 'wp-cfg-key', text: field.path }),
+    field.hint ? el('div', { class: 'wp-cfg-hint', text: field.hint }) : null,
+  ].filter(Boolean));
+
+  const value = getPath(values, field.path);
+  const { node, read } = buildControl(field, value, inputId);
+  const control = el('div', { class: 'wp-cfg-control' }, [node]);
+
+  const isDefault = sameValue(value, getPath(state.config.defaults || {}, field.path));
+  const badge = el('span', { class: 'badge wp-cfg-badge ' + (isDefault ? 'text-bg-secondary' : 'text-bg-info'), text: isDefault ? '默认' : '已改' });
+  const reset = el('button', {
+    class: 'btn btn-sm btn-outline-secondary',
+    attrs: { type: 'button', title: '恢复默认值' },
+  }, [icon('ti-rotate'), document.createTextNode('恢复默认')]);
+  reset.addEventListener('click', () => resetField(field.path));
+
+  const errBox = el('div', { class: 'wp-cfg-error small text-danger', attrs: { hidden: '' } });
+  row.append(labelBox, control, el('div', { class: 'wp-cfg-actions' }, [badge, reset]), errBox);
+  row.dataset.search = (field.label + ' ' + field.path + ' ' + (field.hint || '')).toLowerCase();
+  row.dataset.badge = 'cfg-badge-' + field.path;
+
+  const onEdit = () => {
+    const out = read();
+    if (out.error) {
+      state.configErrors.set(field.path, out.error);
+      showFieldError(field.path, out.error);
+      state.configDirty.delete(field.path);
+      refreshSaveState();
+      return;
+    }
+    const err = validateField(field, out.value);
+    if (err) {
+      state.configErrors.set(field.path, err);
+      showFieldError(field.path, err);
+    } else {
+      state.configErrors.delete(field.path);
+      showFieldError(field.path, '');
+    }
+    const orig = getPath(state.config.values || {}, field.path);
+    if (sameValue(out.value, orig)) state.configDirty.delete(field.path);
+    else state.configDirty.set(field.path, out.value);
+    refreshSaveState();
+  };
+  node.addEventListener('input', onEdit);
+  node.addEventListener('change', onEdit);
+  return row;
+}
+
+function showFieldError(path, msg) {
+  const row = document.querySelector('.wp-cfg-row[data-path="' + cssEscape(path) + '"]');
+  if (!row) return;
+  const box = row.querySelector('.wp-cfg-error');
+  if (!box) return;
+  if (msg) {
+    box.textContent = msg;
+    box.removeAttribute('hidden');
+  } else {
+    box.textContent = '';
+    box.setAttribute('hidden', '');
+  }
+}
+
+function cssEscape(s) {
+  return String(s).replace(/"/g, '\\"');
+}
+
+// buildControl 按 kind 生成控件，并返回 read()（把界面值解析成 JSON 值）。
+function buildControl(field, value, inputId) {
+  const common = { id: inputId };
+  switch (field.kind) {
+    case 'bool': {
+      const wrap = el('div', { class: 'form-check form-switch' });
+      const input = el('input', { class: 'form-check-input', attrs: { ...common, type: 'checkbox' } });
+      input.checked = !!value;
+      wrap.appendChild(input);
+      return { node: wrap, read: () => ({ value: input.checked }) };
+    }
+    case 'enum': {
+      const sel = el('select', { class: 'form-select form-select-sm', attrs: common });
+      for (const o of field.options || []) sel.appendChild(el('option', { text: o.label, attrs: { value: o.value } }));
+      sel.value = value == null ? '' : String(value);
+      return { node: sel, read: () => ({ value: sel.value }) };
+    }
+    case 'int':
+    case 'float': {
+      const input = el('input', {
+        class: 'form-control form-control-sm',
+        attrs: { ...common, type: 'number', step: field.kind === 'float' ? 'any' : '1', min: field.min, max: field.max },
+      });
+      input.value = value == null ? '' : String(value);
+      return { node: input, read: () => readNumber(field, input.value) };
+    }
+    case 'timelist':
+    case 'durationlist':
+    case 'stringlist': {
+      const ta = el('textarea', {
+        class: 'form-control form-control-sm',
+        attrs: { ...common, rows: field.kind === 'stringlist' ? 3 : 2, placeholder: listPlaceholder(field) },
+      });
+      ta.value = fmtValue(field, value);
+      return {
+        node: ta,
+        read: () => ({ value: splitList(ta.value, field.kind) }),
+      };
+    }
+    case 'stringmap': {
+      const ta = el('textarea', {
+        class: 'form-control form-control-sm',
+        attrs: { ...common, rows: 3, placeholder: '线路名 = http://127.0.0.1:7890\n直线 = socks5://127.0.0.1:1080' },
+      });
+      ta.value = fmtValue(field, value);
+      return { node: ta, read: () => parseMapText(ta.value) };
+    }
+    case 'pairs': {
+      const ta = el('textarea', {
+        class: 'form-control form-control-sm',
+        attrs: { ...common, rows: 3, placeholder: '原串 => 替换串' },
+      });
+      ta.value = fmtValue(field, value);
+      return { node: ta, read: () => parsePairs(ta.value) };
+    }
+    default: {
+      const input = el('input', {
+        class: 'form-control form-control-sm',
+        attrs: { ...common, type: field.secret ? 'password' : 'text', placeholder: field.placeholder || '' },
+      });
+      input.value = value == null ? '' : String(value);
+      if (!field.secret) return { node: input, read: () => ({ value: input.value }) };
+      const btn = el('button', {
+        class: 'btn btn-outline-secondary btn-icon',
+        attrs: { type: 'button', title: '显示 / 隐藏' },
+      }, [icon('ti-eye')]);
+      btn.addEventListener('click', () => {
+        input.type = input.type === 'password' ? 'text' : 'password';
+      });
+      const group = el('div', { class: 'input-group input-group-sm' }, [input, btn]);
+      return { node: group, read: () => ({ value: input.value }) };
+    }
+  }
+}
+
+function readNumber(field, raw) {
+  const s = String(raw).trim();
+  if (s === '') return { value: null };
+  const n = Number(s);
+  if (!Number.isFinite(n)) return { error: '应为数字' };
+  if (field.kind === 'int' && !Number.isInteger(n)) return { error: '应为整数' };
+  return { value: n };
+}
+
+function splitList(text, kind) {
+  const parts = String(text).split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  if (kind === 'timelist') return parts.map((s) => s);
+  return parts;
+}
+
+function parseMapText(text) {
+  const out = {};
+  for (const line of String(text).split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const i = t.search(/[=:]/);
+    if (i <= 0) return { error: '每行应为「名称 = 地址」' };
+    const k = t.slice(0, i).trim();
+    const v = t.slice(i + 1).trim();
+    if (!k || !v) return { error: '「名称 = 地址」两侧都不能为空' };
+    out[k] = v;
+  }
+  return { value: out };
+}
+
+function parsePairs(text) {
+  const out = [];
+  for (const line of String(text).split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const m = t.split(/=>/);
+    if (m.length !== 2) return { error: '每行应为「原串 => 替换串」' };
+    out.push([m[0].trim(), m[1].trim()]);
+  }
+  return { value: out };
+}
+
+function listPlaceholder(field) {
+  if (field.kind === 'timelist') return '09:00, 21:00';
+  if (field.kind === 'durationlist') return '5s, 15s, 60s';
+  return '一行一个值';
+}
+
+function fmtValue(field, v) {
+  if (v == null) return '';
+  switch (field.kind) {
+    case 'timelist': return Array.isArray(v) ? v.join(', ') : String(v);
+    case 'durationlist':
+    case 'stringlist': return Array.isArray(v) ? v.join('\n') : String(v);
+    case 'stringmap': return Object.entries(v).map(([k, val]) => k + ' = ' + val).join('\n');
+    case 'pairs': return (v || []).map((p) => p[0] + ' => ' + p[1]).join('\n');
+    default: return String(v);
+  }
+}
+
+// validateField 前端即时校验：规则与后端 schema 一一对应（后端仍是最终裁决者）。
+function validateField(field, v) {
+  if (field.kind === 'bool') return '';
+  if (field.kind === 'int' || field.kind === 'float') {
+    if (v == null) return '';
+    if (field.min != null && v < field.min) return '不能小于 ' + field.min;
+    if (field.max != null && v > field.max) return '不能大于 ' + field.max;
+    return '';
+  }
+  if (field.kind === 'duration') {
+    const s = String(v || '').trim();
+    if (s === '') return '';
+    if (!/^\d+(\.\d+)?(ns|us|µs|ms|s|m|h)$/.test(s)) return '时长格式应为 500ms / 30s / 5m / 2h';
+    return '';
+  }
+  if (field.kind === 'timelist') {
+    for (const t of v || []) {
+      if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(String(t).trim())) return '时刻格式应为 HH:MM';
+    }
+    return '';
+  }
+  if (field.kind === 'durationlist') {
+    for (const t of v || []) {
+      if (!/^\d+(\.\d+)?(ns|us|µs|ms|s|m|h)$/.test(String(t).trim())) return '时长格式不正确：' + t;
+    }
+    return '';
+  }
+  if (field.kind === 'stringmap') {
+    for (const [k, val] of Object.entries(v || {})) {
+      if (!String(val).trim()) return k + ' 的值不能为空';
+    }
+    return '';
+  }
+  if (field.kind === 'pairs') {
+    for (const p of v || []) {
+      if (!Array.isArray(p) || p.length !== 2) return '每行应为「原串 => 替换串」';
+    }
+    return '';
+  }
+  if (field.kind === 'enum') {
+    const opts = (field.options || []).map((o) => o.value);
+    return opts.includes(String(v)) ? '' : '取值不在允许范围内';
+  }
+  if (field.pattern) {
+    try {
+      if (!new RegExp(field.pattern).test(String(v ?? ''))) return '格式不正确';
+    } catch { /* schema 正则写错时不阻塞前端 */ }
+  }
+  return '';
+}
+
+function sameValue(a, b) {
+  return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+}
+
+function refreshSaveState() {
+  const dirty = state.configDirty.size;
+  const errors = state.configErrors.size;
+  const hint = $('#cfgDirtyHint');
+  if (hint) {
+    hint.textContent = errors > 0
+      ? ('有 ' + errors + ' 处格式不正确，修正后才能保存')
+      : (dirty > 0 ? ('有 ' + dirty + ' 处修改未保存') : '没有未保存的修改');
+  }
+  const btn = $('#btnSaveConfig');
+  if (btn) btn.disabled = dirty === 0 || errors > 0;
+  // 更新每行的"默认 / 已改 / 待保存"徽章（编辑回原值时要能退回去）。
+  document.querySelectorAll('#cfgForm .wp-cfg-row').forEach((row) => {
+    const badge = row.querySelector('.wp-cfg-badge');
+    if (!badge) return;
+    const path = row.dataset.path;
+    if (state.configDirty.has(path)) {
+      badge.textContent = '待保存';
+      badge.className = 'badge wp-cfg-badge text-bg-warning';
+      return;
+    }
+    const cur = getPath(state.config.values || {}, path);
+    const def = getPath(state.config.defaults || {}, path);
+    const isDefault = sameValue(cur, def);
+    badge.textContent = isDefault ? '默认' : '已改';
+    badge.className = 'badge wp-cfg-badge ' + (isDefault ? 'text-bg-secondary' : 'text-bg-info');
+  });
+}
+
+async function saveConfig() {
+  if (!state.configDirty.size) return;
+  if (state.configDirty.get('admin.enabled') === false) {
+    const ok = confirm('关闭「启用管理面」会立刻让设置页和其它管理接口返回 404；\n' +
+      '要重新打开只能改 data/config.json 再重启容器。确定继续吗？');
+    if (!ok) {
+      state.configDirty.delete('admin.enabled');
+      renderSettings();
+      return;
+    }
+  }
+  const values = {};
+  for (const [path, v] of state.configDirty) setObjPath(values, path, v);
+  const btn = $('#btnSaveConfig');
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/admin/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.password },
+      body: JSON.stringify({ values }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 401) {
+      clearSession();
+      showLogin('管理密码已失效，请重新登录');
+      return;
+    }
+    if (!resp.ok) {
+      const fields = data?.error?.fields || [];
+      for (const f of fields) {
+        state.configErrors.set(f.path, f.message);
+        showFieldError(f.path, f.message);
+      }
+      if (!fields.length) alertBox(data?.error?.message || ('HTTP ' + resp.status), 'danger');
+      refreshSaveState();
+      return;
+    }
+    state.config.values = data.values || state.config.values;
+    state.configDirty.clear();
+    state.configErrors.clear();
+    state.restartPending = !!data.restart_pending;
+    state.config.meta = { ...(state.config.meta || {}), restart_pending: state.restartPending };
+    renderSettings();
+    updateRestartBanner();
+    toast('配置已保存：重启容器后生效', 'success');
+  } catch (e) {
+    alertBox('保存失败：' + String(e.message || e), 'danger');
+  } finally {
+    refreshSaveState();
+  }
+}
+
+async function resetConfig(body, okMsg) {
+  try {
+    const data = await api('/admin/config/reset', { method: 'POST', body });
+    if (state.config) {
+      state.config.values = data.values || state.config.values;
+      state.configDirty.clear();
+      state.configErrors.clear();
+      state.restartPending = !!data.restart_pending;
+      state.config.meta = { ...(state.config.meta || {}), restart_pending: state.restartPending };
+      renderSettings();
+      updateRestartBanner();
+    }
+    toast(okMsg, 'success');
+  } catch (e) {
+    alertBox('恢复默认失败：' + String(e.message || e), 'danger');
+  }
+}
+
+function resetField(path) {
+  resetConfig({ scope: 'fields', paths: [path] }, '已恢复该字段默认值（重启后生效）');
+}
+
+function resetSection(section) {
+  if (!confirm('把「' + section + '」整组恢复默认？该组内所有修改都会丢失。')) return;
+  resetConfig({ scope: 'section', section }, '已恢复该组默认值（重启后生效）');
+}
+
+function resetAll() {
+  if (!confirm('把所有配置恢复默认？\n\n注意：api_key 会回到 test_key，监听地址等也会重置；管理密码与「启用管理面」保持不变。')) return;
+  resetConfig({ scope: 'all' }, '全部配置已恢复默认（重启后生效）');
+}
+
+async function changePassword() {
+  const pw = ($('#newPassword').value || '').trim();
+  const confirm2 = ($('#newPassword2').value || '').trim();
+  const minLen = state.config?.meta?.min_password_length || 8;
+  if (pw.length < minLen) return alertBox('新密码至少 ' + minLen + ' 个字符', 'warning');
+  if (pw !== confirm2) return alertBox('两次输入的新密码不一致', 'warning');
+  const btn = $('#btnChangePassword');
+  btn.disabled = true;
+  try {
+    await api('/admin/password', { method: 'POST', body: { password: pw, confirm: confirm2 } });
+    state.password = pw;
+    localStorage.setItem(PW_STORE, pw);
+    $('#newPassword').value = '';
+    $('#newPassword2').value = '';
+    toast('管理员密码已更新', 'success');
+  } catch (e) {
+    alertBox('修改失败：' + String(e.message || e), 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function getPath(obj, path) {
+  let cur = obj;
+  for (const seg of String(path).split('.')) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[seg];
+  }
+  return cur;
+}
+
+function setObjPath(obj, path, val) {
+  const segs = String(path).split('.');
+  let cur = obj;
+  for (const seg of segs.slice(0, -1)) {
+    if (cur[seg] == null || typeof cur[seg] !== 'object') cur[seg] = {};
+    cur = cur[seg];
+  }
+  cur[segs[segs.length - 1]] = val;
+}
+
 // ── 启动 ────────────────────────────────────────────────────
 function bind() {
   // 登录表单
@@ -1006,6 +1623,7 @@ function bind() {
   // 导航（按钮切换 hash，由 hashchange 驱动渲染）
   $$('.nav-link[data-view]').forEach((b) => {
     b.addEventListener('click', () => {
+      if (!confirmLeaveSettings()) return;
       location.hash = '#/' + b.dataset.view;
       const nav = $('#nav');
       if (nav.classList.contains('show')) bootstrap.Collapse.getOrCreateInstance(nav).hide();
@@ -1048,17 +1666,74 @@ function bind() {
   });
   $('#btnAuthStart').addEventListener('click', startAuth);
 
+  // 首次初始化
+  if ($('#setupForm')) $('#setupForm').addEventListener('submit', submitSetup);
+
+  // 设置页
+  if ($('#btnSaveConfig')) $('#btnSaveConfig').addEventListener('click', saveConfig);
+  if ($('#btnResetAll')) $('#btnResetAll').addEventListener('click', resetAll);
+  if ($('#btnChangePassword')) $('#btnChangePassword').addEventListener('click', changePassword);
+  if ($('#cfgSearch')) {
+    $('#cfgSearch').addEventListener('input', (ev) => filterSettings(ev.target.value));
+  }
+  if ($('#cfgForm')) {
+    $('#cfgForm').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-reset-section]');
+      if (btn) resetSection(btn.dataset.resetSection);
+    });
+  }
+  if ($('#btnCopyRestart')) {
+    $('#btnCopyRestart').addEventListener('click', async () => {
+      const cmd = 'docker compose restart wp';
+      try {
+        await navigator.clipboard.writeText(cmd);
+        toast('重启命令已复制', 'success');
+      } catch {
+        alert('请手动执行：' + cmd);
+      }
+    });
+  }
+  window.addEventListener('beforeunload', (ev) => {
+    if (state.configDirty && state.configDirty.size > 0) {
+      ev.preventDefault();
+      ev.returnValue = '';
+    }
+  });
+
   window.addEventListener('hashchange', render);
 }
 
-// boot：先看本地有没有密码。有就先验一次（服务重启后旧密码会失效），
-// 验不过就清掉并停在登录页；没有就直接显示登录页。
+// filterSettings 按名称/key/说明过滤字段（分组内全被过滤时整组隐藏）。
+function filterSettings(q) {
+  const s = String(q || '').trim().toLowerCase();
+  document.querySelectorAll('#cfgForm .wp-cfg-card').forEach((card) => {
+    let visible = 0;
+    card.querySelectorAll('.wp-cfg-row').forEach((row) => {
+      const hit = !s || (row.dataset.search || '').includes(s);
+      row.hidden = !hit;
+      if (hit) visible++;
+    });
+    card.hidden = visible === 0;
+  });
+}
+
+// boot：先问"密码初始化了吗"，再决定显示初始化向导还是登录页。
+// 有本地密码就先验一次：密码改过/失效就清掉并停在登录页。
 (async function boot() {
   // 标记：app.js 已执行并接管页面（自动化脚本据此判断可交互，见 scripts/ui-login-check.mjs）。
   document.documentElement.dataset.appBooted = '1';
   applyTheme(localStorage.getItem(THEME_STORE) || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   bind();
 
+  const st = await fetchSetupStatus();
+  if (st && st.initialized === false) {
+    showSetup(st.min_password_length || 8);
+    return;
+  }
+  if (st && st.admin_enabled === false) {
+    showLogin('管理面已关闭：在 data/config.json 里把 admin.enabled 改回 true 后重启容器');
+    return;
+  }
   if (!state.password) {
     showLogin(null);
     return;
@@ -1067,8 +1742,9 @@ function bind() {
     await login(state.password);
     showApp();
     render();
+    refreshConfigMeta();
   } catch (e) {
     clearSession();
-    showLogin('上次的密码已失效（服务重启会更换密码）：' + String(e.message || e));
+    showLogin('登录失败：' + String(e.message || e));
   }
 })();

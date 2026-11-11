@@ -1,6 +1,6 @@
 // tuning.go 池的运行期阈值/节奏的**注入点**。
 //
-// 这些值曾经硬编码在本包的 const 里；现在默认值来自 config.default.json，
+// 这些值曾经硬编码在本包的 const 里；现在默认值来自 config.example.json，
 // 由 cmd/server 在启动时用用户配置调用 Configure 覆盖。
 //
 // 包内仍保留同名变量的初值：裸用 pool.New（单元测试/极端降级）时按真实默认值工作。

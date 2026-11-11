@@ -2,109 +2,151 @@ package adminauth
 
 import (
 	"strings"
+	"sync"
 	"testing"
-	"time"
 )
 
-// 默认构造必须给出可用凭据：非空、长度达标、来源标记为 generated。
-func TestNewGeneratesPassword(t *testing.T) {
-	s := MustNew("")
+func TestHashPasswordFormatAndVerify(t *testing.T) {
+	enc, err := HashPassword("correct horse battery")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if !strings.HasPrefix(enc, "sha256x10$") {
+		t.Fatalf("存储值应以 scheme 开头：%q", enc)
+	}
+	if strings.Count(enc, "$") != 2 {
+		t.Fatalf("存储值应为三段：%q", enc)
+	}
+	s, err := NewFromStored(enc)
+	if err != nil {
+		t.Fatalf("NewFromStored: %v", err)
+	}
 	if !s.Configured() {
-		t.Fatal("随机生成后 Configured() 必须为 true")
+		t.Fatal("解析出哈希后 Configured 应为 true")
 	}
-	pw := s.Password()
-	if len([]rune(pw)) != randomPasswordLen {
-		t.Fatalf("密码长度 = %d，want %d", len([]rune(pw)), randomPasswordLen)
-	}
-	for _, r := range pw {
-		if !strings.ContainsRune(alphabet, r) {
-			t.Fatalf("密码含字母表外字符 %q：%s", r, pw)
-		}
-	}
-	if s.Source() != "generated" {
-		t.Fatalf("Source() = %q，want generated", s.Source())
-	}
-	if time.Since(s.IssuedAt()) > time.Minute {
-		t.Fatalf("IssuedAt 不合理：%v", s.IssuedAt())
-	}
-}
-
-// 两次构造必须得到不同密码（否则"每次启动随机"就是假的）。
-func TestNewIsRandom(t *testing.T) {
-	a, b := MustNew(""), MustNew("")
-	if a.Password() == b.Password() {
-		t.Fatal("两次生成的密码相同，随机源有问题")
-	}
-}
-
-// Verify：正确密码通过，错误/空/前后空格行为明确。
-func TestVerify(t *testing.T) {
-	s := MustNew("")
-	pw := s.Password()
-
-	if !s.Verify(pw) {
+	if !s.Verify("correct horse battery") {
 		t.Fatal("正确密码应通过")
+	}
+	if !s.Verify("  correct horse battery  ") {
+		t.Fatal("首尾空格应被裁剪后通过")
+	}
+	if s.Verify("wrong") {
+		t.Fatal("错误密码必须拒绝")
 	}
 	if s.Verify("") {
 		t.Fatal("空密码必须拒绝")
 	}
-	if s.Verify(pw + "x") {
-		t.Fatal("错误密码必须拒绝")
-	}
-	if s.Verify(strings.ToUpper(pw)) && strings.ToUpper(pw) != pw {
-		t.Fatal("大小写变化必须拒绝")
-	}
 }
 
-// 固定密码：够长可用，太短直接报错（不让弱口令绕过"只认内存凭据"的设计）。
-func TestOverridePassword(t *testing.T) {
-	s, err := New("  dev-password-123  ")
+// 每次哈希都换新盐：同一明文必须得到不同存储值，但都能验过。
+func TestHashPasswordUsesFreshSalt(t *testing.T) {
+	a, err := HashPassword("same-password")
 	if err != nil {
-		t.Fatalf("New(override) 报错：%v", err)
+		t.Fatal(err)
 	}
-	if s.Password() != "dev-password-123" {
-		t.Fatalf("应去掉首尾空格，实际 %q", s.Password())
+	b, err := HashPassword("same-password")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if s.Source() != "override" {
-		t.Fatalf("Source() = %q，want override", s.Source())
+	if a == b {
+		t.Fatal("两次哈希相同：盐没有随机化")
 	}
-
-	if _, err := New("short"); err == nil {
-		t.Fatal("短密码应报错")
+	sa, _ := NewFromStored(a)
+	sb, _ := NewFromStored(b)
+	if !sa.Verify("same-password") || !sb.Verify("same-password") {
+		t.Fatal("两份哈希都应能验过原始密码")
 	}
 }
 
-// 未初始化（nil / 空密码）时 Verify 恒 false —— 这是"绝不放行"的底座。
-func TestVerifyRejectsUnconfigured(t *testing.T) {
+// 未初始化（空存储 / nil）时 Verify 恒 false —— "绝不放行"的底座。
+func TestUnconfiguredNeverVerifies(t *testing.T) {
 	var nilStore *Store
-	if nilStore.Verify("") || nilStore.Verify("anything") {
+	if nilStore.Configured() || nilStore.Verify("") || nilStore.Verify("x") {
 		t.Fatal("nil Store 必须拒绝一切")
 	}
-	if nilStore.Configured() {
-		t.Fatal("nil Store 不应视为已配置")
+	s, err := NewFromStored("")
+	if err != nil {
+		t.Fatalf("空存储不应报错：%v", err)
 	}
-	empty := &Store{}
-	if empty.Configured() || empty.Verify("") || empty.Verify("x") {
-		t.Fatal("空 Store 必须拒绝一切")
+	if s.Configured() || s.Verify("") || s.Verify("x") {
+		t.Fatal("未初始化 Store 必须拒绝一切")
 	}
 }
 
-// 并发读（HTTP 处理并发调用 Verify/Password）不应触发竞态。
-func TestConcurrentVerify(t *testing.T) {
-	s := MustNew("")
-	pw := s.Password()
-	done := make(chan struct{})
+// 存储值损坏要明确报错，而不是静默当成未初始化。
+func TestMalformedStoredRejected(t *testing.T) {
+	for _, bad := range []string{
+		"plain-text",
+		"sha256x10$nothex$deadbeef",
+		"sha256x10$00112233445566778899aabbccddeeff$short",
+		"md5$00112233445566778899aabbccddeeff$" + strings.Repeat("ab", 32),
+	} {
+		if _, err := NewFromStored(bad); err == nil {
+			t.Fatalf("应拒绝损坏的存储值：%q", bad)
+		}
+	}
+}
+
+// SetStored 支持热换密码（改密无需重启）。
+func TestSetStoredHotSwap(t *testing.T) {
+	s := MustNew("old-password")
+	if !s.Verify("old-password") {
+		t.Fatal("旧密码应通过")
+	}
+	enc, err := HashPassword("new-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStored(enc); err != nil {
+		t.Fatalf("SetStored: %v", err)
+	}
+	if s.Verify("old-password") {
+		t.Fatal("换密码后旧密码必须失效")
+	}
+	if !s.Verify("new-password") {
+		t.Fatal("新密码应通过")
+	}
+	if err := s.SetStored("garbage"); err == nil {
+		t.Fatal("写入损坏哈希应报错")
+	}
+}
+
+// 最小长度约束在 CheckPlain 里统一实现（初始化/改密共用）。
+func TestCheckPlainMinLength(t *testing.T) {
+	Configure(Options{MinLength: 8})
+	if err := CheckPlain("short"); err == nil {
+		t.Fatal("短密码应报错")
+	}
+	if err := CheckPlain("  long-enough  "); err != nil {
+		t.Fatalf("够长密码应通过：%v", err)
+	}
+	if err := CheckPlain("   "); err == nil {
+		t.Fatal("纯空白应报错")
+	}
+	if MinLength() != 8 {
+		t.Fatalf("MinLength() = %d", MinLength())
+	}
+	Configure(Options{MinLength: 12})
+	if err := CheckPlain("elevenchars"); err == nil {
+		t.Fatal("提高下限后 11 位应报错")
+	}
+	Configure(Options{MinLength: 8}) // 复位，避免影响其它用例
+}
+
+// 并发读写不应触发竞态（HTTP 并发请求下 Verify 与改密可能同时发生）。
+func TestConcurrentVerifyAndSwap(t *testing.T) {
+	s := MustNew("concurrent-password")
+	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for j := 0; j < 200; j++ {
-				_ = s.Verify(pw)
-				_ = s.Password()
+				_ = s.Verify("concurrent-password")
 				_ = s.Configured()
+				_ = s.Stored()
 			}
-			done <- struct{}{}
 		}()
 	}
-	for i := 0; i < 8; i++ {
-		<-done
-	}
+	wg.Wait()
 }
