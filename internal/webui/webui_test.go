@@ -270,6 +270,13 @@ func TestBrandWordmark(t *testing.T) {
 	if !strings.Contains(html, "<title>WorkPuppy 管理后台</title>") {
 		t.Error("标签页标题应为「WorkPuppy 管理后台」")
 	}
+	// favicon 是内联 SVG 的 data URI，里面的字是 URL 编码的 `>WB<` / `>WP<`。
+	if !strings.Contains(html, "%3EWP%3C/text%3E") {
+		t.Error("favicon 里的字应改为 WP")
+	}
+	if strings.Contains(html, "%3EWB%3C/text%3E") {
+		t.Error("favicon 里不应再是旧的 WB")
+	}
 }
 
 // 扫码授权的有效期必须"看得见、过期后明确失效"。
