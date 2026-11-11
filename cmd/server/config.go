@@ -81,9 +81,11 @@ type Config struct {
 		Enabled bool `json:"enabled"` // 默认 false
 		// BodyLimitBytes 管理面请求体上限（默认 8192）。
 		BodyLimitBytes int `json:"body_limit_bytes"`
-		// PasswordLength 启动时随机生成的管理密码长度（默认 20）。
-		PasswordLength int `json:"password_length"`
-		// MinPasswordLength 用 WP_ADMIN_PASSWORD 固定密码时的最小长度（默认 8）。
+		// RandomPasswordLength 启动时**自动生成**的管理密码长度（默认 20）。
+		// 只影响"没设 WP_ADMIN_PASSWORD 时随机生成"这一分支；外部固定密码的长度
+		// 由 min_password_length 管（两者互不影响）。
+		RandomPasswordLength int `json:"random_password_length"`
+		// MinPasswordLength 用 WP_ADMIN_PASSWORD 固定密码时的**最小**长度（默认 8，无上限）。
 		MinPasswordLength int `json:"min_password_length"`
 	} `json:"admin"`
 
@@ -475,8 +477,8 @@ func (c *Config) wireTunings() error {
 	c.StateCreditFlushIntervalDur = clampFlushInterval(c.StateCreditFlushIntervalDur)
 
 	adminauth.Configure(adminauth.Options{
-		PasswordLength:    c.Admin.PasswordLength,
-		MinOverrideLength: c.Admin.MinPasswordLength,
+		RandomPasswordLength: c.Admin.RandomPasswordLength,
+		MinOverrideLength:    c.Admin.MinPasswordLength,
 	})
 	pool.Configure(pool.Options{
 		MinPickGap:           c.MinPickGapDur,

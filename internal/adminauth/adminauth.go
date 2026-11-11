@@ -23,9 +23,9 @@ import (
 	"time"
 )
 
-// passwordLen 生成密码的长度。20 个字符、58 个字符的字母表 ≈ 117 bit 熵：
-// 在线爆破不可能成功，也不至于长到没法手输/复制。
-var passwordLen = 20
+// randomPasswordLen 自动生成密码的长度（config: admin.random_password_length）。
+// 20 个字符、58 个字符的字母表 ≈ 117 bit 熵：在线爆破不可能成功，也不至于长到没法手输/复制。
+var randomPasswordLen = 20
 
 // alphabet 去掉了容易看错的字符（0/O/1/l/I），便于从日志里抄进浏览器。
 const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -51,7 +51,7 @@ func New(override string) (*Store, error) {
 		}
 		return &Store{password: override, source: "override", issuedAt: time.Now()}, nil
 	}
-	pw, err := generate(passwordLen)
+	pw, err := generate(randomPasswordLen)
 	if err != nil {
 		return nil, fmt.Errorf("生成管理密码失败: %w", err)
 	}

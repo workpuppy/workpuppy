@@ -59,7 +59,7 @@
 ```bash
 git clone https://github.com/workpuppy/workpuppy.git
 cd workpuppy
-cp config.default.json config.json     # 至少改 api_key
+cp config.default.json config.json     # 见下方「最小可用配置」：其实只需 api_key + admin.enabled
 
 docker run -d --name wp -p 7863:7863 \
   -v "$PWD/auths:/app/auths" -v "$PWD/data:/app/data" \
@@ -102,15 +102,54 @@ docker logs wp | grep 登录密码
 
 ## 配置说明
 
-> **写错键名会被点名**：配置里出现 `config.default.json` 中不存在的键（拼错、多打字）不会导致启动失败，
-> 但**启动日志会把它们列出来**，避免"以为配了其实没生效"：
+> **写错键名会被点名**：配置里出现 `config.default.json` 中不存在的键（拼错、多打字、**改过名的旧键**）
+> 不会导致启动失败，但**启动日志会把它们列出来**，避免"以为配了其实没生效"：
 >
 > ```
 > WARN: 配置里有未知键（会被忽略，多半是拼错）：pool.max_in_flight_glboal；全部可用键见 config.default.json
 > ```
+>
+> 改名不做兼容垫片：例如 `admin.password_length` 已改名为 `admin.random_password_length`，
+> 写旧名只会在日志里被点名，不会静默生效。
 
 配置模板是 [`config.default.json`](config.default.json)，**它就是全部默认值的权威来源**
 （编译进二进制；仓库根目录那份是同步副本，改完执行 `go run ./cmd/config-default -write`）。
+
+### 最小可用配置：只要两个键
+
+只有两件事"必须你自己定"，其余全部有默认值——**不写就是默认，不需要照抄模板**：
+
+```json
+{
+  "api_key": "换成你自己的随机串",
+  "admin": { "enabled": true }
+}
+```
+
+| 键 | 为什么必须 |
+|---|---|
+| `api_key` | 下游调 `/v1/*`、`/status` 的凭据。**留空 = 不鉴权**，公网部署务必设置 |
+| `admin.enabled` | 是否注册 `/admin/*`（管理后台页面与运维接口）。`false` 时这些路径**根本不注册**（404），页面能打开但会提示"管理面未开启" |
+
+账号**不在配置里**：扫码加号，或把 `workbuddy-<uid>.json` 丢进 `auth_dir`（默认 `./auths`），几秒内自动热加载。
+
+按需再加的常见项（与上面那段合并即可；这里没写的键仍然用默认值）：
+
+```json
+{
+  "listen": ":7863",
+  "auth_dir": "./auths",
+  "state_file": "./data/state.json",
+  "upstash": { "url": "https://xxx.upstash.io", "token": "…" },
+  "schedule": { "travel_enabled": false, "activity_report_count": 5 }
+}
+```
+
+- `listen`：容器内用 `:7863`，宿主机 `-p 7863:7863` 暴露；改端口只改这一处。
+- `upstash`：留空 = 纯内存 + 本地文件，单机部署不需要；配了才会镜像粘性会话与状态快照。
+- `schedule`：想关掉某类任务用 `*_enabled`（默认全开）；**清空时刻数组不是关闭**，会回落默认时刻。
+
+服务读取配置的顺序：`cmd/server -config <path>`（默认 `./config.json`）→ 见下方"读取优先级"。
 
 ### 读取优先级（与 Spring 的属性覆盖一致）
 
@@ -200,8 +239,8 @@ docker logs wp | grep 登录密码
 |---|---|---|
 | `enabled` | `false` | 是否注册 `/admin/*`；未开启时这些路径**根本不注册**（404，而非 403） |
 | `body_limit_bytes` | `8192` | 管理面请求体上限 |
-| `password_length` | `20` | 启动时随机生成的管理密码长度（仅在没设 `WP_ADMIN_PASSWORD` 时生效） |
-| `min_password_length` | `8` | 用 `WP_ADMIN_PASSWORD` 固定密码时的最小长度（不足则启动失败） |
+| `random_password_length` | `20` | 启动时**自动生成**的管理密码长度（只在没设 `WP_ADMIN_PASSWORD` 时生效；不影响外部固定密码） |
+| `min_password_length` | `8` | 用 `WP_ADMIN_PASSWORD` 固定密码时的**最小**长度（不足则启动失败；无上限） |
 
 
 > 管理密码**每次启动重新生成、只存内存、打印在终端**，与 `api_key` 完全分离：

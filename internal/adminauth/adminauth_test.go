@@ -13,8 +13,8 @@ func TestNewGeneratesPassword(t *testing.T) {
 		t.Fatal("随机生成后 Configured() 必须为 true")
 	}
 	pw := s.Password()
-	if len([]rune(pw)) != passwordLen {
-		t.Fatalf("密码长度 = %d，want %d", len([]rune(pw)), passwordLen)
+	if len([]rune(pw)) != randomPasswordLen {
+		t.Fatalf("密码长度 = %d，want %d", len([]rune(pw)), randomPasswordLen)
 	}
 	for _, r := range pw {
 		if !strings.ContainsRune(alphabet, r) {

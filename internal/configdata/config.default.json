@@ -63,7 +63,7 @@
   "admin": {
     "enabled": false,
     "body_limit_bytes": 8192,
-    "password_length": 20,
+    "random_password_length": 20,
     "min_password_length": 8
   },
   "global": {

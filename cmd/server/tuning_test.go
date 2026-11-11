@@ -52,7 +52,7 @@ func TestTuningsDefaultsComeFromDefaultConfig(t *testing.T) {
 	if c.Risk.WafThreshold != 2 || c.Metrics.Capacity != 512 || c.Debug.DumpMinBytes != 4194304 {
 		t.Errorf("risk/metrics/debug=%+v/%+v/%+v", c.Risk, c.Metrics, c.Debug)
 	}
-	if c.Admin.BodyLimitBytes != 8192 || c.Admin.PasswordLength != 20 || c.Admin.MinPasswordLength != 8 {
+	if c.Admin.BodyLimitBytes != 8192 || c.Admin.RandomPasswordLength != 20 || c.Admin.MinPasswordLength != 8 {
 		t.Errorf("admin=%+v want 8192/20/8", c.Admin)
 	}
 	if c.Models.DefaultContextWindow != 1000000 || c.Upstash.WriteConcurrency != 8 {
@@ -71,7 +71,7 @@ func TestTuningsUserOverride(t *testing.T) {
 	  "pool": {"min_pick_gap": "250ms", "session_dead_threshold": 5, "expiring_weight": 12},
 	  "cooldown": {"not_found": "5s"},
 	  "risk": {"waf_window": "2m", "waf_threshold": 7},
-	  "admin": {"password_length": 24, "min_password_length": 12},
+	  "admin": {"random_password_length": 24, "min_password_length": 12},
 	  "models": {"default_context_window": 200000, "catalog_timeout": "9s"},
 	  "upstash": {"key_ttl": "24h", "write_concurrency": 4}
 	}`
@@ -93,7 +93,7 @@ func TestTuningsUserOverride(t *testing.T) {
 	if c.RiskWafWindowDur != 2*time.Minute || c.Risk.WafThreshold != 7 {
 		t.Errorf("risk 覆盖未生效：window=%v threshold=%d", c.RiskWafWindowDur, c.Risk.WafThreshold)
 	}
-	if c.Admin.PasswordLength != 24 || c.Admin.MinPasswordLength != 12 {
+	if c.Admin.RandomPasswordLength != 24 || c.Admin.MinPasswordLength != 12 {
 		t.Errorf("admin 覆盖未生效：%+v", c.Admin)
 	}
 	if c.Models.DefaultContextWindow != 200000 || c.ModelsCatalogTimeoutDur != 9*time.Second {
@@ -236,6 +236,7 @@ func TestUnknownKeysReported(t *testing.T) {
 	  "listen": ":7863",
 	  "schedule": {"checkin_hours": [10, 14], "checkin_time": ["09:30"]},
 	  "pool": {"expiring_soon": "24h", "max_in_flight": 4},
+	  "admin": {"password_length": 20},
 	  "proxies": {"hk": "http://127.0.0.1:7890"},
 	  "typo_key": 1
 	}`
@@ -250,7 +251,10 @@ func TestUnknownKeysReported(t *testing.T) {
 	want := map[string]bool{
 		"schedule.checkin_hours": true,
 		"pool.expiring_soon":     true,
-		"typo_key":               true,
+		// 改名前后的旧键必须被点名（不做兼容垫片）：写 admin.password_length
+		// 不会生效，只会在启动日志里被提示改成 admin.random_password_length。
+		"admin.password_length": true,
+		"typo_key":              true,
 	}
 	for _, k := range got {
 		if !want[k] {
