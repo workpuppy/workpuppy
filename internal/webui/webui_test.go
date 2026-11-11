@@ -237,6 +237,15 @@ func TestAccountCreditChartWiring(t *testing.T) {
 			t.Errorf("app.css 缺少 %s（图表容器/图例）", want)
 		}
 	}
+	// 表头不换行 + 模型表列宽比例：回归背景是「最大输/出」「积分倍/率」被挤成两行。
+	for _, want := range []string{
+		"#view-accounts table th", "#view-models table th", "white-space: nowrap",
+		"table-layout: fixed", "min-width: 1020px", "nth-child(7)",
+	} {
+		if !strings.Contains(css.Body.String(), want) {
+			t.Errorf("app.css 缺少 %s（表头不换行/模型表列宽比例）", want)
+		}
+	}
 }
 
 // 扫码授权的有效期必须"看得见、过期后明确失效"。

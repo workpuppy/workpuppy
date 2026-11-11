@@ -138,7 +138,7 @@
   vertical-align: baseline;
 }
 
-/* 账号表第一列（UID）是可点的：给个手型与悬停反馈，暗示"能点开曲线"。 */
+/* 账号表第一列（昵称）是可点的：给个手型与悬停反馈，暗示"能点开曲线"。 */
 button[data-chart-uid] {
   cursor: pointer;
   text-decoration: none;
@@ -147,4 +147,32 @@ button[data-chart-uid] {
 button[data-chart-uid]:hover,
 button[data-chart-uid]:focus-visible {
   text-decoration: underline;
+}
+
+/* ── 账号 / 模型两表的表头不换行 ────────────────────────────────────────
+ * 表头折行（「最大输/出」「积分倍/率」）会把整行行高撑歪，也让人一眼读不成词。
+ * 列表页宽度固定，给表头 nowrap + 明确列宽比例，比让浏览器按内容均分更稳。 */
+#view-accounts table th,
+#view-models table th {
+  white-space: nowrap;
+}
+
+/* 模型表：描述最长、给最多；两个数字列留够 4 个字头宽；能力列放得下
+ * 「图像 · 工具 · 推理 · 仅推理」一行。fixed 布局让百分比列宽真正生效。 */
+#view-models table {
+  table-layout: fixed;
+  min-width: 1020px; /* 窄屏时宁可由 .table-responsive 横向滚动，也不挤成换行 */
+}
+
+#view-models table th:nth-child(1) { width: 13%; } /* 模型 */
+#view-models table th:nth-child(2) { width: 28%; } /* 描述 */
+#view-models table th:nth-child(3) { width: 9%; }  /* 上下文 */
+#view-models table th:nth-child(4) { width: 9%; }  /* 最大输出 */
+#view-models table th:nth-child(5) { width: 12%; } /* 思考档位 */
+#view-models table th:nth-child(6) { width: 9%; }  /* 积分倍率 */
+#view-models table th:nth-child(7) { width: 20%; } /* 能力：四个能力标签也要放得下一行 */
+
+/* fixed 布局下长模型 ID / 描述会顶出单元格：允许在列内换行，不撑破表格。 */
+#view-models table td {
+  overflow-wrap: anywhere;
 }
