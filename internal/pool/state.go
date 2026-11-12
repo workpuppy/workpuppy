@@ -202,16 +202,31 @@ func (p *Pool) DisabledState(uid string) (disabled bool, reason string, source D
 // modelCooldowns）并更新 credits，不动熔断器（fails/retryCount/breakerUntil）——
 // 签到成功只证明余额恢复与 billing 通道健康，不证明 chat 通道健康，熔断（连续 5xx
 // 信号）不应被签到覆盖。remain==0 或禁用时只更新 credits（不动冷却/禁用）。
+//
+// 余额差额要上报积分日账本（>0 赚 / <0 调整）：签到/刷新余额是**权威回写**，也是
+// 「获得」与「调整」唯一的来源。历史 bug：本方法静默改写 credits，而生产调用方紧接着
+// 又调 SetCreditsDetailed 写同一个值，后者算出的 delta 恒为 0 —— 结果日账本的 earned /
+// adjust 永远是 0，只有请求扣费（spent）有数。现在由本方法负责上报差额，setCredits 只在
+// 差额非 0 时上报，所以"ReenableIfCredits → SetCreditsDetailed"这条生产顺序不会重复记账。
 func (p *Pool) ReenableIfCredits(uid string, remain int64) {
+	var delta, balance int64
+	var realm string
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if e, ok := p.byUID[uid]; ok {
+		prev := e.credits
 		if remain > 0 && !e.disabled {
 			p.reviveCoolingLocked(e, remain)
 		} else {
 			e.credits = remain
 		}
+		delta = e.credits - prev
+		balance = e.credits
+		realm = e.a.Realm()
 		p.dirty.Store(true)
+	}
+	p.mu.Unlock()
+	if delta != 0 {
+		emitCredit(uid, realm, delta, 0, balance)
 	}
 }
 

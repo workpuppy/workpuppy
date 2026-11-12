@@ -27,6 +27,10 @@ func (p *Pool) SetCreditsDetailed(uid string, credits, expiring int64) {
 
 // setCredits 内部实现：expiring==nil 表示"保持原值"。写回后把
 // ①余额变化（>0 赚 / <0 调整）②当前余额 上报给积分日账本（creditledger）。
+//
+// 只在差额非 0 时上报：签到/刷新余额的生产顺序是 ReenableIfCredits（负责解冻 + 上报
+// 差额）→ SetCreditsDetailed（补写快过期分桶），后者写的是同一个余额，若也按
+// "balance != 0" 上报会给日账本重复喂同一条流水。
 func (p *Pool) setCredits(uid string, credits int64, expiring *int64) {
 	p.mu.Lock()
 	var delta, balance int64
@@ -50,7 +54,7 @@ func (p *Pool) setCredits(uid string, credits int64, expiring *int64) {
 		realm = e.a.Realm()
 	}
 	p.mu.Unlock()
-	if balance != 0 || delta != 0 {
+	if delta != 0 {
 		emitCredit(uid, realm, delta, 0, balance)
 	}
 }
