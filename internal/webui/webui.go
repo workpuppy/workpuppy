@@ -16,17 +16,71 @@
 //   - 响应统一带 CSP（default-src 'self'，禁 inline script / 外链），因此本包内不允许
 //     出现内联 <script> 或 onclick= 属性；所有交互走 assets/app.js 的事件委托。
 //   - 不开 `Access-Control-Allow-Origin`：跨站页面读不到管理面数据。
+//
+// 缓存策略（升级后必须立刻看到新界面，因此按"谁写的"分两类）：
+//   - 第三方框架的 vendored 编译产物（tabler.min.css / bootstrap.bundle.min.js）：
+//     只在升级 vendored 版本时变，体积大，保留短 max-age 缓存；
+//   - 其余资源（index.html / app.js / app.css / NOTICE.txt 等我们自己维护的文件）：
+//     `no-cache` + 内容哈希 ETag —— 浏览器每条请求都回来校验，未变回 304（几十字节），
+//     变了立刻拿新的。这样不会出现"HTML 是新版、app.js 还是旧版"的半新半旧错配
+//     （曾经踩过：概览改折线图后，旧 app.js 找不到新 DOM，图表区一片空白）。
 package webui
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 //go:embed assets
 var assetsFS embed.FS
+
+// frameworkAssets 第三方框架的 vendored 编译产物（按 embed 里的文件名判断）。
+// 它们随 vendored 版本固定、体积大且极少变，保留 max-age 缓存；名单之外一律
+// no-cache + ETag —— 新增自己的资源文件时什么都不用改，天然走"升级即时生效"。
+var frameworkAssets = map[string]bool{
+	"tabler.min.css":          true,
+	"bootstrap.bundle.min.js": true,
+}
+
+// etagCache 资源内容哈希缓存：embed.FS 编译期固定，每个文件算一次即可。
+var etagCache sync.Map // name -> etag（含引号，形如 `"a1b2c3..."`）
+
+// contentETag 由内容算强 ETag（取 sha256 前 8 字节，够防碰撞且短）。
+func contentETag(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+// assetETag 取某个 embed 资源的 ETag（读不到文件返回空串，交给 FileServer 出 404）。
+func assetETag(sub fs.FS, name string) string {
+	if v, ok := etagCache.Load(name); ok {
+		return v.(string)
+	}
+	raw, err := fs.ReadFile(sub, name)
+	if err != nil {
+		return ""
+	}
+	et := contentETag(raw)
+	etagCache.Store(name, et)
+	return et
+}
+
+// etagMatched 判断 If-None-Match 是否命中我们的 ETag（容错弱校验前缀与逗号列表）。
+func etagMatched(header, etag string) bool {
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		part = strings.TrimPrefix(part, "W/")
+		if part == etag {
+			return true
+		}
+	}
+	return false
+}
 
 // CSP 管理后台的内容安全策略。
 //
@@ -73,16 +127,34 @@ func Handler() http.Handler {
 		path := r.URL.Path
 		switch {
 		case path == "/" || path == "/index.html":
-			// 页面本身不缓存：升级后要立刻看到新界面（静态资源走短缓存）。
+			// 页面每次回来校验（no-cache + ETag）：升级后立刻看到新界面，未变只回 304。
+			etag := contentETag(index)
 			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", etag)
+			if etagMatched(r.Header.Get("If-None-Match"), etag) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(index)
 
 		case strings.HasPrefix(path, "/assets/"):
-			// 资源名固定、内容随二进制变化：给 5 分钟缓存 + ETag（FileServer 自带
-			// Last-Modified/Content-Type），升级后最多 5 分钟自然失效。
-			w.Header().Set("Cache-Control", "public, max-age=300")
-			r = cloneWithPath(r, strings.TrimPrefix(path, "/assets"))
+			name := strings.TrimPrefix(path, "/assets/")
+			if frameworkAssets[name] {
+				// 框架基础包：内容随 vendored 版本固定，给短缓存、不回源校验。
+				w.Header().Set("Cache-Control", "public, max-age=300")
+			} else {
+				// 其余资源：no-cache + 内容哈希 ETag，浏览器每次回来问一句。
+				w.Header().Set("Cache-Control", "no-cache")
+				if etag := assetETag(sub, name); etag != "" {
+					w.Header().Set("ETag", etag)
+					if etagMatched(r.Header.Get("If-None-Match"), etag) {
+						w.WriteHeader(http.StatusNotModified)
+						return
+					}
+				}
+			}
+			r = cloneWithPath(r, "/"+name)
 			files.ServeHTTP(w, r)
 
 		default:

@@ -160,6 +160,53 @@ func TestAdminPageHasQRCodeWiring(t *testing.T) {
 	}
 }
 
+// 静态资源缓存策略：除了第三方框架包，其余资源一律 no-cache + ETag（升级即时生效）。
+//
+// 回归背景：升级后曾出现"HTML 是新版、app.js 还是旧版"（旧 JS 找不到新 DOM，
+// 概览图表区一片空白，最长持续 5 分钟）。现在自己的资源每次回源校验，未变回 304；
+// 只有 vendored 的框架包（tabler.min.css / bootstrap.bundle.min.js）保留短缓存。
+func TestAssetCachePolicy(t *testing.T) {
+	h := Handler()
+
+	// 自己的资源 + 入口页：no-cache + ETag，且带 If-None-Match 时回 304 空体。
+	for _, path := range []string{"/", "/assets/app.js", "/assets/app.css", "/assets/NOTICE.txt"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s code=%d want 200", path, w.Code)
+		}
+		if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
+			t.Errorf("%s Cache-Control=%q want no-cache", path, cc)
+		}
+		etag := w.Header().Get("ETag")
+		if etag == "" {
+			t.Fatalf("%s 缺 ETag（无法做 304 校验）", path)
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("If-None-Match", etag)
+		w2 := httptest.NewRecorder()
+		h.ServeHTTP(w2, req)
+		if w2.Code != http.StatusNotModified {
+			t.Errorf("%s 带 If-None-Match 应回 304，实际 %d", path, w2.Code)
+		}
+		if w2.Body.Len() != 0 {
+			t.Errorf("%s 304 不应带响应体", path)
+		}
+	}
+
+	// 框架基础包：保留缓存（不需要回源校验）。
+	for _, path := range []string{"/assets/tabler.min.css", "/assets/bootstrap.bundle.min.js"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s code=%d want 200", path, w.Code)
+		}
+		if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=") {
+			t.Errorf("%s Cache-Control=%q want 含 max-age", path, cc)
+		}
+	}
+}
+
 // 单账号积分曲线必须"点得到、画得出"。
 //
 // 回归背景：概览的积分日账本只有全局汇总，看不出某个号的钱是怎么走的；
