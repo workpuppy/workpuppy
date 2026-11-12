@@ -25,8 +25,10 @@ const state = {
   authPoll: null, // {state, realm, timer}
   aborter: null,
   creditDaily: null, // /admin/credit-daily 最近一次响应（概览与单号曲线共用）
+  totalCredits: 0,   // 整池当前积分（/status 各账号之和），概览曲线最后一个点用
   chartUID: '',      // 积分曲线弹窗当前账号
   chartDays: 7,      // 积分曲线区间（7 / 15 / 30，默认 7）
+  overviewDays: 7,   // 概览「积分日账本」曲线区间（7 / 15 / 30，默认 7）
 
   // 设置页
   config: null,          // {values, defaults, schema, meta}
@@ -241,7 +243,9 @@ async function loadStatus() {
     $('#kpiInFlight').textContent = fmtNum(s.in_flight_full);
     $('#kpiSticky').textContent = fmtNum(s.sticky_sessions);
     // 当前总积分额度 = 池内各账号余额之和（/status 的 accounts[] 与账号页同源）。
+    // 概览曲线最后一天（今天）也用这个实时值，而不是等日末快照。
     const sumCredits = (s.accounts || []).reduce((acc, a) => acc + Number(a.credits || 0), 0);
+    state.totalCredits = sumCredits;
     $('#kpiCredits').textContent = fmtNum(sumCredits);
     $('#statusRaw').textContent = JSON.stringify(s, null, 2);
     loadCredits();
@@ -251,12 +255,12 @@ async function loadStatus() {
 }
 
 // ── 账号 ────────────────────────────────────────────────────
-// ── 积分日账本（概览卡片）──────────────────────────────────────────────
+// ── 积分日账本（概览曲线）──────────────────────────────────────────────
 // 数据源 GET /admin/credit-daily：totals/accounts 是**当日内存热值**，
-// histories 是落盘的每日汇总（保留 30 天）；全局总量由后端按账号加总。
+// histories 是落盘的每日汇总（保留 30 天）；整池按天汇总在 chartRows 里做。
 async function loadCredits() {
-  const tbody = $('#creditBody');
-  if (!tbody) return;
+  const host = $('#overviewChart');
+  if (!host) return;
   try {
     const d = await api('/admin/credit-daily?days=30');
     state.creditDaily = d; // 缓存给「单账号曲线」弹窗复用，避免点开时再等一次
@@ -269,26 +273,9 @@ async function loadCredits() {
     $('#kpiEarned').textContent = fmtNum(t.earned || 0);
     $('#kpiSpent').textContent = fmtNum(t.spent || 0);
     $('#kpiAdjust').textContent = fmtNum(t.adjust || 0);
-    const rows = (d.histories || []).slice().reverse().map((h) => {
-      const ht = h.totals || {};
-      return el('tr', {}, [
-        el('td', { class: 'font-monospace small', text: h.date }),
-        el('td', { class: 'text-end text-success', text: fmtNum(ht.earned || 0) }),
-        el('td', { class: 'text-end text-danger', text: fmtNum(ht.spent || 0) }),
-        el('td', { class: 'text-end text-body-secondary', text: fmtNum(ht.adjust || 0) }),
-        el('td', { class: 'text-end fw-semibold', text: fmtNum(ht.net || 0) }),
-        el('td', { class: 'text-end text-body-secondary', text: fmtNum((h.accounts || []).length) }),
-      ]);
-    });
-    if (rows.length === 0) {
-      rows.push(el('tr', {}, [el('td', {
-        class: 'text-center text-body-secondary', attrs: { colspan: '6' },
-        text: '还没有记录（今天还没有签到或请求）',
-      })]));
-    }
-    tbody.replaceChildren(...rows);
+    renderOverviewChart();
   } catch (e) {
-    $('#creditToday').textContent = String(e.message || e);
+    $('#overviewChartHint').textContent = String(e.message || e);
   }
 }
 
@@ -426,21 +413,33 @@ function dayLabels(todayISO, days) {
   return out;
 }
 
-// accountChartData 从 credit-daily 响应里切出某账号最近 days 天的序列。
+// chartRows 把 credit-daily 响应整理成逐日序列，整池汇总与单账号共用同一套口径。
 //
-// 缺失日期的处理（需求：「没有积分的日期按 0 处理」）：
-//   - 区间内每一天都要有一个点（dayLabels 铺满日历），当天没有任何记录时：
-//     获得 / 消耗 / 修正 = 0（"这天没赚也没花"）；
-//   - 日终总积分：沿用上一已知值（余额是存量，按 0 画会出现"某天余额归零"的假暴跌）。
-//     credits_end 只在权威回写且余额非 0 时才写，所以 0 同时表示"未知"。
-//     今天那一点优先用账号页的实时积分（比日末快照新）。
-function accountChartData(payload, uid, days) {
-  const byDate = new Map(((payload && payload.histories) || []).map((h) => [h.date, h]));
+//   - uid == null → 整池：earned/spent/adjust 按天相加，日终总积分 = 当天各账号
+//     credits_end 之和；
+//   - uid 非空 → 单账号：取该账号当天那条记录。
+//
+// 缺失日期一律按 0（需求：实际只有 3 天数据却看 7 天时，空的那几天用 0 填充）——
+// 四条线都不做沿用/插值，图上的空档就是 0。
+// 唯一的例外是**今天**那一点：用实时值（整池=当前总积分，单号=账号当前积分），
+// 因为"此刻的余额"不是缺失数据，日末快照可能还没写。
+function chartRows(payload, days, uid) {
   const labels = dayLabels(payload && payload.today, days);
-  const acc = (state.accounts || []).find((a) => a.uid === uid);
+  const byDate = new Map(((payload && payload.histories) || []).map((h) => [h.date, h]));
   const rows = labels.map((date) => {
     const h = byDate.get(date);
-    const rec = h ? (h.accounts || []).find((a) => a.uid === uid) : null;
+    const list = h ? (h.accounts || []) : [];
+    if (!uid) {
+      let earned = 0, spent = 0, adjust = 0, credits = 0;
+      for (const rec of list) {
+        earned += Number(rec.earned || 0);
+        spent += Number(rec.spent || 0);
+        adjust += Number(rec.adjust || 0);
+        credits += Number(rec.credits_end || 0);
+      }
+      return { date, earned, spent, adjust, credits };
+    }
+    const rec = list.find((a) => a.uid === uid);
     return {
       date,
       earned: rec ? Number(rec.earned || 0) : 0,
@@ -449,17 +448,52 @@ function accountChartData(payload, uid, days) {
       credits: rec ? Number(rec.credits_end || 0) : 0,
     };
   });
-  let last = null;
-  for (const r of rows) {
-    if (r.credits > 0) last = r.credits;
-    else r.credits = last;
-  }
-  const fallback = acc ? Number(acc.credits || 0) : 0;
-  for (const r of rows) if (r.credits === null) r.credits = fallback;
-  if (rows.length && acc) {
-    rows[rows.length - 1].credits = Number(acc.credits || rows[rows.length - 1].credits || 0);
+  if (rows.length) {
+    const live = uid
+      ? Number((((state.accounts || []).find((a) => a.uid === uid)) || {}).credits || 0)
+      : Number(state.totalCredits || 0);
+    rows[rows.length - 1].credits = live;
   }
   return { labels, rows };
+}
+
+// renderSeriesLegend 画图例（颜色 + 名称 + 该线读哪个轴）。
+function renderSeriesLegend(host) {
+  if (!host) return;
+  host.replaceChildren(...CREDIT_SERIES.map((s) => el('span', {}, [
+    el('span', { class: 'swatch', attrs: { style: 'background:' + s.color } }),
+    el('span', { text: s.name + (s.axis === 'left' ? '（左轴）' : '（右轴）') }),
+  ])));
+}
+
+// chartSeriesValues 把 rows 摊成 drawLineChart 需要的 series 数组。
+function chartSeriesValues(rows) {
+  return CREDIT_SERIES.map((s) => ({
+    name: s.name,
+    color: s.color,
+    axis: s.axis,
+    values: rows.map((r) => r[s.key]),
+  }));
+}
+
+// renderOverviewChart 概览「积分日账本」曲线：整池 4 条线，7/15/30 天可切换。
+function renderOverviewChart() {
+  const days = state.overviewDays || 7;
+  $$('#overviewRange button').forEach((b) => {
+    b.classList.toggle('active', Number(b.dataset.days) === days);
+  });
+  const daysLabel = $('#overviewChartDays');
+  if (daysLabel) daysLabel.textContent = String(days);
+  renderSeriesLegend($('#overviewChartLegend'));
+
+  const { labels, rows } = chartRows(state.creditDaily, days, null);
+  const hint = $('#overviewChartHint');
+  if (hint) {
+    hint.textContent = labels.length
+      ? (labels[0] + ' ~ ' + labels[labels.length - 1] + '（' + labels.length + ' 天）')
+      : '';
+  }
+  drawLineChart($('#overviewChart'), labels, chartSeriesValues(rows));
 }
 
 // renderCreditChart 用当前缓存的账本数据 + 当前区间重画弹窗内容。
@@ -471,21 +505,13 @@ function renderCreditChart() {
     b.classList.toggle('active', Number(b.dataset.days) === days);
   });
   // 图例（名称 + 该线读哪个轴）
-  $('#creditModalLegend').replaceChildren(...CREDIT_SERIES.map((s) => el('span', {}, [
-    el('span', { class: 'swatch', attrs: { style: 'background:' + s.color } }),
-    el('span', { text: s.name + (s.axis === 'left' ? '（左轴）' : '（右轴）') }),
-  ])));
+  renderSeriesLegend($('#creditModalLegend'));
 
-  const { labels, rows } = accountChartData(state.creditDaily, uid, days);
+  const { labels, rows } = chartRows(state.creditDaily, days, uid);
   $('#creditModalHint').textContent = labels.length
     ? (labels[0] + ' ~ ' + labels[labels.length - 1] + '（' + labels.length + ' 天）')
     : '';
-  drawLineChart($('#creditModalChart'), labels, CREDIT_SERIES.map((s) => ({
-    name: s.name,
-    color: s.color,
-    axis: s.axis,
-    values: rows.map((r) => r[s.key]),
-  })));
+  drawLineChart($('#creditModalChart'), labels, chartSeriesValues(rows));
 }
 
 // openCreditChart 打开某账号的积分曲线弹窗（默认近 7 天）。
@@ -1669,6 +1695,14 @@ function bind() {
     b.addEventListener('click', () => {
       state.chartDays = Number(b.dataset.days) || 7;
       renderCreditChart();
+    });
+  });
+
+  // 概览「积分日账本」曲线的区间切换（7 / 15 / 30 天）
+  $$('#overviewRange button').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.overviewDays = Number(b.dataset.days) || 7;
+      renderOverviewChart();
     });
   });
 

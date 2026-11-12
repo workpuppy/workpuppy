@@ -180,13 +180,14 @@ func TestAccountCreditChartWiring(t *testing.T) {
 			t.Errorf("入口页缺少 %s（积分曲线弹窗/区间按钮）", want)
 		}
 	}
-	// 概览：4 个积分总计卡片 + 网关状态默认折叠。
+	// 概览：整池积分曲线（原日账本表格已改为折线图）+ 4 个总计卡片 + 网关状态默认折叠。
 	for _, want := range []string{
 		`id="kpiCredits"`, `id="kpiEarned"`, `id="kpiSpent"`, `id="kpiAdjust"`,
+		`id="overviewChart"`, `id="overviewChartLegend"`, `id="overviewRange"`,
 		`data-bs-target="#statusRawWrap"`, `id="statusRawWrap"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("入口页缺少 %s（积分总计卡片/网关状态折叠）", want)
+			t.Errorf("入口页缺少 %s（积分总计卡片/概览曲线/网关状态折叠）", want)
 		}
 	}
 	// 顺序：积分日账本在网关状态上方。
@@ -223,7 +224,8 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
 	for _, want := range []string{
-		"data-chart-uid", "openCreditChart", "drawLineChart", "accountChartData", "dayLabels", "CREDIT_SERIES",
+		"data-chart-uid", "openCreditChart", "drawLineChart", "chartRows", "dayLabels", "CREDIT_SERIES",
+		"renderOverviewChart", "renderSeriesLegend",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("app.js 缺少 %s（积分曲线/缺失日期补 0）", want)

@@ -318,28 +318,28 @@
             </div></div></div>
           </div>
           <div class="card" id="creditCard">
-            <div class="card-header d-flex justify-content-between align-items-center">
-              <h3 class="card-title">积分日账本 <span class="text-body-secondary small fw-normal">（今日 · 近 30 天）</span></h3>
-              <button class="btn btn-outline-secondary btn-sm" id="btnCreditRefresh">
-                <svg class="wp-ico" aria-hidden="true"><use href="#ti-refresh"/></svg>刷新
-              </button>
+            <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
+              <h3 class="card-title">积分日账本（近 <span id="overviewChartDays">7</span> 天）</h3>
+              <div class="d-flex gap-2 align-items-center">
+                <div class="btn-group btn-group-sm" role="group" id="overviewRange" aria-label="时间区间">
+                  <button type="button" class="btn btn-outline-secondary active" data-days="7">近 7 天</button>
+                  <button type="button" class="btn btn-outline-secondary" data-days="15">近 15 天</button>
+                  <button type="button" class="btn btn-outline-secondary" data-days="30">近 30 天</button>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" id="btnCreditRefresh">
+                  <svg class="wp-ico" aria-hidden="true"><use href="#ti-refresh"/></svg>刷新
+                </button>
+              </div>
             </div>
             <div class="card-body pt-2">
               <div class="small text-body-secondary mb-2" id="creditToday">加载中…</div>
-              <div class="table-responsive">
-                <table class="table table-sm table-borderless align-middle mb-0">
-                  <thead>
-                    <tr class="small text-body-secondary">
-                      <th>日期</th><th class="text-end">赚</th><th class="text-end">花</th>
-                      <th class="text-end">调整</th><th class="text-end">净变化</th><th class="text-end">账号数</th>
-                    </tr>
-                  </thead>
-                  <tbody id="creditBody"></tbody>
-                </table>
-              </div>
+              <div class="credit-legend small mb-2" id="overviewChartLegend"></div>
+              <div class="credit-chart-host" id="overviewChart"></div>
+              <div class="small text-body-secondary mt-1" id="overviewChartHint"></div>
               <div class="small text-body-secondary mt-2">
-                口径：赚=签到/活动带来的余额增加；花=每次请求的真实扣费；调整=非请求的余额减少（积分过期/上游回收）。
-                点「账号」页每行第一列的 UID 可看该号近 7/15/30 天曲线。
+                口径：整池按天汇总——<strong>日终总积分</strong>=当天各账号日末余额之和（今天用实时余额）；
+                <strong>获得 / 消耗 / 调整</strong>=当天各账号之和。区间内没有记录的日期一律按 0 画。
+                点「账号」页每行第一列的昵称可看单号同口径曲线。
               </div>
             </div>
           </div>
