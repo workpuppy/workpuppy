@@ -336,7 +336,7 @@
               <div class="small text-body-secondary mt-2">
                 口径：整池按天汇总——<strong>日终总积分</strong>=当天各账号日末余额之和（今天用实时余额）；
                 <strong>获得 / 消耗 / 调整</strong>=当天各账号之和。区间内没有记录的日期一律按 0 画。
-                纵轴按对数压缩（log1p）绘制，刻度与 tooltip 仍是原始积分。
+                四条线共用一根对数轴（log1p 压缩）并堆叠：余额压在最上层，堆叠顶端 = 当天「余额 + 当日流水」；刻度与 tooltip 仍是原始积分。
                 点「账号」页每行第一列的昵称可看单号同口径曲线。
               </div>
             </div>
@@ -599,9 +599,9 @@
         </div>
         <div class="credit-chart-host credit-chart-modal" id="creditModalChart"></div>
         <div class="small text-body-secondary mt-2">
-          口径：<strong>日终总积分</strong>读左轴（当日最后一次权威回写的余额，折线）；<strong>获得 / 消耗 / 调整</strong>读右轴（当日累计值，堆叠面积）。
+          口径：四条线共用一根对数轴（log1p 压缩）并堆叠——三条当日流水在下，<strong>日终总积分</strong>（当日最后一次权威回写的余额）作为最上层压顶，堆叠顶端 = 当天「余额 + 当日流水」。
           某日没有任何记录时四条线一律按 0 计；只有「今天」这一点用实时余额（账号当前积分 / 整池当前总积分）。
-          纵轴按对数压缩（log1p）绘制，刻度与 tooltip 仍是原始积分。
+          刻度与 tooltip 仍显示原始积分。
         </div>
       </div>
     </div>

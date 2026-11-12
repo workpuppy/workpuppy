@@ -357,33 +357,37 @@ function creditChartOption(labels, rows) {
     // 刻度值是对数空间的，显示时还原成原始积分（否则会出现 8.15 这种刻度）
     axisLabel: { color: t.text, fontSize: 11, hideOverlap: true, formatter: (v) => fmtAxis(invLog(v)) },
   };
-  const credits = rows.map((r) => r.credits);
-  const flowSeries = CREDIT_SERIES.filter((s) => s.flow);
+  // 堆叠顺序：三条当日流水在下（量级相近，叠在一起看得出结构），日终余额作为最上面
+  // 的一段压顶。为什么余额放最后：放最下的话（对数下它最大）会把三条流水挤成 1% 的
+  // 细线，等于把它们藏起来。
+  const stackOrder = [...CREDIT_SERIES.filter((s) => s.flow), CREDIT_SERIES[0]];
 
-  // 每天三条流水的累计（原始值）→ 取对数后做差，作为各段 stack 的高度：
-  //   Δ₁ = log1p(获得)、Δ₂ = log1p(获得+消耗) − log1p(获得)、…
-  // 这样 stack 顶端 = log1p(当天总流水)，轴标签反解出来就是真实总流水。
-  const flowDeltas = flowSeries.map(() => []);
-  const flowTotals = [];
+  // 四条线全部进同一个堆叠：喂给 ECharts 的是「累计值的对数差」——
+  //   Δ₁ = log1p(获得)
+  //   Δ₂ = log1p(获得+消耗) − log1p(获得)
+  //   Δ₃ = log1p(前两项+调整) − log1p(前两项)
+  //   Δ₄ = log1p(四项合计) − log1p(前三项)
+  // 于是 stack 顶端 = log1p(当天"余额 + 当日流水")，轴标签反解出来是真实的整数，
+  // 而不是把对数直接相加得到的"乘积"（早期版本 b 端因此印出过 327 万）。
+  const seriesData = new Map(stackOrder.map((s) => [s.key, []]));
+  const totals = [];
   rows.forEach((r) => {
     let cum = 0;
     let prevLog = 0;
-    flowSeries.forEach((s, k) => {
+    stackOrder.forEach((s) => {
       cum += Math.max(0, Number(r[s.key]) || 0);
       const curLog = logData(cum);
-      flowDeltas[k].push(curLog - prevLog);
+      seriesData.get(s.key).push(curLog - prevLog);
       prevLog = curLog;
     });
-    flowTotals.push(cum);
+    totals.push(cum);
   });
-
-  const leftAxis = logAxis(credits.reduce((m, v) => Math.max(m, logData(v)), 0));
-  const rightAxis = logAxis(flowTotals.reduce((m, v) => Math.max(m, logData(v)), 0));
+  const axis = logAxis(totals.reduce((m, v) => Math.max(m, logData(v)), 0));
 
   return {
     animationDuration: 280,
     textStyle: { fontFamily: 'inherit' },
-    grid: { left: 4, right: 4, top: 34, bottom: 2, containLabel: true },
+    grid: { left: 8, right: 16, top: 34, bottom: 2, containLabel: true },
     legend: {
       top: 0, left: 0, itemWidth: 10, itemHeight: 10, icon: 'roundRect',
       textStyle: { color: t.text, fontSize: 11 },
@@ -418,41 +422,25 @@ function creditChartOption(labels, rows) {
       axisTick: { show: false },
       axisLabel: { color: t.text, fontSize: 11, hideOverlap: true },
     },
-    yAxis: [
-      {
-        type: 'value', min: 0, max: leftAxis.max, interval: leftAxis.interval, position: 'left',
-        splitLine: { lineStyle: { color: t.split } },
-        ...axisCommon,
-      },
-      {
-        type: 'value', min: 0, max: rightAxis.max, interval: rightAxis.interval, position: 'right',
-        splitLine: { show: false },
-        ...axisCommon,
-      },
-    ],
-    series: [
-      {
-        // 存量：左轴折线（不堆叠、不填面积），点少时显示标记点
-        name: CREDIT_SERIES[0].name,
-        type: 'line', yAxisIndex: 0, stack: undefined,
-        smooth: 0.25, symbol: 'circle', symbolSize: 5,
-        showSymbol: labels.length <= 15,
-        lineStyle: { width: 2.4, color: CREDIT_SERIES[0].color },
-        itemStyle: { color: CREDIT_SERIES[0].color },
-        z: 6,
-        data: credits.map(logData),
-      },
-      // 流水：右轴堆叠面积（喂的是"累计对数差"，stack 顶端=总流水的对数）
-      ...flowSeries.map((s, k) => ({
-        name: s.name, type: 'line', yAxisIndex: 1, stack: 'flow',
-        smooth: 0.25, symbol: 'none',
-        lineStyle: { width: 1.2, color: s.color },
-        itemStyle: { color: s.color },
-        areaStyle: { opacity: 0.32, color: s.color },
-        emphasis: { focus: 'series' },
-        data: flowDeltas[k],
-      })),
-    ],
+    yAxis: {
+      type: 'value', min: 0, max: axis.max, interval: axis.interval, position: 'left',
+      splitLine: { lineStyle: { color: t.split } },
+      ...axisCommon,
+    },
+    series: stackOrder.map((s) => ({
+      // 四条线同轴、同一 stack：喂的是"累计对数差"，堆叠顶端 = log1p(余额+当日流水)。
+      // 余额那段用更淡的填充 + 实线，和三条流水区分开。
+      name: s.name,
+      type: 'line', stack: 'credit', smooth: 0.25,
+      symbol: s.flow ? 'none' : 'circle', symbolSize: s.flow ? 0 : 5,
+      showSymbol: !s.flow && labels.length <= 15,
+      lineStyle: { width: s.flow ? 1.2 : 2.2, color: s.color },
+      itemStyle: { color: s.color },
+      areaStyle: { opacity: s.flow ? 0.3 : 0.16, color: s.color },
+      emphasis: { focus: 'series' },
+      z: s.flow ? 2 : 3,
+      data: seriesData.get(s.key),
+    })),
   };
 }
 
