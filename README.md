@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png" alt="WP" width="120">
+  <img src="https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png" alt="WorkPuppy" width="120">
 </p>
 
 # WorkPuppy
@@ -552,7 +552,7 @@ export WP_ADMIN_PASSWORD='你在页面初始化时设置的密码'
 ```mermaid
 flowchart LR
     C["客户端 / SDK\nOpenAI 兼容"] --> H
-    subgraph GW["WP（单进程 :7863）"]
+    subgraph GW["WorkPuppy（单进程 :7863）"]
         H["HTTP Handler\n鉴权 · 提示词改写 · 指纹净化"] --> P
         H --> S
         H --> W["Web 管理后台\nTabler + 原生 JS"]
