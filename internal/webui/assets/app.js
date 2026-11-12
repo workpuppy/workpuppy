@@ -334,15 +334,15 @@ function fmtAxis(v) {
 const logData = (v) => Math.log1p(Math.max(0, Number(v) || 0));
 const invLog = (v) => Math.expm1(Math.max(0, Number(v) || 0));
 
-// chartBaselines 生成"常识基准线"：0 / 10 / 50 / 100 / 500 / 1k / 5k / 1万 / 5万 / 10万 …
-// 即 1×10^k 与 5×10^k 交替（k≥1），最后一条 ≥ 数据最大值（这样顶端刻度总有意义）。
+// chartBaselines 生成"常识基准线"：0 / 10 / 20 / 50 / 100 / 200 / 500 / 1000 / 2000 / 5000 …
+// 即每个数量级取 1×、2×、5× 三档（k≥1），最后一条 ≥ 数据最大值（顶端刻度总有意义）。
 // 为什么不按等分：对数轴上等分出来的刻度是 0/6/54/402/3k 这种"看着像随机数"的值；
-// 用 10/50/100/500/1k/5k… 用户一眼就能定位量级。
+// 1/2/5 阶梯是工程上最顺手的量级参照，10 与 20、200 与 500 之间一眼能定位。
 function chartBaselines(maxRaw) {
   const out = [0];
   for (let k = 1; k <= 12; k++) {
     const p = Math.pow(10, k);
-    for (const m of [1, 5]) {
+    for (const m of [1, 2, 5]) {
       const v = m * p;
       out.push(v);
       if (v >= maxRaw) return out;
@@ -385,8 +385,8 @@ function creditChartOption(labels, rows) {
   // 轴上限 = 最后一条基准线再留 5%（对数空间）：顶端那条基准线就在 max 上，
   // 不留余量的话它的标签会被画布上边缘裁掉（5000 那行曾经看不见）。
   const axisMax = logData(baselines[baselines.length - 1]) * 1.05;
-  // 基准线多于 9 条时标签隔一条显示，避免挤在一起（线照画）。
-  const labelEvery = baselines.length > 9 ? 2 : 1;
+  // 标签过密时才抽稀（1/2/5 阶梯在几千的量级大约 10 条线，正常都能显示全）
+  const labelEvery = baselines.length > 16 ? 2 : 1;
 
   return {
     animationDuration: 280,
