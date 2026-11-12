@@ -43,6 +43,7 @@ func TestAssetsServed(t *testing.T) {
 	cases := map[string]string{
 		"/assets/tabler.min.css":          "text/css",
 		"/assets/bootstrap.bundle.min.js": "javascript",
+		"/assets/echarts.min.js":          "javascript",
 		"/assets/app.js":                  "javascript",
 		"/assets/app.css":                 "text/css",
 	}
@@ -199,7 +200,7 @@ func TestAssetCachePolicy(t *testing.T) {
 	}
 
 	// 框架基础包：保留缓存（不需要回源校验）。
-	for _, path := range []string{"/assets/tabler.min.css", "/assets/bootstrap.bundle.min.js"} {
+	for _, path := range []string{"/assets/tabler.min.css", "/assets/bootstrap.bundle.min.js", "/assets/echarts.min.js"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if w.Code != http.StatusOK {
@@ -268,7 +269,7 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	// 概览：整池积分曲线（原日账本表格已改为折线图）+ 4 个总计卡片 + 网关状态默认折叠。
 	for _, want := range []string{
 		`id="kpiCredits"`, `id="kpiEarned"`, `id="kpiSpent"`, `id="kpiAdjust"`,
-		`id="overviewChart"`, `id="overviewChartLegend"`, `id="overviewRange"`,
+		`id="overviewChart"`, `id="overviewRange"`,
 		`data-bs-target="#statusRawWrap"`, `id="statusRawWrap"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -280,6 +281,15 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	statusAt := strings.Index(html, `id="statusRawWrap"`)
 	if creditAt < 0 || statusAt < 0 || creditAt > statusAt {
 		t.Fatalf("积分日账本应在网关状态上方（credit=%d, status=%d）", creditAt, statusAt)
+	}
+	// ECharts 自托管（CSP 只允许 self，不能引 CDN），且必须在 app.js 之前加载。
+	ecAt := strings.Index(html, "/assets/echarts.min.js")
+	appAt := strings.Index(html, "/assets/app.js")
+	if ecAt < 0 {
+		t.Fatal("入口页缺少 /assets/echarts.min.js（积分曲线依赖）")
+	}
+	if appAt < 0 || ecAt > appAt {
+		t.Fatalf("echarts 必须在 app.js 之前加载（echarts=%d, app=%d）", ecAt, appAt)
 	}
 	// 账号表：昵称在第一列、UID 在第二列（点昵称开曲线），且不再有右对齐列。
 	nickAt := strings.Index(html, "<th>昵称</th>")
@@ -309,8 +319,8 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
 	for _, want := range []string{
-		"data-chart-uid", "openCreditChart", "drawLineChart", "chartRows", "dayLabels", "CREDIT_SERIES",
-		"renderOverviewChart", "renderSeriesLegend",
+		"data-chart-uid", "openCreditChart", "chartRows", "dayLabels", "CREDIT_SERIES",
+		"renderOverviewChart", "renderChart", "creditChartOption", "window.echarts",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("app.js 缺少 %s（积分曲线/缺失日期补 0）", want)
@@ -319,9 +329,10 @@ func TestAccountCreditChartWiring(t *testing.T) {
 
 	css := httptest.NewRecorder()
 	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
-	for _, want := range []string{".credit-chart-host", ".credit-chart", ".credit-legend"} {
+	// ECharts 画在 canvas 上：宿主必须有明确高度，弹窗里给更高一档。
+	for _, want := range []string{".credit-chart-host", ".credit-chart-modal", "height: 320px", "height: 360px"} {
 		if !strings.Contains(css.Body.String(), want) {
-			t.Errorf("app.css 缺少 %s（图表容器/图例）", want)
+			t.Errorf("app.css 缺少 %s（图表容器高度）", want)
 		}
 	}
 	// 表头不换行 + 模型表列宽比例：回归背景是「最大输/出」「积分倍/率」被挤成两行。

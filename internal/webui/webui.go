@@ -45,6 +45,7 @@ var assetsFS embed.FS
 var frameworkAssets = map[string]bool{
 	"tabler.min.css":          true,
 	"bootstrap.bundle.min.js": true,
+	"echarts.min.js":          true,
 }
 
 // etagCache 资源内容哈希缓存：embed.FS 编译期固定，每个文件算一次即可。

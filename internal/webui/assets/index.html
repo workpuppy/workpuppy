@@ -331,7 +331,6 @@
             </div>
             <div class="card-body pt-2">
               <div class="small text-body-secondary mb-2" id="creditToday">加载中…</div>
-              <div class="credit-legend small mb-2" id="overviewChartLegend"></div>
               <div class="credit-chart-host" id="overviewChart"></div>
               <div class="small text-body-secondary mt-1" id="overviewChartHint"></div>
               <div class="small text-body-secondary mt-2">
@@ -597,11 +596,10 @@
           </div>
           <span class="small text-body-secondary ms-auto" id="creditModalHint"></span>
         </div>
-        <div class="credit-legend small mb-2" id="creditModalLegend"></div>
-        <div class="credit-chart-host" id="creditModalChart"></div>
+        <div class="credit-chart-host credit-chart-modal" id="creditModalChart"></div>
         <div class="small text-body-secondary mt-2">
-          口径：<strong>日终总积分</strong>读左轴（当日最后一次权威回写的余额）；<strong>获得 / 消耗 / 调整</strong>读右轴（当日累计次数值）。
-          某日没有任何记录时，获得 / 消耗 / 调整按 0 计，日终总积分沿用上一已知值；窗口内首个已知值之前的日期用当前积分兜底。
+          口径：<strong>日终总积分</strong>读左轴（当日最后一次权威回写的余额，折线）；<strong>获得 / 消耗 / 调整</strong>读右轴（当日累计值，堆叠面积）。
+          某日没有任何记录时四条线一律按 0 计；只有「今天」这一点用实时余额（账号当前积分 / 整池当前总积分）。
         </div>
       </div>
     </div>
@@ -611,6 +609,7 @@
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts"></div>
 
 <script src="/assets/bootstrap.bundle.min.js"></script>
+<script src="/assets/echarts.min.js"></script>
 <script src="/assets/app.js"></script>
 </body>
 </html>

@@ -291,60 +291,17 @@
   pointer-events: none;
 }
 
-/* ── 单账号积分曲线（手写 SVG，无第三方图表库）───────────────────────── */
+/* ── 积分曲线（ECharts：流水堆叠面积 + 余额折线）─────────────────────────
+ * ECharts 自己画在 canvas 上，宿主必须有明确高度（宽度铺满），否则 init 时高度为 0
+ * 会画不出来；配色由 app.js 的 chartTheme() 按当前主题给。 */
 .credit-chart-host {
   width: 100%;
-  min-height: 200px;
+  height: 320px;
 }
 
-/* viewBox 固定比例，宽度铺满，高度按比例缩放（不拉伸文字）。 */
-.credit-chart {
-  width: 100%;
-  height: auto;
-  display: block;
-  overflow: visible;
-}
-
-/* 网格线与坐标轴文字统一用 currentColor 的弱化色，深浅色主题都读得清。 */
-.credit-chart .grid {
-  stroke: currentColor;
-  stroke-opacity: 0.15;
-  stroke-width: 1;
-}
-
-.credit-chart .axis-label,
-.credit-chart .x-label {
-  fill: currentColor;
-  font-size: 11px;
-  opacity: 0.7;
-}
-
-.credit-chart .series-line {
-  fill: none;
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
-
-.credit-chart .series-dot {
-  stroke: var(--tblr-bg-surface, #fff);
-  stroke-width: 1.2;
-}
-
-/* 图例：色块 + 名称（名称后标注该线读哪个轴）。 */
-.credit-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-}
-
-.credit-legend .swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  margin-right: 4px;
-  vertical-align: baseline;
+/* 弹窗里的图给高一点：模态框本身更宽，横向留白少。 */
+.credit-chart-modal {
+  height: 360px;
 }
 
 /* 账号表第一列（昵称）是可点的：给个手型与悬停反馈，暗示"能点开曲线"。 */

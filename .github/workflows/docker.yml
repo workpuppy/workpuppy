@@ -229,6 +229,7 @@ jobs:
           for spec in \
             /assets/tabler.min.css:100000 \
             /assets/bootstrap.bundle.min.js:50000 \
+            /assets/echarts.min.js:500000 \
             /assets/app.js:10000 \
             /assets/app.css:5000; do
             asset_path="${spec%%:*}"

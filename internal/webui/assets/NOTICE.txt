@@ -16,6 +16,14 @@ bootstrap.bundle.min.js
   版权：Copyright (c) 2011-2024 The Bootstrap Authors
         Copyright (c) 2011-2024 Twitter, Inc.
 
+echarts.min.js
+  Apache ECharts v5.6.0 — https://echarts.apache.org/
+  来源：https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js
+  用途：概览与单账号的积分曲线（堆叠面积图 + 折线），文件头保留其 Apache-2.0 许可声明
+  许可：Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0
+  版权：Copyright 2017-2026 The Apache Software Foundation
+        Copyright 2017-2026 The ECharts Authors
+
 Tabler Icons（内联 SVG，无独立文件）
   https://tabler.io/icons/ — 图标取自 @tabler/icons 3.x 的 outline 集
   许可：MIT License

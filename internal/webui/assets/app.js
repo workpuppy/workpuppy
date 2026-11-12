@@ -279,27 +279,39 @@ async function loadCredits() {
   }
 }
 
-// ── 单账号积分曲线（弹窗 + 手写 SVG 折线图）──────────────────────────────
+// ── 积分曲线（ECharts：流水堆叠面积 + 余额折线）────────────────────────────
 // 数据源：GET /admin/credit-daily?days=30 —— histories[] 已按天给出**每账号**
 // earned/spent/adjust/credits_end，所以 7/15/30 天只是同一份数据切片，不需要额外接口。
-// 为什么手写 SVG：CSP 是 `default-src 'self'`，引不了任何 CDN 图表库，而这套后台
-// 刻意不设构建步骤（见 app.css 头注释），自己画四十行比塞一个库更省事。
+//
+// 为什么用 ECharts：CSP 是 `default-src 'self'`（引不了 CDN），所以把 echarts.min.js
+// 原样 vendored 进本目录（见 NOTICE.txt、internal/webui/webui.go 的 frameworkAssets），
+// 从 /assets 自托管；仍然没有 npm/构建步骤这一层。
+// 为什么「堆叠」：当日获得 / 消耗 / 调整都是**当天流水**，量级相近，堆叠面积能直接看出
+// 结构与总量；「日终总积分」是存量、比流水大一个数量级，单独走左轴折线、不参与堆叠。
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-// 四条固定序列（颜色/名称/读哪个轴）。颜色选 Bootstrap 语义色的实色值：
-// 深浅色主题下都够对比度，且不依赖 CSS 变量（SVG 属性拿不到 --bs-* 的解析值）。
+// 四条序列的语义（ax 字段决定挂哪个轴；flow=true 的按栈叠加）。
 const CREDIT_SERIES = [
-  { key: 'credits', name: '日终总积分', color: '#0d6efd', axis: 'left' },
-  { key: 'earned', name: '当日获得', color: '#198754', axis: 'right' },
-  { key: 'spent', name: '当日消耗', color: '#dc3545', axis: 'right' },
-  { key: 'adjust', name: '当日调整', color: '#fd7e14', axis: 'right' },
+  { key: 'credits', name: '日终总积分', color: '#206bc4', ax: 'left' },
+  { key: 'earned', name: '当日获得', color: '#2fb344', ax: 'right', flow: true },
+  { key: 'spent', name: '当日消耗', color: '#d63939', ax: 'right', flow: true },
+  { key: 'adjust', name: '当日调整', color: '#f59f00', ax: 'right', flow: true },
 ];
 
-function svgNode(tag, attrs = {}) {
-  const n = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
-  return n;
+// chartInstances 每个宿主一个 ECharts 实例（切区间/切主题复用，不重复 init）。
+const chartInstances = new Map();
+
+// chartTheme 从当前主题取一套配色：ECharts 画在 canvas 上，拿不到 CSS 变量，
+// 只能读 dataset.bsTheme 自己给色值（深浅两套）。
+function chartTheme() {
+  const dark = document.documentElement.dataset.bsTheme === 'dark';
+  return {
+    text: dark ? '#9aa4b2' : '#667382',
+    axis: dark ? '#39424e' : '#e6e7e9',
+    split: dark ? 'rgba(255,255,255,.07)' : 'rgba(24,36,51,.08)',
+    tooltipBg: dark ? 'rgba(24,32,44,.96)' : 'rgba(255,255,255,.98)',
+    tooltipText: dark ? '#e6eaf0' : '#182433',
+    tooltipBorder: dark ? '#39424e' : '#e6e7e9',
+  };
 }
 
 // fmtAxis 坐标轴刻度用的紧凑数字（12000 → 1.2万，3400 → 3.4k）。
@@ -310,94 +322,120 @@ function fmtAxis(v) {
   return String(Math.round(v));
 }
 
-// niceMax 把轴上限向上取整到 1/2/5×10^k：刻度才会是 250/500/1250 这种整数，
-// 而不是 103/205/308（410 的四个等分）那种看着像随机数的值。
-function niceMax(v) {
-  if (!(v > 0)) return 1;
-  const exp = Math.pow(10, Math.floor(Math.log10(v)));
-  const n = v / exp;
-  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
-  return step * exp;
+// creditChartOption 组装 ECharts option：左轴余额折线 + 右轴三条流水堆叠面积。
+function creditChartOption(labels, rows) {
+  const t = chartTheme();
+  const axisCommon = {
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { color: t.text, fontSize: 11, hideOverlap: true, formatter: fmtAxis },
+  };
+  return {
+    animationDuration: 280,
+    textStyle: { fontFamily: 'inherit' },
+    grid: { left: 4, right: 4, top: 34, bottom: 2, containLabel: true },
+    legend: {
+      top: 0, left: 0, itemWidth: 10, itemHeight: 10, icon: 'roundRect',
+      textStyle: { color: t.text, fontSize: 11 },
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: t.tooltipBg,
+      borderColor: t.tooltipBorder,
+      textStyle: { color: t.tooltipText, fontSize: 12 },
+      axisPointer: { type: 'line', lineStyle: { color: t.axis } },
+      // 余额与三条流水量级差一个数量级，用千分位 + 单位让读数一眼可比。
+      valueFormatter: (v) => fmtNum(v),
+    },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: labels.map((d) => String(d).slice(5)), // 2026-11-12 → 11-12
+      axisLine: { lineStyle: { color: t.axis } },
+      axisTick: { show: false },
+      axisLabel: { color: t.text, fontSize: 11, hideOverlap: true },
+    },
+    yAxis: [
+      {
+        type: 'value', min: 0, position: 'left',
+        splitLine: { lineStyle: { color: t.split } },
+        ...axisCommon,
+      },
+      {
+        type: 'value', min: 0, position: 'right',
+        splitLine: { show: false },
+        ...axisCommon,
+      },
+    ],
+    series: [
+      {
+        // 存量：左轴折线（不堆叠、不填面积），点少时显示标记点
+        name: CREDIT_SERIES[0].name,
+        type: 'line', yAxisIndex: 0, stack: undefined,
+        smooth: 0.25, symbol: 'circle', symbolSize: 5,
+        showSymbol: labels.length <= 15,
+        lineStyle: { width: 2.4, color: CREDIT_SERIES[0].color },
+        itemStyle: { color: CREDIT_SERIES[0].color },
+        z: 6,
+        data: rows.map((r) => r.credits),
+      },
+      // 流水：右轴堆叠面积（同一 stack 名 → 叠在一起，面积半透明）
+      ...CREDIT_SERIES.filter((s) => s.flow).map((s) => ({
+        name: s.name, type: 'line', yAxisIndex: 1, stack: 'flow',
+        smooth: 0.25, symbol: 'none',
+        lineStyle: { width: 1.2, color: s.color },
+        itemStyle: { color: s.color },
+        areaStyle: { opacity: 0.32, color: s.color },
+        emphasis: { focus: 'series' },
+        data: rows.map((r) => r[s.key]),
+      })),
+    ],
+  };
 }
 
-// drawLineChart 双 Y 轴折线图：left 轴给量级大的余额，right 轴给当日增减。
-// labels 与每个 series.values 等长且已按时间升序。
-function drawLineChart(host, labels, series) {
-  host.replaceChildren();
+// renderChart 把数据画进指定宿主（概览/弹窗共用）。重复调用复用实例、整份替换 option。
+function renderChart(hostId, labels, rows) {
+  const host = document.getElementById(hostId);
+  if (!host || !window.echarts) return;
+  let inst = chartInstances.get(hostId);
+  if (!inst || inst.isDisposed()) {
+    inst = window.echarts.init(host, null, { renderer: 'canvas' });
+    chartInstances.set(hostId, inst);
+  }
   if (!labels.length) {
-    host.appendChild(el('div', { class: 'text-body-secondary small py-5 text-center', text: '该区间没有账本数据' }));
+    inst.clear();
     return;
   }
-
-  const W = 900, H = 320;
-  const padL = 58, padR = 58, padT = 14, padB = 36;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
-  const svg = svgNode('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'credit-chart', role: 'img' });
-
-  const leftVals = series.filter((s) => s.axis === 'left').flatMap((s) => s.values);
-  const rightVals = series.filter((s) => s.axis !== 'left').flatMap((s) => s.values);
-  const maxOf = (vals) => vals.reduce((m, v) => Math.max(m, Number(v) || 0), 0);
-  // 全 0（例如新号、区间内没有任何记录）时给 1，避免除零。
-  const maxL = niceMax(maxOf(leftVals));
-  const maxR = niceMax(maxOf(rightVals));
-
-  const xAt = (i) => (labels.length === 1 ? padL + plotW / 2 : padL + (plotW * i) / (labels.length - 1));
-  const yAt = (v, max) => padT + plotH - (Math.max(0, Number(v) || 0) / max) * plotH;
-
-  // 网格 + 双轴刻度（5 条横线：0 / ¼ / ½ / ¾ / 满）。
-  for (let k = 0; k <= 4; k++) {
-    const ratio = k / 4;
-    const y = padT + plotH * (1 - ratio);
-    svg.appendChild(svgNode('line', { class: 'grid', x1: padL, x2: padL + plotW, y1: y, y2: y }));
-    const lv = svgNode('text', { class: 'axis-label', x: padL - 8, y: y + 4, 'text-anchor': 'end' });
-    lv.textContent = fmtAxis(maxL * ratio);
-    svg.appendChild(lv);
-    const rv = svgNode('text', { class: 'axis-label', x: padL + plotW + 8, y: y + 4, 'text-anchor': 'start' });
-    rv.textContent = fmtAxis(maxR * ratio);
-    svg.appendChild(rv);
-  }
-
-  // X 轴：最多 8 个日期标签，首尾必显示（其余按步长抽稀，避免 30 天挤成一团）。
-  // 靠近末尾的抽稀标签要跳过，否则会和"最后一天"的标签叠在一起（30 天档踩过）。
-  const step = Math.max(1, Math.ceil(labels.length / 8));
-  const minGap = Math.max(1, Math.round(step / 2));
-  labels.forEach((lab, i) => {
-    const last = labels.length - 1;
-    if (i !== last && (i % step !== 0 || last - i < minGap)) return;
-    const t = svgNode('text', { class: 'x-label', x: xAt(i), y: padT + plotH + 20, 'text-anchor': 'middle' });
-    t.textContent = String(lab).slice(5); // 2026-11-10 → 11-10
-    svg.appendChild(t);
+  inst.setOption(creditChartOption(labels, rows), true);
+  // 宿主可能刚被显示（弹窗动画/切页签）且尺寸还是 0：下一帧补一次 resize。
+  requestAnimationFrame(() => {
+    try { inst.resize(); } catch { /* 实例已销毁 */ }
   });
-
-  // 曲线 + 数据点（点带 <title>，鼠标悬停即读数）。点多了缩小半径，避免连成一条白带。
-  const dotR = labels.length > 15 ? 1.8 : 2.8;
-  for (const s of series) {
-    const max = s.axis === 'left' ? maxL : maxR;
-    const pts = s.values.map((v, i) => xAt(i) + ',' + yAt(v, max));
-    svg.appendChild(svgNode('polyline', {
-      class: 'series-line', points: pts.join(' '), stroke: s.color,
-    }));
-    s.values.forEach((v, i) => {
-      const dot = svgNode('circle', {
-        class: 'series-dot', cx: xAt(i), cy: yAt(v, max), r: dotR, fill: s.color,
-      });
-      const tip = svgNode('title', {});
-      tip.textContent = labels[i] + ' · ' + s.name + '：' + fmtNum(v);
-      dot.appendChild(tip);
-      svg.appendChild(dot);
-    });
-  }
-
-  host.appendChild(svg);
-  host.appendChild(el('div', {
-    class: 'd-flex justify-content-between small text-body-secondary mt-1',
-    // 轴标签只在图内，这里再给一句人话，免得看左轴/右轴搞混。
-  }, [
-    el('span', { text: '左轴：日终总积分' }),
-    el('span', { text: '右轴：当日获得 / 消耗 / 调整' }),
-  ]));
 }
+
+// resizeCharts 窗口尺寸或容器显隐变化时同步（ECharts 不会自动跟随 DOM 尺寸）。
+function resizeCharts() {
+  for (const inst of chartInstances.values()) {
+    try { inst.resize(); } catch { /* 实例已销毁 */ }
+  }
+}
+
+// refreshCharts 主题切换后重画（canvas 上的配色不会跟着 CSS 变）：用缓存数据按当前
+// 区间重建两个图，避免出现"深色底 + 浅色文字"的残影。
+function refreshCharts() {
+  if (!state.creditDaily) return;
+  if (document.getElementById('overviewChart')) {
+    const { labels, rows } = chartRows(state.creditDaily, state.overviewDays || 7, null);
+    renderChart('overviewChart', labels, rows);
+  }
+  const modal = document.getElementById('creditChartModal');
+  if (state.chartUID && modal && modal.classList.contains('show')) {
+    const { labels, rows } = chartRows(state.creditDaily, state.chartDays || 7, state.chartUID);
+    renderChart('creditModalChart', labels, rows);
+  }
+}
+
+
 
 // dayLabels 生成"今天往前 days 天"的完整日期序列（升序，yyyy-mm-dd）。
 // 为什么要自己铺日历：需求是「没有积分的日期按 0 处理」——只画账本里存在的日期
@@ -457,26 +495,7 @@ function chartRows(payload, days, uid) {
   return { labels, rows };
 }
 
-// renderSeriesLegend 画图例（颜色 + 名称 + 该线读哪个轴）。
-function renderSeriesLegend(host) {
-  if (!host) return;
-  host.replaceChildren(...CREDIT_SERIES.map((s) => el('span', {}, [
-    el('span', { class: 'swatch', attrs: { style: 'background:' + s.color } }),
-    el('span', { text: s.name + (s.axis === 'left' ? '（左轴）' : '（右轴）') }),
-  ])));
-}
-
-// chartSeriesValues 把 rows 摊成 drawLineChart 需要的 series 数组。
-function chartSeriesValues(rows) {
-  return CREDIT_SERIES.map((s) => ({
-    name: s.name,
-    color: s.color,
-    axis: s.axis,
-    values: rows.map((r) => r[s.key]),
-  }));
-}
-
-// renderOverviewChart 概览「积分日账本」曲线：整池 4 条线，7/15/30 天可切换。
+// renderOverviewChart 概览「积分日账本」曲线：整池流水堆叠面积 + 余额折线，7/15/30 可切换。
 function renderOverviewChart() {
   const days = state.overviewDays || 7;
   $$('#overviewRange button').forEach((b) => {
@@ -484,7 +503,6 @@ function renderOverviewChart() {
   });
   const daysLabel = $('#overviewChartDays');
   if (daysLabel) daysLabel.textContent = String(days);
-  renderSeriesLegend($('#overviewChartLegend'));
 
   const { labels, rows } = chartRows(state.creditDaily, days, null);
   const hint = $('#overviewChartHint');
@@ -493,7 +511,7 @@ function renderOverviewChart() {
       ? (labels[0] + ' ~ ' + labels[labels.length - 1] + '（' + labels.length + ' 天）')
       : '';
   }
-  drawLineChart($('#overviewChart'), labels, chartSeriesValues(rows));
+  renderChart('overviewChart', labels, rows);
 }
 
 // renderCreditChart 用当前缓存的账本数据 + 当前区间重画弹窗内容。
@@ -504,14 +522,11 @@ function renderCreditChart() {
   $$('#creditModalRange button').forEach((b) => {
     b.classList.toggle('active', Number(b.dataset.days) === days);
   });
-  // 图例（名称 + 该线读哪个轴）
-  renderSeriesLegend($('#creditModalLegend'));
-
   const { labels, rows } = chartRows(state.creditDaily, days, uid);
   $('#creditModalHint').textContent = labels.length
     ? (labels[0] + ' ~ ' + labels[labels.length - 1] + '（' + labels.length + ' 天）')
     : '';
-  drawLineChart($('#creditModalChart'), labels, chartSeriesValues(rows));
+  renderChart('creditModalChart', labels, rows);
 }
 
 // openCreditChart 打开某账号的积分曲线弹窗（默认近 7 天）。
@@ -985,6 +1000,8 @@ function stopAuthPoll() {
 function applyTheme(theme) {
   document.documentElement.dataset.bsTheme = theme;
   localStorage.setItem(THEME_STORE, theme);
+  // ECharts 画在 canvas 上，配色不跟随 CSS：主题切换后按新主题重画（数据取缓存）。
+  refreshCharts();
 }
 
 // ── 首次初始化 / 设置页 ─────────────────────────────────────
@@ -1671,6 +1688,11 @@ function bind() {
   const toggleTheme = () => applyTheme(document.documentElement.dataset.bsTheme === 'dark' ? 'light' : 'dark');
   $('#btnTheme').addEventListener('click', toggleTheme);
   $('#btnThemeLogin').addEventListener('click', toggleTheme);
+
+  // ECharts 不会自动跟随容器尺寸：窗口缩放、弹窗展开（容器从 display:none 变可见）都要手动 resize。
+  window.addEventListener('resize', () => resizeCharts());
+  const chartModal = $('#creditChartModal');
+  if (chartModal) chartModal.addEventListener('shown.bs.modal', () => resizeCharts());
 
   $('#btnRefreshStatus').addEventListener('click', loadStatus);
   $('#btnRefreshAccounts').addEventListener('click', loadAccounts);
