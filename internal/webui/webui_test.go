@@ -321,8 +321,9 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	for _, want := range []string{
 		"data-chart-uid", "openCreditChart", "chartRows", "dayLabels", "CREDIT_SERIES",
 		"renderOverviewChart", "renderChart", "creditChartOption", "window.echarts",
-		// 对数压缩：喂 log1p、轴刻度与 tooltip 用 invLog 还原原始积分
-		"logData", "invLog", "logAxis",
+		// 对数压缩：喂 log1p、轴刻度与 tooltip 用 invLog 还原原始积分；
+		// 基准线走"常识刻度"（0/10/50/100/500/1k/5k/1万…）而不是等分
+		"logData", "invLog", "chartBaselines", "markLine",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("app.js 缺少 %s（积分曲线/缺失日期补 0）", want)

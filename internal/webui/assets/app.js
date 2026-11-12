@@ -334,29 +334,27 @@ function fmtAxis(v) {
 const logData = (v) => Math.log1p(Math.max(0, Number(v) || 0));
 const invLog = (v) => Math.expm1(Math.max(0, Number(v) || 0));
 
-// logAxis 在"对数空间"里挑一个整数步长，保证刻度不超过 6 段（否则标签会挤）。
-// 刻度位置是对数量（0,2,4…），axisLabel 再用 invLog 还原成原始积分。
-function logAxis(maxLog) {
-  const m = maxLog || 0;
-  for (const step of [1, 2, 3, 4, 5, 10]) {
-    if (Math.ceil(m / step) <= 6) {
-      return { interval: step, max: Math.max(step, Math.ceil(m / step) * step) };
+// chartBaselines 生成"常识基准线"：0 / 10 / 50 / 100 / 500 / 1k / 5k / 1万 / 5万 / 10万 …
+// 即 1×10^k 与 5×10^k 交替（k≥1），最后一条 ≥ 数据最大值（这样顶端刻度总有意义）。
+// 为什么不按等分：对数轴上等分出来的刻度是 0/6/54/402/3k 这种"看着像随机数"的值；
+// 用 10/50/100/500/1k/5k… 用户一眼就能定位量级。
+function chartBaselines(maxRaw) {
+  const out = [0];
+  for (let k = 1; k <= 12; k++) {
+    const p = Math.pow(10, k);
+    for (const m of [1, 5]) {
+      const v = m * p;
+      out.push(v);
+      if (v >= maxRaw) return out;
     }
   }
-  const step = Math.ceil(m / 6);
-  return { interval: step, max: Math.ceil(m / step) * step };
+  return out;
 }
 
-// creditChartOption 组装 ECharts option：左轴余额折线 + 右轴三条流水堆叠面积。
-// 数据是 log1p 压缩后的量；轴标签 / tooltip 用 invLog 还原成原始积分。
+// creditChartOption 组装 ECharts option：四条线同轴堆叠（对数压缩）。
+// 轴刻度不用 ECharts 的等分，而是画在"常识基准线"上（markLine），标签是原始积分。
 function creditChartOption(labels, rows) {
   const t = chartTheme();
-  const axisCommon = {
-    axisLine: { show: false },
-    axisTick: { show: false },
-    // 刻度值是对数空间的，显示时还原成原始积分（否则会出现 8.15 这种刻度）
-    axisLabel: { color: t.text, fontSize: 11, hideOverlap: true, formatter: (v) => fmtAxis(invLog(v)) },
-  };
   // 堆叠顺序：三条当日流水在下（量级相近，叠在一起看得出结构），日终余额作为最上面
   // 的一段压顶。为什么余额放最后：放最下的话（对数下它最大）会把三条流水挤成 1% 的
   // 细线，等于把它们藏起来。
@@ -382,12 +380,19 @@ function creditChartOption(labels, rows) {
     });
     totals.push(cum);
   });
-  const axis = logAxis(totals.reduce((m, v) => Math.max(m, logData(v)), 0));
+  const maxTotal = totals.reduce((m, v) => Math.max(m, v), 0);
+  const baselines = chartBaselines(maxTotal);
+  // 轴上限 = 最后一条基准线再留 5%（对数空间）：顶端那条基准线就在 max 上，
+  // 不留余量的话它的标签会被画布上边缘裁掉（5000 那行曾经看不见）。
+  const axisMax = logData(baselines[baselines.length - 1]) * 1.05;
+  // 基准线多于 9 条时标签隔一条显示，避免挤在一起（线照画）。
+  const labelEvery = baselines.length > 9 ? 2 : 1;
 
   return {
     animationDuration: 280,
     textStyle: { fontFamily: 'inherit' },
-    grid: { left: 8, right: 16, top: 34, bottom: 2, containLabel: true },
+    // 右侧留出基准线标签的宽度（标签挂在线的末端）
+    grid: { left: 56, right: 12, top: 34, bottom: 2, containLabel: true },
     legend: {
       top: 0, left: 0, itemWidth: 10, itemHeight: 10, icon: 'roundRect',
       textStyle: { color: t.text, fontSize: 11 },
@@ -423,11 +428,15 @@ function creditChartOption(labels, rows) {
       axisLabel: { color: t.text, fontSize: 11, hideOverlap: true },
     },
     yAxis: {
-      type: 'value', min: 0, max: axis.max, interval: axis.interval, position: 'left',
-      splitLine: { lineStyle: { color: t.split } },
-      ...axisCommon,
+      // 轴本身不画刻度/标签：基线由下面 series 的 markLine 按"常识基准线"画
+      // （0/10/50/100/500/1k/5k/1万…），标签用原始积分值。
+      type: 'value', min: 0, max: axisMax, position: 'left',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { show: false },
+      splitLine: { show: false },
     },
-    series: stackOrder.map((s) => ({
+    series: stackOrder.map((s, idx) => ({
       // 四条线同轴、同一 stack：喂的是"累计对数差"，堆叠顶端 = log1p(余额+当日流水)。
       // 余额那段用更淡的填充 + 实线，和三条流水区分开。
       name: s.name,
@@ -440,6 +449,22 @@ function creditChartOption(labels, rows) {
       emphasis: { focus: 'series' },
       z: s.flow ? 2 : 3,
       data: seriesData.get(s.key),
+      // 基准线只挂在第一条 series 上（不然四条会重复画同一组线）
+      markLine: idx === 0 ? {
+        silent: true, symbol: 'none', animation: false,
+        lineStyle: { color: t.split, width: 1, type: 'solid' },
+        label: { position: 'start', color: t.text, fontSize: 10, distance: 6 },
+        data: baselines.map((v, i) => ({
+          yAxis: logData(v),
+          label: {
+            // 0 一定显示，其余按 labelEvery 抽稀（线仍然全画）
+            show: i === 0 || i === baselines.length - 1 || i % labelEvery === 0,
+            // 标签就是原始整数（0/10/50/100/500/1000/5000…），不做 1k/1万 的缩写：
+            // 基准线只有几条，直白数字更好对
+            formatter: String(v),
+          },
+        })),
+      } : undefined,
     })),
   };
 }
