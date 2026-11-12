@@ -322,14 +322,64 @@ function fmtAxis(v) {
   return String(Math.round(v));
 }
 
+// ── 对数压缩：喂 log1p、显示原始值 ────────────────────────────────────────
+// 余额是几千、流水是几十到几百：线性轴下小的那条会被压成贴地的一条线。做法是把
+// **喂给 ECharts 的数值取 log1p**（视觉压缩），轴刻度与 tooltip 再用 expm1 还原成
+// 原始积分——数据本身不插值、口径不变，只是把"视觉缩放"和"读数"分开：
+//   - 用 log1p 不用 log：数据里有大量 0（当天没流水 / 没记录），log(0) 会是 -Inf；
+//   - 三条流水仍是**堆叠面积**，但堆叠必须发生在原始值上再取对数：直接堆 log 值等于
+//     把对数相加（= 对数相乘），stack 高度对应的是一个没有意义的乘积。所以喂给
+//     ECharts 的是「累计值的对数差」：Σ delta = log1p(当天三条流水的真实总和)，
+//     stack 的顶端仍然等于"当天总流水"的对数量，轴标签如实。
+const logData = (v) => Math.log1p(Math.max(0, Number(v) || 0));
+const invLog = (v) => Math.expm1(Math.max(0, Number(v) || 0));
+
+// logAxis 在"对数空间"里挑一个整数步长，保证刻度不超过 6 段（否则标签会挤）。
+// 刻度位置是对数量（0,2,4…），axisLabel 再用 invLog 还原成原始积分。
+function logAxis(maxLog) {
+  const m = maxLog || 0;
+  for (const step of [1, 2, 3, 4, 5, 10]) {
+    if (Math.ceil(m / step) <= 6) {
+      return { interval: step, max: Math.max(step, Math.ceil(m / step) * step) };
+    }
+  }
+  const step = Math.ceil(m / 6);
+  return { interval: step, max: Math.ceil(m / step) * step };
+}
+
 // creditChartOption 组装 ECharts option：左轴余额折线 + 右轴三条流水堆叠面积。
+// 数据是 log1p 压缩后的量；轴标签 / tooltip 用 invLog 还原成原始积分。
 function creditChartOption(labels, rows) {
   const t = chartTheme();
   const axisCommon = {
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { color: t.text, fontSize: 11, hideOverlap: true, formatter: fmtAxis },
+    // 刻度值是对数空间的，显示时还原成原始积分（否则会出现 8.15 这种刻度）
+    axisLabel: { color: t.text, fontSize: 11, hideOverlap: true, formatter: (v) => fmtAxis(invLog(v)) },
   };
+  const credits = rows.map((r) => r.credits);
+  const flowSeries = CREDIT_SERIES.filter((s) => s.flow);
+
+  // 每天三条流水的累计（原始值）→ 取对数后做差，作为各段 stack 的高度：
+  //   Δ₁ = log1p(获得)、Δ₂ = log1p(获得+消耗) − log1p(获得)、…
+  // 这样 stack 顶端 = log1p(当天总流水)，轴标签反解出来就是真实总流水。
+  const flowDeltas = flowSeries.map(() => []);
+  const flowTotals = [];
+  rows.forEach((r) => {
+    let cum = 0;
+    let prevLog = 0;
+    flowSeries.forEach((s, k) => {
+      cum += Math.max(0, Number(r[s.key]) || 0);
+      const curLog = logData(cum);
+      flowDeltas[k].push(curLog - prevLog);
+      prevLog = curLog;
+    });
+    flowTotals.push(cum);
+  });
+
+  const leftAxis = logAxis(credits.reduce((m, v) => Math.max(m, logData(v)), 0));
+  const rightAxis = logAxis(flowTotals.reduce((m, v) => Math.max(m, logData(v)), 0));
+
   return {
     animationDuration: 280,
     textStyle: { fontFamily: 'inherit' },
@@ -344,8 +394,21 @@ function creditChartOption(labels, rows) {
       borderColor: t.tooltipBorder,
       textStyle: { color: t.tooltipText, fontSize: 12 },
       axisPointer: { type: 'line', lineStyle: { color: t.axis } },
-      // 余额与三条流水量级差一个数量级，用千分位 + 单位让读数一眼可比。
-      valueFormatter: (v) => fmtNum(v),
+      // 图上的数是对数差，tooltip 直接读原始 rows，避免露出 log 值。
+      formatter: (params) => {
+        const i = params && params.length ? params[0].dataIndex : 0;
+        const r = rows[i];
+        if (!r) return '';
+        const net = r.earned - r.spent - r.adjust;
+        return [
+          `<b>${labels[i]}</b>`,
+          `日终总积分：<b>${fmtNum(r.credits)}</b>`,
+          `当日获得：${fmtNum(r.earned)}`,
+          `当日消耗：${fmtNum(r.spent)}`,
+          `当日调整：${fmtNum(r.adjust)}`,
+          `净变化：${net > 0 ? '+' : ''}${fmtNum(net)}`,
+        ].join('<br/>');
+      },
     },
     xAxis: {
       type: 'category',
@@ -357,12 +420,12 @@ function creditChartOption(labels, rows) {
     },
     yAxis: [
       {
-        type: 'value', min: 0, position: 'left',
+        type: 'value', min: 0, max: leftAxis.max, interval: leftAxis.interval, position: 'left',
         splitLine: { lineStyle: { color: t.split } },
         ...axisCommon,
       },
       {
-        type: 'value', min: 0, position: 'right',
+        type: 'value', min: 0, max: rightAxis.max, interval: rightAxis.interval, position: 'right',
         splitLine: { show: false },
         ...axisCommon,
       },
@@ -377,17 +440,17 @@ function creditChartOption(labels, rows) {
         lineStyle: { width: 2.4, color: CREDIT_SERIES[0].color },
         itemStyle: { color: CREDIT_SERIES[0].color },
         z: 6,
-        data: rows.map((r) => r.credits),
+        data: credits.map(logData),
       },
-      // 流水：右轴堆叠面积（同一 stack 名 → 叠在一起，面积半透明）
-      ...CREDIT_SERIES.filter((s) => s.flow).map((s) => ({
+      // 流水：右轴堆叠面积（喂的是"累计对数差"，stack 顶端=总流水的对数）
+      ...flowSeries.map((s, k) => ({
         name: s.name, type: 'line', yAxisIndex: 1, stack: 'flow',
         smooth: 0.25, symbol: 'none',
         lineStyle: { width: 1.2, color: s.color },
         itemStyle: { color: s.color },
         areaStyle: { opacity: 0.32, color: s.color },
         emphasis: { focus: 'series' },
-        data: rows.map((r) => r[s.key]),
+        data: flowDeltas[k],
       })),
     ],
   };
