@@ -1,8 +1,12 @@
 package webui
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -203,6 +207,40 @@ func TestAssetCachePolicy(t *testing.T) {
 		}
 		if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=") {
 			t.Errorf("%s Cache-Control=%q want 含 max-age", path, cc)
+		}
+	}
+}
+
+// CI 冒烟里出现的 /assets/* 必须真实存在（防"改名/换框架后 CI 静默变红"）。
+//
+// 回归背景：UI 从 Bootstrap CSS 迁到 Tabler 后，docker.yml 的冒烟仍在 curl
+// 已不存在的 /assets/bootstrap.min.css，拿到 19B 的 404 页面 → 冒烟失败 →
+// 镜像连续几个版本没打成，部署侧一直拿不到新界面。这条测试把"CI 引用的资源"
+// 与"embed 里实际有的文件"绑在一起：谁改名，go test 先红。
+func TestCIAssetReferencesExist(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "docker.yml"))
+	if err != nil {
+		t.Skipf("读不到 docker.yml（非仓库布局？）：%v", err)
+	}
+	re := regexp.MustCompile(`/assets/([A-Za-z0-9._-]+)`)
+	seen := map[string]bool{}
+	for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+		name := m[1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if _, err := fs.Stat(assetsFS, "assets/"+name); err != nil {
+			t.Errorf("docker.yml 引用了 /assets/%s，但 embed 里没有这个文件（冒烟会拿到 404）", name)
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("docker.yml 里没找到任何 /assets 引用：冒烟断言可能已被删空")
+	}
+	// 反向：webui 自己的资源文件如果没被 CI 冒烟覆盖，也提示一下（不失败）。
+	for _, name := range []string{"app.js", "app.css"} {
+		if !seen[name] {
+			t.Logf("提示：docker.yml 未校验 /assets/%s", name)
 		}
 	}
 }

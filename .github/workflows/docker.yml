@@ -6,7 +6,8 @@
 #   2. **先测再打包**：test job 跑 go build / vet / test，镜像 job 依赖它 ——
 #      不让「测试红的提交」产出可部署镜像。这与仓库 README 的「改 → 自检 → 提交 → 推送」一致。
 #   3. **打包后真跑一次容器**（smoke）：/healthz 应答、/status 无 key 必须 401、
-#      `GET /` 是管理后台并且内嵌 Bootstrap 可访问、镜像里**不允许有 python3**
+#      `GET /` 是管理后台并且内嵌静态资源（Tabler 样式 / Bootstrap bundle / app.js）
+#      逐个可访问、镜像里**不允许有 python3**
 #      （Go 化后的硬约束，回归即失败）。验证的是加载到本地的 amd64 镜像，
 #      随后多架构构建直接复用同一份层缓存。
 #   4. **标签以 `latest` 为主**：每次构建都覆盖 `latest`，客户端只写 `:latest`，
@@ -194,7 +195,7 @@ jobs:
           echo "status(no key) = $code（符合预期）"
 
           # 管理后台：/ 必须是页面（同源由本进程托管，镜像里没有 nginx），
-          # /assets 里的 Bootstrap 也必须能取到 —— 二者缺一，后台就是白屏。
+          # 内嵌的静态资源也必须能取到 —— 二者缺一，后台就是白屏。
           #
           # 这里先打印状态码 + 首字节，再断言内容：失败时能一眼看出是"没起来/回错码"
           # 还是"回了页面但内容不对"，不用再为定位问题重跑一次流水线。
@@ -202,7 +203,7 @@ jobs:
             http://127.0.0.1:17863/ -o /tmp/wp-index.html 2>&1 | head -n 12 || true)"
           echo "GET / 响应头："; echo "$page_head"
           echo "GET / 正文：$(wc -c < /tmp/wp-index.html 2>/dev/null || echo 0) 字节"
-          if ! grep -q 'WP' /tmp/wp-index.html; then
+          if ! grep -q 'id="app"' /tmp/wp-index.html; then
             # 关键诊断同时打到 annotation（日志只有仓库管理员能看，annotation 是公开的）。
             snippet="$(tr -d '\r\n' < /tmp/wp-index.html 2>/dev/null | head -c 200 || true)"
             echo "::error::GET / 未返回管理后台页面（status=$(echo "$page_head" | head -n1) bytes=$(wc -c < /tmp/wp-index.html 2>/dev/null || echo 0) body=$snippet）"
@@ -210,13 +211,41 @@ jobs:
             docker rm -f wp-smoke || true
             exit 1
           fi
-          css_len="$(curl -s -o /dev/null -w '%{size_download}' http://127.0.0.1:17863/assets/bootstrap.min.css || echo 0)"
-          if [ "${css_len:-0}" -lt 100000 ]; then
-            echo "::error::内嵌 Bootstrap 资源异常：expected >100KB, got ${css_len}B"
+          if ! grep -q 'WorkPuppy' /tmp/wp-index.html; then
+            echo "::error::GET / 页面缺少品牌字标 WorkPuppy（前端资源没打进镜像？）"
             docker rm -f wp-smoke || true
             exit 1
           fi
-          echo "管理后台：/ 可访问，bootstrap.min.css = ${css_len}B（符合预期）"
+
+          # 内嵌静态资源逐个校验体积。名字与阈值跟着 vendored 实际文件走：
+          #   - tabler.min.css          主题样式（含 Bootstrap 5 样式），~670KB
+          #   - bootstrap.bundle.min.js 交互组件，~80KB
+          #   - app.js / app.css        自有前端，~70KB / ~15KB
+          # 回归背景：UI 从 Bootstrap CSS 迁到 Tabler 后，这里还 curl 已不存在的
+          # bootstrap.min.css，只拿到 19B 的 404 页面 → 冒烟失败 → 镜像连续几个版本
+          # 没打成（部署侧一直拿不到新界面）。改名/换框架时请同步改这张表，
+          # internal/webui 的 TestCIAssetReferencesExist 会在 go test 阶段先拦住漂移。
+          asset_fail=0
+          for spec in \
+            /assets/tabler.min.css:100000 \
+            /assets/bootstrap.bundle.min.js:50000 \
+            /assets/app.js:10000 \
+            /assets/app.css:5000; do
+            asset_path="${spec%%:*}"
+            asset_min="${spec##*:}"
+            asset_len="$(curl -s -o /dev/null -w '%{size_download}' "http://127.0.0.1:17863${asset_path}" || echo 0)"
+            if [ "${asset_len:-0}" -lt "${asset_min}" ]; then
+              echo "::error::内嵌资源 ${asset_path} 异常：expected >${asset_min}B, got ${asset_len}B"
+              asset_fail=1
+            else
+              echo "asset ${asset_path} = ${asset_len}B（符合预期）"
+            fi
+          done
+          if [ "$asset_fail" -ne 0 ]; then
+            docker logs wp-smoke || true
+            docker rm -f wp-smoke || true
+            exit 1
+          fi
 
           if docker exec wp-smoke sh -c 'command -v python3 >/dev/null 2>&1'; then
             echo "::error::镜像里不应存在 python3（Python 已全部 Go 化）"
