@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png" alt="WP" width="120">
 </p>
 
-# WP
+# WorkPuppy
 
 把多个 WorkBuddy（CodeBuddy）账号聚合成一个 **OpenAI 兼容** HTTP 网关：下游客户端只需改
 `base_url` 与 `api_key`，就能共享整池账号的额度；网关负责鉴权、会话粘性、轮转、冷却、
