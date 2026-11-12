@@ -1728,17 +1728,6 @@ function bind() {
       if (btn) resetSection(btn.dataset.resetSection);
     });
   }
-  if ($('#btnCopyRestart')) {
-    $('#btnCopyRestart').addEventListener('click', async () => {
-      const cmd = 'docker compose restart wp';
-      try {
-        await navigator.clipboard.writeText(cmd);
-        toast('重启命令已复制', 'success');
-      } catch {
-        alert('请手动执行：' + cmd);
-      }
-    });
-  }
   window.addEventListener('beforeunload', (ev) => {
     if (state.configDirty && state.configDirty.size > 0) {
       ev.preventDefault();

@@ -412,7 +412,7 @@ func TestSettingsAndSetupWiring(t *testing.T) {
 		`id="setupForm"`, `id="setupPassword"`, `id="setupError"`,
 		`data-view="settings"`, `id="view-settings"`, `id="cfgForm"`,
 		`id="cfgGroups"`, `id="btnSaveConfig"`, `id="btnResetAll"`,
-		`id="btnChangePassword"`, `id="restartBanner"`, `id="btnCopyRestart"`,
+		`id="btnChangePassword"`, `id="restartBanner"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("入口页缺少 %s（设置页/初始化向导）", want)

@@ -381,14 +381,6 @@ button[data-chart-uid]:focus-visible {
   color: var(--tblr-body-color, #182433);
 }
 
-.wp-restart-cmd {
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: color-mix(in srgb, #f59f00 16%, transparent);
-  color: inherit;
-  white-space: nowrap;
-}
-
 /* ── 设置页布局 ─────────────────────────────────────────────────────── */
 .wp-cfg-side {
   position: sticky;
