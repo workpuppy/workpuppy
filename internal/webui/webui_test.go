@@ -561,3 +561,35 @@ func TestOverviewPollingAndVersionWiring(t *testing.T) {
 		t.Error("app.css 不应再保留启动遮罩样式")
 	}
 }
+
+// 弹窗里的积分曲线必须"每次打开都能画"。
+//
+// 回归背景（实测）：openCreditChart 用 replaceChildren 显示"加载中…"，会把 ECharts 的
+// <canvas> 从宿主里摘掉；而缓存的实例 isDisposed() 仍是 false，setOption 就画到了脱离
+// 文档的 canvas 上——表现为"第一次打开有图，之后全空白"。
+// 这里钉住两件事：①renderChart 走 chartFor（检测 canvas 丢失后重建实例）；
+// ②打开弹窗前会 dispose 旧实例。真浏览器验证见提交说明（Edge + CDP 连开两次均 PASS）。
+func TestCreditChartRecreatesStaleInstance(t *testing.T) {
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{"function chartFor(", "host.querySelector('canvas')", "chartInstances.delete('creditModalChart')"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("app.js 缺少 %q（弹窗图表第二次会画不出来）", want)
+		}
+	}
+}
+
+// 内嵌的第三方资源不应带 sourceMappingURL：仓库不提供 .map，devtools 会报 404 噪音。
+func TestAssetsHaveNoDanglingSourceMaps(t *testing.T) {
+	for _, path := range []string{"/assets/bootstrap.bundle.min.js", "/assets/tabler.min.css"} {
+		rec := httptest.NewRecorder()
+		Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s code=%d", path, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "sourceMappingURL") {
+			t.Errorf("%s 仍带 sourceMappingURL（对应的 .map 不存在，devtools 会报错）", path)
+		}
+	}
+}

@@ -545,14 +545,31 @@ function creditChartOption(labels, rows) {
 }
 
 // renderChart 把数据画进指定宿主（概览/弹窗共用）。重复调用复用实例、整份替换 option。
+// chartFor 取（必要时重建）某宿主上的 ECharts 实例。
+//
+// 为什么要校验 canvas：调用方常用 `host.replaceChildren(占位)` 显示"加载中…"，
+// 这会把 ECharts 画出来的 <canvas> 从 DOM 里摘掉；而实例仍指向该宿主、`isDisposed()`
+// 也是 false —— 继续 `setOption` 就画在**已脱离文档**的 canvas 上，页面表现为空白。
+// 症状就是"第一次打开弹窗有图，之后每次都空白"。这里一旦发现 canvas 不在了就重建实例。
+function chartFor(host) {
+  let inst = chartInstances.get(host.id);
+  const stale = !inst || inst.isDisposed() || inst.getDom() !== host;
+  const canvasGone = inst && !inst.isDisposed() && !host.querySelector('canvas');
+  if (stale || canvasGone) {
+    if (inst) {
+      try { inst.dispose(); } catch { /* 已销毁 */ }
+    }
+    host.replaceChildren(); // 清掉"加载中…"占位，再让 ECharts 挂 canvas
+    inst = window.echarts.init(host, null, { renderer: 'canvas' });
+    chartInstances.set(host.id, inst);
+  }
+  return inst;
+}
+
 function renderChart(hostId, labels, rows) {
   const host = document.getElementById(hostId);
   if (!host || !window.echarts) return;
-  let inst = chartInstances.get(hostId);
-  if (!inst || inst.isDisposed()) {
-    inst = window.echarts.init(host, null, { renderer: 'canvas' });
-    chartInstances.set(hostId, inst);
-  }
+  let inst = chartFor(host);
   if (!labels.length) {
     inst.clear();
     return;
@@ -690,6 +707,12 @@ async function openCreditChart(uid) {
     ? [acc.nickname || '', acc.realm || '', '当前积分 ' + fmtNum(acc.credits)].filter(Boolean).join(' · ')
     : '';
   const host = $('#creditModalChart');
+  // 先丢弃旧实例再清空宿主：留着实例会指向被摘掉的 canvas（见 chartFor 的注释）。
+  const stale = chartInstances.get('creditModalChart');
+  if (stale) {
+    try { stale.dispose(); } catch { /* 已销毁 */ }
+    chartInstances.delete('creditModalChart');
+  }
   host.replaceChildren(el('div', { class: 'text-body-secondary small py-5 text-center', text: '加载中…' }));
   bootstrap.Modal.getOrCreateInstance($('#creditChartModal')).show();
   try {
