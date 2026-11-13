@@ -322,9 +322,7 @@ function applyCredits(c, opts = {}) {
     '　（账号 ' + Object.keys(c.accounts || {}).length + ' 个）');
   setText('#kpiEarned', fmtNum(t.earned || 0));
   setText('#kpiSpent', fmtNum(t.spent || 0));
-  // 调整可为负：负数加括号，和前面的「消耗 +」拼起来不会读成减号。
-  const adjust = Number(t.adjust || 0);
-  setText('#kpiAdjust', adjust < 0 ? '(' + fmtNum(adjust) + ')' : fmtNum(adjust));
+  setText('#kpiAdjust', fmtNum(t.adjust || 0));
 
   // 只对"历史日"做变化检测：今天的热值每轮都在变，不能拿它当重画依据。
   const past = (c.histories || []).filter((h) => h.date !== c.today);
