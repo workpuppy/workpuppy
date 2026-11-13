@@ -827,14 +827,15 @@ async function loadAccounts() {
         })]),
         el('td', { class: 'font-monospace small', text: a.uid }),
         el('td', { text: a.realm || '–' }),
+        // 顺序固定：在线状态 → 签到状态 → 领养（猫）状态。
         el('td', {}, [el('div', { class: 'badge-row' }, [
           statusBadge(a),
-          catBadge(a),
           a.checked_in_today ? el('span', {
             class: 'badge text-bg-success-subtle text-success-emphasis',
             text: '已签',
             title: a.last_checkin_status ? '最近一次：' + a.last_checkin_status : '',
           }) : null,
+          catBadge(a),
         ].filter(Boolean))]),
         el('td', { class: 'text-start', text: fmtNum(a.credits) }),
         el('td', { class: 'text-start', text: fmtNum(a.in_flight) }),

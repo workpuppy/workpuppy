@@ -470,6 +470,13 @@ func TestAccountsNowrapAndCatColumn(t *testing.T) {
 			t.Errorf("app.js 缺少 %s（账号表猫猫/签到标签）", want)
 		}
 	}
+	// 状态列顺序固定：在线状态 → 签到状态 → 领养（猫）状态。
+	iStatus := strings.Index(body, "          statusBadge(a),")
+	iCheckin := strings.Index(body, "            text: '已签',")
+	iCat := strings.Index(body, "          catBadge(a),")
+	if iStatus < 0 || iCheckin < 0 || iCat < 0 || !(iStatus < iCheckin && iCheckin < iCat) {
+		t.Errorf("状态列顺序应为 在线(%d) → 已签(%d) → 猫猫(%d)", iStatus, iCheckin, iCat)
+	}
 
 	css := httptest.NewRecorder()
 	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
