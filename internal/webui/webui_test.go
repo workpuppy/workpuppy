@@ -28,6 +28,11 @@ func TestIndexServed(t *testing.T) {
 			t.Errorf("入口页缺少 %q", want)
 		}
 	}
+	// <head> 里不能混入非空白文本：浏览器会提前结束 head，把那串字符渲染到页面顶部。
+	// 真实事故：模板里误写成字面量 `n（不是换行），页面左上角多出一个 "`n"。
+	if strings.Contains(body, "`n") {
+		t.Fatalf("入口页含字面量 `n（会被浏览器渲染到页面顶部）：%q", body[:200])
+	}
 	// CSP 必须下发：管理后台能停号/发密钥，XSS 一次就全丢。
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
 		t.Fatalf("缺少 CSP：%q", csp)
