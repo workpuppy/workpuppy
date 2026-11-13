@@ -593,3 +593,30 @@ func TestAssetsHaveNoDanglingSourceMaps(t *testing.T) {
 		}
 	}
 }
+
+// 概览文案：KPI 卡与图表系列的措辞是对外契约，改动会直接影响运维读表。
+func TestOverviewWording(t *testing.T) {
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	for _, want := range []string{
+		"账号总数", "可用账号", "冷却中账号", "已禁用账号", "在途占满", "粘性会话",
+		"总积分", "今日获得", "今日消耗+调整（误差修正）",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("概览缺少文案 %q", want)
+		}
+	}
+
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{
+		"name: '日终总计'", "name: '获得'", "name: '消耗'", "name: '调整'",
+		"日终总计：", "获得：", "消耗：", "调整：",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("图表文案缺少 %q（概览/弹窗系列名）", want)
+		}
+	}
+}

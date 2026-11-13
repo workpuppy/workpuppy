@@ -302,7 +302,7 @@ function applyOverview(d, opts = {}) {
   setText('#kpiDisabled', fmtNum(s.disabled));
   setText('#kpiInFlight', fmtNum(s.in_flight_full));
   setText('#kpiSticky', fmtNum(s.sticky_sessions));
-  // 当前总积分额度 = 池内各账号余额之和（与账号页同源）；曲线"今天"的点也用它。
+  // 总积分 = 池内各账号余额之和（与账号页同源）；曲线"今天"的点也用它。
   state.totalCredits = (s.accounts || []).reduce((acc, a) => acc + Number(a.credits || 0), 0);
   setText('#kpiCredits', fmtNum(state.totalCredits));
   const raw = JSON.stringify(s, null, 2);
@@ -317,12 +317,14 @@ function applyCredits(c, opts = {}) {
   state.creditDaily = c; // 缓存给「单账号曲线」弹窗复用
   const t = c.totals || {};
   setText('#creditToday',
-    c.today + '：赚 ' + fmtNum(t.earned || 0) + ' / 花 ' + fmtNum(t.spent || 0) +
+    c.today + '：获得 ' + fmtNum(t.earned || 0) + ' / 消耗 ' + fmtNum(t.spent || 0) +
     ' / 调整 ' + fmtNum(t.adjust || 0) + ' / 净 ' + fmtNum(t.net || 0) +
     '　（账号 ' + Object.keys(c.accounts || {}).length + ' 个）');
   setText('#kpiEarned', fmtNum(t.earned || 0));
   setText('#kpiSpent', fmtNum(t.spent || 0));
-  setText('#kpiAdjust', fmtNum(t.adjust || 0));
+  // 调整可为负：负数加括号，和前面的「消耗 +」拼起来不会读成减号。
+  const adjust = Number(t.adjust || 0);
+  setText('#kpiAdjust', adjust < 0 ? '(' + fmtNum(adjust) + ')' : fmtNum(adjust));
 
   // 只对"历史日"做变化检测：今天的热值每轮都在变，不能拿它当重画依据。
   const past = (c.histories || []).filter((h) => h.date !== c.today);
@@ -360,15 +362,15 @@ function stopOverviewPolling() {
 // 为什么用 ECharts：CSP 是 `default-src 'self'`（引不了 CDN），所以把 echarts.min.js
 // 原样 vendored 进本目录（见 NOTICE.txt、internal/webui/webui.go 的 frameworkAssets），
 // 从 /assets 自托管；仍然没有 npm/构建步骤这一层。
-// 为什么「堆叠」：当日获得 / 消耗 / 调整都是**当天流水**，量级相近，堆叠面积能直接看出
-// 结构与总量；「日终总积分」是存量、比流水大一个数量级，单独走左轴折线、不参与堆叠。
+// 为什么「堆叠」：获得 / 消耗 / 调整都是**当天流水**，量级相近，堆叠面积能直接看出
+// 结构与总量；「日终总计」是存量、比流水大一个数量级，单独走左轴折线、不参与堆叠。
 
 // 四条序列的语义（ax 字段决定挂哪个轴；flow=true 的按栈叠加）。
 const CREDIT_SERIES = [
-  { key: 'credits', name: '日终总积分', color: '#206bc4', ax: 'left' },
-  { key: 'earned', name: '当日获得', color: '#2fb344', ax: 'right', flow: true },
-  { key: 'spent', name: '当日消耗', color: '#d63939', ax: 'right', flow: true },
-  { key: 'adjust', name: '当日调整', color: '#f59f00', ax: 'right', flow: true },
+  { key: 'credits', name: '日终总计', color: '#206bc4', ax: 'left' },
+  { key: 'earned', name: '获得', color: '#2fb344', ax: 'right', flow: true },
+  { key: 'spent', name: '消耗', color: '#d63939', ax: 'right', flow: true },
+  { key: 'adjust', name: '调整', color: '#f59f00', ax: 'right', flow: true },
 ];
 
 // chartInstances 每个宿主一个 ECharts 实例（切区间/切主题复用，不重复 init）。
@@ -486,10 +488,10 @@ function creditChartOption(labels, rows) {
         const net = r.earned - r.spent - r.adjust;
         return [
           `<b>${labels[i]}</b>`,
-          `日终总积分：<b>${fmtNum(r.credits)}</b>`,
-          `当日获得：${fmtNum(r.earned)}`,
-          `当日消耗：${fmtNum(r.spent)}`,
-          `当日调整：${fmtNum(r.adjust)}`,
+          `日终总计：<b>${fmtNum(r.credits)}</b>`,
+          `获得：${fmtNum(r.earned)}`,
+          `消耗：${fmtNum(r.spent)}`,
+          `调整：${fmtNum(r.adjust)}`,
           `净变化：${net > 0 ? '+' : ''}${fmtNum(net)}`,
         ].join('<br/>');
       },
@@ -621,7 +623,7 @@ function dayLabels(todayISO, days) {
 
 // chartRows 把 credit-daily 响应整理成逐日序列，整池汇总与单账号共用同一套口径。
 //
-//   - uid == null → 整池：earned/spent/adjust 按天相加，日终总积分 = 当天各账号
+//   - uid == null → 整池：earned/spent/adjust 按天相加，日终总计 = 当天各账号
 //     credits_end 之和；
 //   - uid 非空 → 单账号：取该账号当天那条记录。
 //
