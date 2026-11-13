@@ -830,11 +830,17 @@ async function loadAccounts() {
         // 顺序固定：在线状态 → 签到状态 → 领养（猫）状态。
         el('td', {}, [el('div', { class: 'badge-row' }, [
           statusBadge(a),
-          a.checked_in_today ? el('span', {
-            class: 'badge text-bg-success-subtle text-success-emphasis',
-            text: '已签',
-            title: a.last_checkin_status ? '最近一次：' + a.last_checkin_status : '',
-          }) : null,
+          a.checked_in_today
+            ? el('span', {
+              class: 'badge text-bg-success-subtle text-success-emphasis',
+              text: '已签',
+              title: a.last_checkin_status ? '最近一次：' + a.last_checkin_status : '',
+            })
+            : el('span', {
+              class: 'badge text-bg-secondary-subtle text-secondary-emphasis',
+              text: '未签',
+              title: '今天还没签到' + (a.last_checkin_status ? '（最近一次：' + a.last_checkin_status + '）' : ''),
+            }),
           catBadge(a),
         ].filter(Boolean))]),
         el('td', { class: 'text-start', text: fmtNum(a.credits) }),

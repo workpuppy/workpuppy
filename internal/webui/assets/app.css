@@ -173,6 +173,12 @@
   color: var(--tblr-success, #2fb344);
 }
 
+/* 「未签」用同一套 subtle 风格（Bootstrap 5.3 没有 text-bg-secondary-subtle）。 */
+.badge.text-bg-secondary-subtle {
+  background: color-mix(in srgb, var(--tblr-secondary, #667382) 14%, transparent);
+  color: var(--tblr-secondary, #667382);
+}
+
 /* ── 账号 / 模型两张表 ───────────────────────────────────────────────────
  * 表头折行（「最大输/出」「积分倍/率」）会把整行行高撑歪，也让人一眼读不成词。
  * 列表页宽度固定，给表头 nowrap + 明确列宽比例，比让浏览器按内容均分更稳。 */
