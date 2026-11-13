@@ -289,6 +289,8 @@ func NewHandler(cfg Config) *Handler {
 	// 管理面**只认管理密码**（adminauth.Store），与 /v1 的 api_key 彻底分离：
 	// 下游手里的 key 不再附带停号/加号/看全量账号的能力。
 	h.mux.HandleFunc("GET /admin/status", h.withAdminAuth(h.adminStatus))
+	// 概览页轮询用的聚合快照（status + credits，只读内存/落盘缓存，不碰上游）。
+	h.mux.HandleFunc("GET /admin/overview", h.withAdminAuth(h.adminOverview))
 	h.mux.HandleFunc("POST /admin/accounts/{uid}/disable", h.withAdminAuth(h.adminAccountDisable))
 	h.mux.HandleFunc("POST /admin/accounts/{uid}/enable", h.withAdminAuth(h.adminAccountEnable))
 	h.mux.HandleFunc("POST /admin/accounts/{uid}/refresh-risk", h.withAdminAuth(h.adminRefreshRisk))

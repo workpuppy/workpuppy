@@ -484,3 +484,30 @@ func TestAccountsCatColumnWiring(t *testing.T) {
 		}
 	}
 }
+
+// 启动遮罩 + 概览轮询的接线：不允许刷新时先闪登录页；概览必须走聚合接口。
+func TestOverviewPollingAndBootSplashWiring(t *testing.T) {
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	for _, want := range []string{`id="bootSplash"`, `id="overviewUpdated"`, `id="loginWrap" hidden`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("入口页缺少 %s", want)
+		}
+	}
+
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{"/admin/overview", "refreshOverview", "startOverviewPolling", "OVERVIEW_POLL_MS"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("app.js 缺少 %s（概览轮询）", want)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	if !strings.Contains(css.Body.String(), ".wp-boot-text") {
+		t.Error("app.css 缺少 .wp-boot-text（启动遮罩）")
+	}
+}

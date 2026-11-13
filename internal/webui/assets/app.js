@@ -28,6 +28,14 @@ const state = {
   totalCredits: 0,   // 整池当前积分（/status 各账号之和），概览曲线最后一个点用
   chartUID: '',      // 积分曲线弹窗当前账号
   chartDays: 7,      // 积分曲线区间（7 / 15 / 30，默认 7）
+
+  // 概览轮询（5s）：timer 只在概览视图存在；in-flight 防叠加；raw 用于比对
+  // 避免每轮都重写整段 JSON；chartSig/DrawnAt 控制曲线的重画频率。
+  overviewTimer: null,
+  overviewInFlight: false,
+  overviewRaw: '',
+  overviewChartSig: '',
+  overviewChartDrawnAt: 0,
   overviewDays: 7,   // 概览「积分日账本」曲线区间（7 / 15 / 30，默认 7）
 
   // 设置页
@@ -109,7 +117,16 @@ function clearAlert() {
 }
 
 // ── 登录态 ──────────────────────────────────────────────────
+// hideBootSplash 收起启动遮罩：认证状态确定后才允许露出登录页或主界面，
+// 否则刷新任意页面都会先闪一下登录表单（体验问题，见 boot 注释）。
+function hideBootSplash() {
+  const splash = $('#bootSplash');
+  if (splash) splash.hidden = true;
+}
+
 function showLogin(message) {
+  hideBootSplash();
+  stopOverviewPolling();
   state.setupMode = false;
   $('#app').hidden = true;
   $('#loginWrap').hidden = false;
@@ -130,6 +147,7 @@ function showLogin(message) {
 }
 
 function showApp() {
+  hideBootSplash();
   $('#loginWrap').hidden = true;
   $('#app').hidden = false;
 }
@@ -235,63 +253,110 @@ function render() {
   clearAlert();
 
   switch (state.view) {
-    case 'overview': loadStatus(); break;
+    case 'overview':
+      // 首次进入强制重画曲线；之后每 5 秒只更新 KPI（曲线最多 60 秒重画一次）。
+      refreshOverview({ forceChart: !state.creditDaily });
+      startOverviewPolling();
+      break;
     case 'accounts': loadAccounts(); break;
     case 'models': loadModels(); break;
     case 'playground': loadModels(true); break;
     case 'add': break;
     case 'settings': loadConfig(); break;
   }
+  if (state.view !== 'overview') stopOverviewPolling();
   updateRestartBanner();
 }
 
-// ── 概览 ────────────────────────────────────────────────────
-async function loadStatus() {
+// ── 概览（5 秒轮询；后端只读内存/落盘缓存，不碰上游）──────────────
+// 为什么轮询：概览是"运维瞄一眼"的页面，手动刷新不现实；但也不能让前端直接打上游
+// （签到/余额这类动作不在概览的职责里）。所以由后端提供 /admin/overview 聚合快照：
+// status（池运行态）+ credits（当日热值 + 落盘历史），一次请求、纯本地读取。
+const OVERVIEW_POLL_MS = 5000;
+// 曲线重画的最小间隔：今天的热值每 5 秒都在变，但 ECharts setOption(notMerge) 会重置
+// tooltip/缩放；所以 KPI 走 5 秒，曲线最多 60 秒重画一次（历史日变化时立即重画）。
+const OVERVIEW_CHART_MIN_MS = 60000;
+
+function setText(sel, v) {
+  const el = $(sel);
+  if (el) el.textContent = v;
+}
+
+// refreshOverview 拉取聚合快照并渲染；in-flight 标记防止慢请求叠加。
+async function refreshOverview(opts = {}) {
+  if (state.overviewInFlight) return;
+  state.overviewInFlight = true;
   try {
-    // 走 /admin/status（管理凭据）；/status 是数据面接口，留给下游用 api_key 调。
-    const s = await api('/admin/status');
-    $('#kpiTotal').textContent = fmtNum(s.total);
-    $('#kpiHealthy').textContent = fmtNum(s.healthy);
-    $('#kpiCooling').textContent = fmtNum(s.cooling);
-    $('#kpiDisabled').textContent = fmtNum(s.disabled);
-    $('#kpiInFlight').textContent = fmtNum(s.in_flight_full);
-    $('#kpiSticky').textContent = fmtNum(s.sticky_sessions);
-    // 当前总积分额度 = 池内各账号余额之和（/status 的 accounts[] 与账号页同源）。
-    // 概览曲线最后一天（今天）也用这个实时值，而不是等日末快照。
-    const sumCredits = (s.accounts || []).reduce((acc, a) => acc + Number(a.credits || 0), 0);
-    state.totalCredits = sumCredits;
-    $('#kpiCredits').textContent = fmtNum(sumCredits);
-    $('#statusRaw').textContent = JSON.stringify(s, null, 2);
-    loadCredits();
+    const d = await api('/admin/overview');
+    applyOverview(d, opts);
+    const stamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    setText('#overviewUpdated', '更新于 ' + stamp + ' · 每 5 秒自动刷新');
   } catch (e) {
-    $('#statusRaw').textContent = String(e.message || e);
+    setText('#overviewChartHint', String(e.message || e));
+    setText('#statusRaw', String(e.message || e));
+  } finally {
+    state.overviewInFlight = false;
+  }
+}
+
+function applyOverview(d, opts = {}) {
+  const s = d.status || {};
+  setText('#kpiTotal', fmtNum(s.total));
+  setText('#kpiHealthy', fmtNum(s.healthy));
+  setText('#kpiCooling', fmtNum(s.cooling));
+  setText('#kpiDisabled', fmtNum(s.disabled));
+  setText('#kpiInFlight', fmtNum(s.in_flight_full));
+  setText('#kpiSticky', fmtNum(s.sticky_sessions));
+  // 当前总积分额度 = 池内各账号余额之和（与账号页同源）；曲线"今天"的点也用它。
+  state.totalCredits = (s.accounts || []).reduce((acc, a) => acc + Number(a.credits || 0), 0);
+  setText('#kpiCredits', fmtNum(state.totalCredits));
+  const raw = JSON.stringify(s, null, 2);
+  if (raw !== state.overviewRaw) {
+    state.overviewRaw = raw;
+    setText('#statusRaw', raw);
+  }
+  if (d.credits) applyCredits(d.credits, opts);
+}
+
+function applyCredits(c, opts = {}) {
+  state.creditDaily = c; // 缓存给「单账号曲线」弹窗复用
+  const t = c.totals || {};
+  setText('#creditToday',
+    c.today + '：赚 ' + fmtNum(t.earned || 0) + ' / 花 ' + fmtNum(t.spent || 0) +
+    ' / 调整 ' + fmtNum(t.adjust || 0) + ' / 净 ' + fmtNum(t.net || 0) +
+    '　（账号 ' + Object.keys(c.accounts || {}).length + ' 个）');
+  setText('#kpiEarned', fmtNum(t.earned || 0));
+  setText('#kpiSpent', fmtNum(t.spent || 0));
+  setText('#kpiAdjust', fmtNum(t.adjust || 0));
+
+  // 只对"历史日"做变化检测：今天的热值每轮都在变，不能拿它当重画依据。
+  const past = (c.histories || []).filter((h) => h.date !== c.today);
+  const sig = JSON.stringify(past);
+  const now = Date.now();
+  const due = now - (state.overviewChartDrawnAt || 0) > OVERVIEW_CHART_MIN_MS;
+  if (opts.forceChart || sig !== state.overviewChartSig || due) {
+    state.overviewChartSig = sig;
+    state.overviewChartDrawnAt = now;
+    renderOverviewChart();
+  }
+}
+
+function startOverviewPolling() {
+  if (state.overviewTimer) return;
+  state.overviewTimer = setInterval(() => {
+    if (document.hidden || state.view !== 'overview' || !state.password) return;
+    refreshOverview();
+  }, OVERVIEW_POLL_MS);
+}
+
+function stopOverviewPolling() {
+  if (state.overviewTimer) {
+    clearInterval(state.overviewTimer);
+    state.overviewTimer = null;
   }
 }
 
 // ── 账号 ────────────────────────────────────────────────────
-// ── 积分日账本（概览曲线）──────────────────────────────────────────────
-// 数据源 GET /admin/credit-daily：totals/accounts 是**当日内存热值**，
-// histories 是落盘的每日汇总（保留 30 天）；整池按天汇总在 chartRows 里做。
-async function loadCredits() {
-  const host = $('#overviewChart');
-  if (!host) return;
-  try {
-    const d = await api('/admin/credit-daily?days=30');
-    state.creditDaily = d; // 缓存给「单账号曲线」弹窗复用，避免点开时再等一次
-    const t = d.totals || {};
-    $('#creditToday').textContent =
-      d.today + '：赚 ' + fmtNum(t.earned || 0) + ' / 花 ' + fmtNum(t.spent || 0) +
-      ' / 调整 ' + fmtNum(t.adjust || 0) + ' / 净 ' + fmtNum(t.net || 0) +
-      '　（账号 ' + Object.keys(d.accounts || {}).length + ' 个）';
-    // 当日三项总计卡片（与账本同一份热值，口径不会分叉）。
-    $('#kpiEarned').textContent = fmtNum(t.earned || 0);
-    $('#kpiSpent').textContent = fmtNum(t.spent || 0);
-    $('#kpiAdjust').textContent = fmtNum(t.adjust || 0);
-    renderOverviewChart();
-  } catch (e) {
-    $('#overviewChartHint').textContent = String(e.message || e);
-  }
-}
 
 // ── 积分曲线（ECharts：流水堆叠面积 + 余额折线）────────────────────────────
 // 数据源：GET /admin/credit-daily?days=30 —— histories[] 已按天给出**每账号**
@@ -1150,6 +1215,7 @@ async function fetchSetupStatus() {
 }
 
 function showSetup(minLen) {
+  hideBootSplash();
   state.setupMode = true;
   $('#app').hidden = true;
   $('#loginWrap').hidden = false;
@@ -1804,7 +1870,7 @@ function bind() {
     });
   }
   $('#btnLogout').addEventListener('click', logout);
-  if ($('#btnCreditRefresh')) $('#btnCreditRefresh').addEventListener('click', loadCredits);
+  if ($('#btnCreditRefresh')) $('#btnCreditRefresh').addEventListener('click', () => refreshOverview({ forceChart: true }));
 
   // 导航（按钮切换 hash，由 hashchange 驱动渲染）
   $$('.nav-link[data-view]').forEach((b) => {
@@ -1825,7 +1891,7 @@ function bind() {
   const chartModal = $('#creditChartModal');
   if (chartModal) chartModal.addEventListener('shown.bs.modal', () => resizeCharts());
 
-  $('#btnRefreshStatus').addEventListener('click', loadStatus);
+  $('#btnRefreshStatus').addEventListener('click', () => refreshOverview());
   $('#btnRefreshAccounts').addEventListener('click', loadAccounts);
   $('#btnCheckinAll').addEventListener('click', checkinAll);
   $('#btnRefreshModels').addEventListener('click', () => loadModels(true));
@@ -1881,6 +1947,11 @@ function bind() {
       if (btn) resetSection(btn.dataset.resetSection);
     });
   }
+  // 标签页切回前台时立刻补一次（轮询在后台是暂停的，不必等下一个 5s）。
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.password && state.view === 'overview') refreshOverview();
+  });
+
   window.addEventListener('beforeunload', (ev) => {
     if (state.configDirty && state.configDirty.size > 0) {
       ev.preventDefault();

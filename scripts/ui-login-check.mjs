@@ -63,6 +63,14 @@ async function main() {
     return r.result.value;
   };
 
+  // 回归用例必须从"未登录"开始：浏览器里若已有 localStorage 密码，新标签页会直接
+  // 自动登录（这是产品行为，但会绕过登录流程）。在文档加载前清掉它再 reload。
+  await c.send('Page.enable');
+  await c.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `try { localStorage.removeItem('wp.adminPassword'); } catch (e) {}`,
+  });
+  await c.send('Page.reload');
+
   // 等"页面真的可交互"：DOM + app.css 已加载 + app.js 已执行
   // （app.js 末尾的 boot() 会立刻设置 data-bs-theme，是最可靠的就绪标记）
   let ready = false;
@@ -77,6 +85,16 @@ async function main() {
     await sleep(200);
   }
   if (!ready) throw new Error('页面 10s 内未就绪（DOM/app.css/app.js）');
+
+  // 启动遮罩收起 = 认证状态已确定（登录 / 初始化 / 主界面）。先等它消失再断言首屏，
+  // 因为新的加载策略在"本地密码校验"完成前不会渲染登录页（避免刷新时闪登录页）。
+  let settled = false;
+  for (let i = 0; i < 50; i++) {
+    settled = await evalJS(`(() => { const s = document.getElementById('bootSplash'); return !s || s.hidden; })()`);
+    if (settled) break;
+    await sleep(100);
+  }
+  if (!settled) throw new Error('启动遮罩 5s 内未收起');
 
   const before = await evalJS(`(() => {
     const login = document.getElementById('loginWrap'), app = document.getElementById('app');

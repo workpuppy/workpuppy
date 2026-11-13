@@ -122,8 +122,18 @@
   </symbol>
 </svg>
 
-<!-- ── 登录页（默认显示；凭据只存浏览器本地，服务端重启即更换）────────── -->
-<div id="loginWrap" class="page page-center wp-login">
+<!-- ── 启动遮罩 ────────────────────────────────────────────────────────
+     认证状态确认前**不渲染登录页**：否则刷新任意页面时都会先闪一下登录表单，
+     再跳回当前视图（本地密码校验是一次网络往返）。这里只放品牌与加载提示。 -->
+<div id="bootSplash" class="page page-center wp-login">
+  <div class="text-center">
+    <span class="wp-brand-mark mx-auto"><svg class="wp-ico" aria-hidden="true"><use href="#ti-paw"/></svg></span>
+    <div class="text-body-secondary small mt-3 wp-boot-text">正在加载…</div>
+  </div>
+</div>
+
+<!-- ── 登录页（凭据只存浏览器本地；密码在首次使用时初始化）────────── -->
+<div id="loginWrap" hidden class="page page-center wp-login">
   <div class="container-tight py-4">
     <div class="card card-md border-0 shadow-lg">
       <div class="card-body p-4">
@@ -134,7 +144,7 @@
         </div>
         <form id="loginForm" autocomplete="off">
           <label class="form-label" for="loginPassword">管理密码</label>
-          <input type="password" class="form-control" id="loginPassword" placeholder="容器启动日志里的那串密码"
+          <input type="password" class="form-control" id="loginPassword" placeholder="初始化时设置的管理密码"
                  autocomplete="current-password" required>
           <div class="form-text">
             无需用户名。密码在服务启动日志里打印（<code>登录密码: …</code>），每次重启都会更换；
@@ -220,6 +230,9 @@
 
         <!-- 概览 -->
         <section id="view-overview" hidden>
+          <div class="d-flex justify-content-end mb-2">
+            <span class="small text-body-secondary" id="overviewUpdated">等待首次刷新…</span>
+          </div>
           <div class="row g-3 mb-3">
             <div class="col-6 col-lg-2"><div class="card h-100 wp-kpi"><div class="card-body">
               <div class="d-flex align-items-start justify-content-between">
