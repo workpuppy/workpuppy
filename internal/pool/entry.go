@@ -31,6 +31,37 @@ func (k CoolKind) String() string {
 const degradeReason = "consecutive failures"
 
 // Status 单个账号对外暴露的状态（脱敏）。
+// CatState 账号最近一次「猫猫旅行」巡检看到的状态（账号列表的猫猫列）。
+//
+// 数据来源只有一个：定时/手动的旅行巡检（scheduler.travelOne 查到什么记什么），
+// 所以它是**快照**而不是实时查询——上游没有"批量查猫"的接口，账号页打开时按行查会
+// 变成 N×2 次请求。展示时带上 UpdatedAt，运维能看出这是几点看到的。
+//
+// 只用于展示：不参与选号、冷却、禁用的任何判定。
+type CatState struct {
+	// State 上游旅行状态：none（无猫/未领养）/ idle / traveling / arrived / error（查询失败）。
+	State string `json:"state,omitempty"`
+	// Buddy 猫的名字（已领养才有）。
+	Buddy string `json:"buddy,omitempty"`
+	// Reward 到站可领的积分（arrived 时有意义）。
+	Reward int64 `json:"reward,omitempty"`
+	// DailyLimitReached 今日已派出过（自然日 00:00 CST 重置）。
+	DailyLimitReached bool `json:"daily_limit_reached,omitempty"`
+	// Detail 补充说明（错误原文 / 跳过原因），排障用。
+	Detail string `json:"detail,omitempty"`
+	// UpdatedAt 这份快照的采集时刻。
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+// cloneCat 复制一份 CatState（Status 对外只读，避免调用方改到池内状态）。
+func cloneCat(c *CatState) *CatState {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	return &cp
+}
+
 type Status struct {
 	RefreshRisk   *RefreshRiskStatus `json:"refresh_risk,omitempty"`
 	UID           string             `json:"uid"`
@@ -42,7 +73,9 @@ type Status struct {
 	CoolRemaining int64              `json:"cool_remaining_sec,omitempty"`
 	Until         time.Time          `json:"until,omitempty"`
 	Reason        string             `json:"reason,omitempty"`
-	SoftStreak    int                `json:"soft_streak,omitempty"` // 连续软冷却次数（指数退避指数，见 entry.softStreak）
+	// Cat 最近一次猫猫巡检看到的猫/旅行状态（只读展示，见 CatState）。
+	Cat        *CatState `json:"cat,omitempty"`
+	SoftStreak int       `json:"soft_streak,omitempty"` // 连续软冷却次数（指数退避指数，见 entry.softStreak）
 	// RateLimitedModels 当前仍在限额的模型列表（issue #36 限额台账）。
 	// 仅「带解析时间 6004」触发的模型级独立冷却（modelCooldowns 未到期条目）时非空，
 	// 每模型一行；运维据此看到"账号 A 的模型 X 还在限额中，预计 Z 时间恢复"。到期即消失（零回归）。
@@ -147,7 +180,9 @@ type entry struct {
 	lastCheckinDay    string
 	lastCheckinStatus string    // ok / already / fail
 	lastCheckinAt     time.Time // 最近一次签到动作时刻
-	lastUsed          time.Time // 最近被选中时刻（防并发撞号）
+	// cat 最近一次旅行巡检看到的猫/旅行状态（只读展示，持久化以便重启后账号页仍有数据）。
+	cat      *CatState
+	lastUsed time.Time // 最近被选中时刻（防并发撞号）
 	// usedSeq 单调递增的选中序号：每次被 pick 选中时取 p.pickSeq 自增值。
 	// Windows 等平台 time.Now() 精度有限（~0.5ms），高并发/快速连续选号时多个
 	// 账号 lastUsed 完全相等，基于 wall-clock 的 LRU/防惊群判定失效（高并发/低精度时钟下：
@@ -384,9 +419,11 @@ type stateAccount struct {
 	LastCheckinDay    string    `json:"last_checkin_day,omitempty"`
 	LastCheckinStatus string    `json:"last_checkin_status,omitempty"`
 	LastCheckinAt     time.Time `json:"last_checkin_at,omitempty"`
-	Until             time.Time `json:"until,omitempty"`
-	CoolKind          CoolKind  `json:"cool_kind"`
-	SuccessCount      int64     `json:"success_count,omitempty"`
+	// Cat 最近一次旅行巡检看到的猫/旅行状态（持久化：重启后账号页的猫猫列不会变空）。
+	Cat          *CatState `json:"cat,omitempty"`
+	Until        time.Time `json:"until,omitempty"`
+	CoolKind     CoolKind  `json:"cool_kind"`
+	SuccessCount int64     `json:"success_count,omitempty"`
 	// err_total 累计错误计数。旧版 err_count（连续错误）仍可读：加载时映射到 err_total，
 	// 仅作一次性迁移，不再回写 err_count。
 	// 运维可见的运行态计数（err_total/soft_streak/session_dead_fails/credits_expiring）

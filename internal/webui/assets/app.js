@@ -53,6 +53,20 @@ function el(tag, opts = {}, children = []) {
   return node;
 }
 
+// fmtAgo 把 ISO 时间渲染成「x 分钟前 / x 小时前 / x 天前」（本地时区、粗粒度够用）。
+function fmtAgo(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (sec < 90) return '刚刚';
+  const min = Math.round(sec / 60);
+  if (min < 90) return min + ' 分钟前';
+  const h = Math.round(min / 60);
+  if (h < 36) return h + ' 小时前';
+  return Math.round(h / 24) + ' 天前';
+}
+
 function fmtNum(n) {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return '–';
   return Number(n).toLocaleString();
@@ -641,6 +655,45 @@ function statusBadge(a) {
   return el('span', { class: 'badge text-bg-success status-badge', text: '在线' });
 }
 
+// catBadge 猫猫状态：来自最近一次旅行巡检的快照（a.cat），不是实时查询。
+// none=未领养 / idle=空闲(或今日已派出) / traveling=旅行中 / arrived=到站可领 N / error=查询失败。
+// 从没巡检过（没有 a.cat）时返回 null：不占位，避免新号一上来就显示"未知"。
+function catBadge(a) {
+  const c = a.cat;
+  if (!c || !c.state) return null;
+  let text = '';
+  let cls = 'text-bg-secondary';
+  switch (c.state) {
+    case 'none':
+      text = '未领猫';
+      break;
+    case 'idle':
+      text = c.daily_limit_reached ? '今日已派' : '猫空闲';
+      cls = c.daily_limit_reached ? 'text-bg-secondary' : 'text-bg-success';
+      break;
+    case 'traveling':
+      text = '旅行中';
+      cls = 'text-bg-info';
+      break;
+    case 'arrived':
+      text = '可领 ' + fmtNum(c.reward || 0);
+      cls = 'text-bg-warning';
+      break;
+    case 'error':
+      text = '猫状态未知';
+      cls = 'text-bg-danger';
+      break;
+    default:
+      text = c.state;
+  }
+  const tip = [
+    c.buddy ? '猫：' + c.buddy : '',
+    c.detail || '',
+    c.updated_at ? '更新于 ' + fmtAgo(c.updated_at) : '',
+  ].filter(Boolean).join(' · ');
+  return el('span', { class: 'badge cat-badge ' + cls, text: text, title: tip });
+}
+
 function credentialText(a) {
   if (!a.has_credential) return '无 accessToken';
   if (!a.can_refresh) return '仅 accessToken';
@@ -702,14 +755,15 @@ async function loadAccounts() {
         })]),
         el('td', { class: 'font-monospace small', text: a.uid }),
         el('td', { text: a.realm || '–' }),
-        el('td', {}, [
+        el('td', {}, [el('div', { class: 'badge-row' }, [
           statusBadge(a),
+          catBadge(a),
           a.checked_in_today ? el('span', {
-            class: 'badge text-bg-success-subtle text-success-emphasis ms-1',
+            class: 'badge text-bg-success-subtle text-success-emphasis',
             text: '今日已签',
             title: a.last_checkin_status ? '最近一次：' + a.last_checkin_status : '',
           }) : null,
-        ].filter(Boolean)),
+        ].filter(Boolean))]),
         el('td', { class: 'text-start', text: fmtNum(a.credits) }),
         el('td', { class: 'text-start', text: fmtNum(a.in_flight) }),
         el('td', { class: 'small text-body-secondary', text: credentialText(a) }),

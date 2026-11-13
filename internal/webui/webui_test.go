@@ -454,3 +454,33 @@ func TestSettingsAndSetupWiring(t *testing.T) {
 		}
 	}
 }
+
+// 账号表「状态」列同时展示 状态 / 猫猫 / 今日已签 三个标签：列要够宽、UID 要收窄。
+//
+// 回归背景：账号表原来是自动布局，UID 列被内容均分拿走多余空白，状态列塞不下猫猫
+// 标签；改成 fixed 布局并给出列宽比例。猫猫状态读池里的快照（pool.CatState，由旅行
+// 巡检写入），页面打开时不为每行额外打上游；没巡检过的账号不占位。
+func TestAccountsCatColumnWiring(t *testing.T) {
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{"catBadge", "badge-row", "a.cat", "fmtAgo"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("app.js 缺少 %s（猫猫状态列）", want)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	cssBody := css.Body.String()
+	for _, want := range []string{
+		"#view-accounts table th:nth-child(4)", // 状态列加宽
+		"#view-accounts table th:nth-child(2)", // UID 列收窄
+		".cat-badge",
+		"#view-accounts .badge-row",
+	} {
+		if !strings.Contains(cssBody, want) {
+			t.Errorf("app.css 缺少 %s（状态列布局/猫猫标签）", want)
+		}
+	}
+}

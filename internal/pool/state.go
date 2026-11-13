@@ -186,6 +186,37 @@ func (p *Pool) RestingState(uid string) (resting, ok bool) {
 	return e.resting, true
 }
 
+// SetCat 记录最近一次猫猫巡检看到的状态（旅行任务写，账号页/接口只读展示）。
+//
+// 只是展示快照（见 CatState）：不参与选号、冷却、禁用判定。落盘走软档（30s），
+// 因为它一天只更新几次，没必要挤进 5s 的关键档。
+func (p *Pool) SetCat(uid string, cat CatState) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.byUID[uid]
+	if !ok {
+		return false
+	}
+	c := cat
+	if c.UpdatedAt.IsZero() {
+		c.UpdatedAt = time.Now()
+	}
+	e.cat = &c
+	p.softDirty.Store(true)
+	return true
+}
+
+// CatOf 读单个账号的猫猫状态快照（无记录返回 nil, false）。
+func (p *Pool) CatOf(uid string) (*CatState, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	e, ok := p.byUID[uid]
+	if !ok || e.cat == nil {
+		return nil, false
+	}
+	return cloneCat(e.cat), true
+}
+
 // DisabledState 读单个账号的禁用态与来源（供端点回显）。uid 不存在时 ok=false。
 func (p *Pool) DisabledState(uid string) (disabled bool, reason string, source DisabledSource, ok bool) {
 	p.mu.RLock()
@@ -615,6 +646,7 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 		LastCheckinDay:    e.lastCheckinDay,
 		LastCheckinStatus: e.lastCheckinStatus,
 		LastCheckinAt:     e.lastCheckinAt,
+		Cat:               cloneCat(e.cat),
 		SuccessCount:      e.successCount,
 		ErrTotal:          e.errTotal,
 		LastSuccessTime:   e.lastSuccess,

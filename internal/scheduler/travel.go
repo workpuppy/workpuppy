@@ -9,6 +9,7 @@ import (
 
 	"wp/internal/auth"
 	"wp/internal/logfmt"
+	"wp/internal/pool"
 	"wp/internal/upstream"
 )
 
@@ -105,10 +106,14 @@ func (s *Scheduler) runTravel(ctx context.Context) {
 // 账号内的请求（buddy-info → [领养前置上报] → travel/status → 派出/领奖）之间隔一个
 // 0.5~3s 的随机间隔（s.intraJitter）：同一账号同一秒连打多个请求本身就是机器特征。
 // 返回 false 表示 ctx 取消，调用方应停止本轮遍历。
+//
+// 顺带把"这次看到什么"记进池（pool.CatState）：账号页的猫猫列读这份快照，
+// 不额外打上游（上游没有批量查猫接口）。记录失败不影响巡检本身。
 func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 	buddy, err := s.cfg.Upstream.BuddyInfo(a)
 	if err != nil {
 		log.Printf("travel %s: buddy-info: %v", logfmt.Label(a.UID, a.Nickname), err)
+		s.recordCat(a, pool.CatState{State: "error", Detail: "buddy-info 查询失败"})
 		return true
 	}
 	if buddy == nil {
@@ -120,6 +125,7 @@ func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 			if ctx.Err() != nil {
 				return false // 优雅停机：剩余账号下轮再巡
 			}
+			s.recordCat(a, pool.CatState{State: "none", Detail: "领养前置对话量未达"})
 			return true // 上报没发满：本轮不领养（400 是必然结果，不必白打）
 		}
 		if !s.intraJitter(ctx) {
@@ -127,6 +133,7 @@ func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 		}
 		// justSent=true 说明门槛刚达成，属新状态，豁免 adoptTried 当日防抖。
 		s.travelAdopt(a, justSent)
+		s.recordCat(a, pool.CatState{State: "none", Detail: "已发起领养"})
 		return true
 	}
 	if !s.intraJitter(ctx) {
@@ -135,22 +142,47 @@ func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 	ts, err := s.cfg.Upstream.TravelStatus(a)
 	if err != nil {
 		log.Printf("travel %s: status: %v", logfmt.Label(a.UID, a.Nickname), err)
+		s.recordCat(a, pool.CatState{State: "error", Buddy: buddy.Name, Detail: "travel/status 查询失败"})
 		return true
 	}
 	if !s.intraJitter(ctx) {
 		return false
 	}
+	cat := pool.CatState{
+		State:             ts.State,
+		Buddy:             buddy.Name,
+		Reward:            ts.RewardCredit,
+		DailyLimitReached: ts.DailyLimitReached,
+	}
 	switch ts.State {
 	case travelStateArrived:
 		s.travelClaim(a, ts)
+		cat.Detail = "已领奖"
 	case travelStateIdle:
 		s.travelDepart(a, ts)
+		if ts.DailyLimitReached {
+			cat.Detail = "今日已派出"
+		} else {
+			cat.Detail = "已派出"
+		}
 	case travelStateTraveling:
 		log.Printf("travel %s: skip (traveling record=%d)", logfmt.Label(a.UID, a.Nickname), ts.RecordID)
+		cat.Detail = "旅行中"
 	default:
 		log.Printf("travel %s: skip (unknown state %q)", logfmt.Label(a.UID, a.Nickname), ts.State)
+		cat.Detail = "未知状态 " + ts.State
 	}
+	s.recordCat(a, cat)
 	return true
+}
+
+// recordCat 把本号这次巡检看到的猫猫状态记进池（只读展示用，不做任何判定）。
+func (s *Scheduler) recordCat(a *auth.Auth, cat pool.CatState) {
+	if s.cfg.Pool == nil || a == nil {
+		return
+	}
+	cat.UpdatedAt = time.Now()
+	s.cfg.Pool.SetCat(a.UID, cat)
 }
 
 // travelDepart 空闲且未达当日上限时派出（每日 1 次，自然日 00:00 CST 重置）。

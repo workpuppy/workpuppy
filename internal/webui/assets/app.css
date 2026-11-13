@@ -194,13 +194,48 @@
   padding-bottom: 0.55rem;
 }
 
+/* 账号表：固定列宽（fixed），把「状态」列加宽（现在要塞 状态 + 猫猫 + 今日已签 三个
+ * 标签），「UID」列收窄（uid 本身短，之前被内容均分挤出了多余空白）。 */
+#view-accounts table {
+  table-layout: fixed;
+  min-width: 1180px; /* 窄屏交给 .table-responsive 横向滚动 */
+}
+
+#view-accounts table th:nth-child(1) { width: 13%; } /* 昵称 */
+#view-accounts table th:nth-child(2) { width: 8%; }  /* UID（短，收窄） */
+#view-accounts table th:nth-child(3) { width: 7%; }  /* 版本 */
+#view-accounts table th:nth-child(4) { width: 22%; } /* 状态：状态 + 猫猫 + 今日已签 */
+#view-accounts table th:nth-child(5) { width: 9%; }  /* 积分 */
+#view-accounts table th:nth-child(6) { width: 6%; }  /* 在途 */
+#view-accounts table th:nth-child(7) { width: 14%; } /* 凭证 */
+#view-accounts table th:nth-child(8) { width: 10%; } /* 线路/权重 */
+#view-accounts table th:nth-child(9) { width: 11%; } /* 操作 */
+
+/* 状态列里的多个标签排一行、放不下就换行（不要挤成竖排单字）。 */
+#view-accounts .badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+/* 猫猫标签比状态标签小一号：同一列里先读「能不能接单」，再看猫。 */
+#view-accounts .cat-badge {
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+/* fixed 布局下长昵称 / 凭证说明会顶出单元格：允许列内换行。 */
+#view-accounts table td {
+  overflow-wrap: anywhere;
+}
+
 /* 模型表：描述最长、给最多；两个数字列留够 4 个字头宽；能力列放得下
  * 「图像 · 工具 · 推理 · 仅推理」一行。fixed 布局让百分比列宽真正生效。 */
 #view-models table {
   table-layout: fixed;
   min-width: 1020px; /* 窄屏时宁可由 .table-responsive 横向滚动，也不挤成换行 */
 }
-
 #view-models table th:nth-child(1) { width: 13%; } /* 模型 */
 #view-models table th:nth-child(2) { width: 28%; } /* 描述 */
 #view-models table th:nth-child(3) { width: 9%; }  /* 上下文 */
