@@ -446,10 +446,13 @@ docker compose restart wp
 页面响应带 CSP（`default-src 'self'`）、`nosniff`、`frame-ancestors 'none'`，
 渲染一律 `textContent`（账号昵称等外部输入不进 HTML）。
 
-**升级后不需要强刷**：除 vendored 框架包（`tabler.min.css` / `bootstrap.bundle.min.js`，保留
-`max-age=300`）外，入口页与 `app.js` / `app.css` 一律 `no-cache` + 内容哈希 ETag —— 浏览器每次
-回来校验，未变回 `304`（几十字节），变了立刻拿新版。这样不会出现"HTML 是新版、`app.js` 还是旧版"
-的错配（曾因此出现概览图表区空白，最长持续 5 分钟）。
+**缓存与升级**：`/assets/*` 的 URL 都带 `?v=<内容哈希>`（`Version()` 由全部前端资源算出），
+因此可以 `public, max-age=31536000, immutable` 长缓存一年；入口页保持 `no-cache`，升级后
+立刻拿到新的资源 URL，不会出现"HTML 是新版、`app.js` 还是旧版"的错配。
+
+`/assets/version.json` 永远 `no-store`：长驻页面每 60 秒查一次，发现服务端已经换了新前端，
+就在顶部提示「前端有新版本」，点「立即更新并重新登录」会清掉本地密码与 Cache Storage、
+带一次性参数回源，重新拉取整套前端资源（不会静默强刷，避免打断正在看的页面）。
 
 ---
 

@@ -78,7 +78,7 @@ async function main() {
     ready = await evalJS(`(() => {
       const hasDom = !!document.getElementById('loginPassword');
       const booted = document.documentElement.dataset.appBooted === '1';
-      const css = [...document.styleSheets].some(s => (s.href || '').endsWith('app.css'));
+      const css = [...document.styleSheets].some(s => (s.href || '').includes('app.css'));
       return hasDom && booted && css;
     })()`);
     if (ready) break;
@@ -86,15 +86,15 @@ async function main() {
   }
   if (!ready) throw new Error('页面 10s 内未就绪（DOM/app.css/app.js）');
 
-  // 启动遮罩收起 = 认证状态已确定（登录 / 初始化 / 主界面）。先等它消失再断言首屏，
-  // 因为新的加载策略在"本地密码校验"完成前不会渲染登录页（避免刷新时闪登录页）。
+  // 等首屏稳定：没有本地密码时 boot() 会先问一次"是否已初始化"，再显示登录/初始化。
+  // 两者都挂在 #loginWrap 里，等它可见即可断言。
   let settled = false;
   for (let i = 0; i < 50; i++) {
-    settled = await evalJS(`(() => { const s = document.getElementById('bootSplash'); return !s || s.hidden; })()`);
+    settled = await evalJS(`(() => { const l = document.getElementById('loginWrap'); return !!l && l.offsetParent !== null; })()`);
     if (settled) break;
     await sleep(100);
   }
-  if (!settled) throw new Error('启动遮罩 5s 内未收起');
+  if (!settled) throw new Error('登录/初始化首屏 5s 内未出现');
 
   const before = await evalJS(`(() => {
     const login = document.getElementById('loginWrap'), app = document.getElementById('app');

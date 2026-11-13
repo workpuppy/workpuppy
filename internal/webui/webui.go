@@ -17,21 +17,22 @@
 //     出现内联 <script> 或 onclick= 属性；所有交互走 assets/app.js 的事件委托。
 //   - 不开 `Access-Control-Allow-Origin`：跨站页面读不到管理面数据。
 //
-// 缓存策略（升级后必须立刻看到新界面，因此按"谁写的"分两类）：
-//   - 第三方框架的 vendored 编译产物（tabler.min.css / bootstrap.bundle.min.js）：
-//     只在升级 vendored 版本时变，体积大，保留短 max-age 缓存；
-//   - 其余资源（index.html / app.js / app.css / NOTICE.txt 等我们自己维护的文件）：
-//     `no-cache` + 内容哈希 ETag —— 浏览器每条请求都回来校验，未变回 304（几十字节），
-//     变了立刻拿新的。这样不会出现"HTML 是新版、app.js 还是旧版"的半新半旧错配
-//     （曾经踩过：概览改折线图后，旧 app.js 找不到新 DOM，图表区一片空白）。
+// 缓存策略：入口页 no-cache，静态资源长缓存 + 版本化 URL。
+//   - index.html 每次回来校验（no-cache + ETag）：升级后立刻拿到新的资源 URL；
+//   - /assets/* 的 URL 带 `?v=<hash>`（构建期/启动期由全部资源内容算出），
+//     因此可以 `immutable` 长缓存一年；内容一变 URL 就变，天然不会新旧混用；
+//   - /assets/version.json 永远 no-store：长驻页面靠它发现"服务端已经换了新前端"，
+//     然后提示用户登出并强制刷新（见 app.js checkFrontendVersion）。
 package webui
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"io/fs"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -39,36 +40,47 @@ import (
 //go:embed assets
 var assetsFS embed.FS
 
-// frameworkAssets 第三方框架的 vendored 编译产物（按 embed 里的文件名判断）。
-// 它们随 vendored 版本固定、体积大且极少变，保留 max-age 缓存；名单之外一律
-// no-cache + ETag —— 新增自己的资源文件时什么都不用改，天然走"升级即时生效"。
-var frameworkAssets = map[string]bool{
-	"tabler.min.css":          true,
-	"bootstrap.bundle.min.js": true,
-	"echarts.min.js":          true,
-}
+// versionToken index.html 里资源 URL 的版本占位符（启动时替换成真实内容哈希）。
+const versionToken = "__WP_VERSION__"
 
-// etagCache 资源内容哈希缓存：embed.FS 编译期固定，每个文件算一次即可。
-var etagCache sync.Map // name -> etag（含引号，形如 `"a1b2c3..."`）
+// versionHash 由全部 embed 资源内容算出的短哈希：任一资源变化都会换版本号。
+// 用 sync.Once 缓存 —— embed.FS 在编译期固定，进程内只需要算一次。
+var (
+	versionOnce sync.Once
+	versionHash string
+)
+
+// Version 返回前端资源版本（12 位十六进制）。它同时用于资源 URL 与 version.json。
+func Version() string {
+	versionOnce.Do(func() {
+		var names []string
+		_ = fs.WalkDir(assetsFS, "assets", func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			names = append(names, p)
+			return nil
+		})
+		sort.Strings(names)
+		h := sha256.New()
+		for _, name := range names {
+			raw, err := fs.ReadFile(assetsFS, name)
+			if err != nil {
+				continue
+			}
+			h.Write([]byte(name))
+			h.Write([]byte{0})
+			h.Write(raw)
+		}
+		versionHash = hex.EncodeToString(h.Sum(nil))[:12]
+	})
+	return versionHash
+}
 
 // contentETag 由内容算强 ETag（取 sha256 前 8 字节，够防碰撞且短）。
 func contentETag(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return `"` + hex.EncodeToString(sum[:8]) + `"`
-}
-
-// assetETag 取某个 embed 资源的 ETag（读不到文件返回空串，交给 FileServer 出 404）。
-func assetETag(sub fs.FS, name string) string {
-	if v, ok := etagCache.Load(name); ok {
-		return v.(string)
-	}
-	raw, err := fs.ReadFile(sub, name)
-	if err != nil {
-		return ""
-	}
-	et := contentETag(raw)
-	etagCache.Store(name, et)
-	return et
 }
 
 // etagMatched 判断 If-None-Match 是否命中我们的 ETag（容错弱校验前缀与逗号列表）。
@@ -115,10 +127,12 @@ func Handler() http.Handler {
 	files := http.FileServer(http.FS(sub))
 	// 入口页直接读字节发出去：http.FileServer 对 "/index.html" 有特殊处理
 	// （301 重定向到 "./"），会让 "/" 变成 301，测试与浏览器都多一跳。
-	index, err := fs.ReadFile(sub, "index.html")
+	rawIndex, err := fs.ReadFile(sub, "index.html")
 	if err != nil {
 		panic("webui: 缺少 assets/index.html: " + err.Error())
 	}
+	// 资源 URL 带上内容哈希：内容一变 URL 就变，浏览器可以安心缓存一年。
+	index := bytes.ReplaceAll(rawIndex, []byte(versionToken), []byte(Version()))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", csp)
@@ -127,6 +141,12 @@ func Handler() http.Handler {
 
 		path := r.URL.Path
 		switch {
+		// 版本探针：永远 no-store。长驻页面靠它发现"服务端换了新前端"。
+		case path == "/assets/version.json":
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = w.Write([]byte(`{"version":"` + Version() + `"}`))
+
 		case path == "/" || path == "/index.html":
 			// 页面每次回来校验（no-cache + ETag）：升级后立刻看到新界面，未变只回 304。
 			etag := contentETag(index)
@@ -140,21 +160,9 @@ func Handler() http.Handler {
 			_, _ = w.Write(index)
 
 		case strings.HasPrefix(path, "/assets/"):
+			// 资源 URL 自带 ?v=<内容哈希>：内容变则 URL 变，可以 immutable 长缓存。
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			name := strings.TrimPrefix(path, "/assets/")
-			if frameworkAssets[name] {
-				// 框架基础包：内容随 vendored 版本固定，给短缓存、不回源校验。
-				w.Header().Set("Cache-Control", "public, max-age=300")
-			} else {
-				// 其余资源：no-cache + 内容哈希 ETag，浏览器每次回来问一句。
-				w.Header().Set("Cache-Control", "no-cache")
-				if etag := assetETag(sub, name); etag != "" {
-					w.Header().Set("ETag", etag)
-					if etagMatched(r.Header.Get("If-None-Match"), etag) {
-						w.WriteHeader(http.StatusNotModified)
-						return
-					}
-				}
-			}
 			r = cloneWithPath(r, "/"+name)
 			files.ServeHTTP(w, r)
 

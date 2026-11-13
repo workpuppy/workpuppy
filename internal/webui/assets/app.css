@@ -270,32 +270,15 @@
   display: none !important;
 }
 
-/* ── 启动遮罩 ──────────────────────────────────────────────────────────
- * 认证状态确认前只显示品牌与加载提示，避免刷新任意页面时先闪一下登录表单。
- * 隐藏由 app.js 的 hideBootSplash() 负责（showLogin/showApp/showSetup 都会调用）。 */
-.wp-boot-text::after {
-  content: '';
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  margin-left: 8px;
-  vertical-align: -1px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: wp-boot-spin 0.8s linear infinite;
+/* ── 前端版本更新横幅 ──────────────────────────────────────────────────
+ * 长驻页面发现服务端换了新前端时出现（见 app.js checkFrontendVersion）。
+ * 点击按钮会登出 + 清缓存 + 回源，拿到新版本的全部资源。 */
+.wp-version-banner {
+  background: color-mix(in srgb, #f59f00 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #f59f00 38%, transparent);
+  color: var(--tblr-body-color, #182433);
 }
 
-@keyframes wp-boot-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .wp-boot-text::after {
-    animation: none;
-    border-right-color: currentColor;
-  }
-}
 /* ── 登录页 ──────────────────────────────────────────────────────────── */
 .wp-login {
   /* 极淡的双径向渐变：比纯灰底有层次，又不至于抢走表单的注意力。 */

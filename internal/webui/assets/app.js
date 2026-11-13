@@ -16,6 +16,9 @@
 
 const PW_STORE = 'wp.adminPassword';
 const THEME_STORE = 'wp.theme';
+// 前端资源版本（/assets/version.json）与本地已加载版本的键。
+const VERSION_STORE = 'wp.frontend.version';
+const VERSION_POLL_MS = 60000;
 
 const state = {
   password: localStorage.getItem(PW_STORE) || '',
@@ -117,15 +120,8 @@ function clearAlert() {
 }
 
 // ── 登录态 ──────────────────────────────────────────────────
-// hideBootSplash 收起启动遮罩：认证状态确定后才允许露出登录页或主界面，
-// 否则刷新任意页面都会先闪一下登录表单（体验问题，见 boot 注释）。
-function hideBootSplash() {
-  const splash = $('#bootSplash');
-  if (splash) splash.hidden = true;
-}
 
 function showLogin(message) {
-  hideBootSplash();
   stopOverviewPolling();
   state.setupMode = false;
   $('#app').hidden = true;
@@ -147,7 +143,6 @@ function showLogin(message) {
 }
 
 function showApp() {
-  hideBootSplash();
   $('#loginWrap').hidden = true;
   $('#app').hidden = false;
 }
@@ -1229,7 +1224,6 @@ async function fetchSetupStatus() {
 }
 
 function showSetup(minLen) {
-  hideBootSplash();
   state.setupMode = true;
   $('#app').hidden = true;
   $('#loginWrap').hidden = false;
@@ -1950,6 +1944,7 @@ function bind() {
 
   // 设置页
   if ($('#btnSaveConfig')) $('#btnSaveConfig').addEventListener('click', saveConfig);
+  if ($('#btnApplyUpdate')) $('#btnApplyUpdate').addEventListener('click', applyFrontendUpdate);
   if ($('#btnResetAll')) $('#btnResetAll').addEventListener('click', resetAll);
   if ($('#btnChangePassword')) $('#btnChangePassword').addEventListener('click', changePassword);
   if ($('#cfgSearch')) {
@@ -1990,13 +1985,94 @@ function filterSettings(q) {
   });
 }
 
-// boot：先问"密码初始化了吗"，再决定显示初始化向导还是登录页。
-// 有本地密码就先验一次：密码改过/失效就清掉并停在登录页。
+// ── 前端版本 ─────────────────────────────────────────────────────
+// /assets/version.json 永远 no-store，值是全部前端资源的内容哈希；资源 URL 也带
+// 同一个 ?v=，所以"版本变了"等价于"服务端换了整套前端"。长驻页面定期查它：
+// 发现本地版本落后就提示用户重新登录 + 清缓存 + 回源，避免新旧 JS 混用。
+// PAGE_VERSION 是"当前页面实际加载到的前端版本"（index.html 里的 meta，服务端替换）。
+// 用它区分两种情况：正常刷新后页面已经是新版（只需把本地记录补上），
+// 以及长驻页面仍是旧版（服务端 version.json 已经变了，需要提示更新）。
+function pageVersion() {
+  const m = document.querySelector('meta[name="wp-frontend-version"]');
+  return (m && m.content) || '';
+}
+
+async function checkFrontendVersion() {
+  try {
+    const mine = pageVersion();
+    if (!mine) return;
+    // 页面本身就是最新版：把本地记录对齐（避免"刚刷新完又提示更新"的假警报）。
+    if (localStorage.getItem(VERSION_STORE) !== mine) {
+      localStorage.setItem(VERSION_STORE, mine);
+    }
+    const resp = await fetch('/assets/version.json', { cache: 'no-store' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const latest = String(data.version || '');
+    if (!latest) return;
+    const box = $('#versionBanner');
+    if (!box) return;
+    if (latest === mine) {
+      box.classList.add('d-none');
+      return;
+    }
+    const label = $('#versionBannerNew');
+    if (label) label.textContent = latest;
+    box.classList.remove('d-none');
+  } catch {
+    /* 版本探针失败不影响使用（离线/接口尚未接线） */
+  }
+}
+
+// applyFrontendUpdate 登出 + 清缓存 + 带一次性参数回源，拿到新版本的全部资源。
+async function applyFrontendUpdate() {
+  try {
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch {
+    /* Cache Storage 不可用时忽略 */
+  }
+  clearSession();
+  localStorage.removeItem(VERSION_STORE);
+  stopOverviewPolling();
+  const u = new URL('/', location.origin);
+  u.searchParams.set('updated', String(Date.now()));
+  location.replace(u.toString());
+}
+
+// boot：有本地密码就**立即**渲染主界面（数据请求自带凭据，失效会 401 回登录页），
+// 不再等一次网络往返、也不再画加载遮罩 —— 刷新时不会闪登录页或 Logo。
+// 没有密码才去问"是否已初始化"，决定显示登录还是初始化向导。
 (async function boot() {
   // 标记：app.js 已执行并接管页面（自动化脚本据此判断可交互，见 scripts/ui-login-check.mjs）。
   document.documentElement.dataset.appBooted = '1';
   applyTheme(localStorage.getItem(THEME_STORE) || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   bind();
+
+  checkFrontendVersion();
+  setInterval(checkFrontendVersion, VERSION_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkFrontendVersion();
+  });
+
+  if (state.password) {
+    showApp();
+    render();
+    refreshConfigMeta();
+    try {
+      await login(state.password);
+    } catch (e) {
+      clearSession();
+      if (String(e.message || '').includes('尚未初始化')) {
+        showSetup(8);
+        return;
+      }
+      showLogin('登录失败：' + String(e.message || e));
+    }
+    return;
+  }
 
   const st = await fetchSetupStatus();
   if (st && st.initialized === false) {
@@ -2007,17 +2083,5 @@ function filterSettings(q) {
     showLogin('管理面已关闭：在 data/config.json 里把 admin.enabled 改回 true 后重启容器');
     return;
   }
-  if (!state.password) {
-    showLogin(null);
-    return;
-  }
-  try {
-    await login(state.password);
-    showApp();
-    render();
-    refreshConfigMeta();
-  } catch (e) {
-    clearSession();
-    showLogin('登录失败：' + String(e.message || e));
-  }
+  showLogin(null);
 })();

@@ -2,13 +2,13 @@
 <html lang="zh-CN" data-bs-theme="light">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">`n  <meta name="wp-frontend-version" content="__WP_VERSION__">
   <title>WorkPuppy 管理后台</title>
   <!-- 内联 SVG favicon：省一个请求，也避免浏览器去要 /favicon.ico 打出一条 404 噪音。 -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23206bc4'/%3E%3Ctext x='32' y='42' font-size='28' font-family='system-ui,sans-serif' font-weight='700' text-anchor='middle' fill='white'%3EWP%3C/text%3E%3C/svg%3E">
   <!-- 样式层：Tabler（内嵌 Bootstrap 5 的完整构建）在前，app.css 在后负责覆盖。 -->
-  <link rel="stylesheet" href="/assets/tabler.min.css">
-  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/tabler.min.css?v=__WP_VERSION__">
+  <link rel="stylesheet" href="/assets/app.css?v=__WP_VERSION__">
 </head>
 <body>
 
@@ -122,15 +122,6 @@
   </symbol>
 </svg>
 
-<!-- ── 启动遮罩 ────────────────────────────────────────────────────────
-     认证状态确认前**不渲染登录页**：否则刷新任意页面时都会先闪一下登录表单，
-     再跳回当前视图（本地密码校验是一次网络往返）。这里只放品牌与加载提示。 -->
-<div id="bootSplash" class="page page-center wp-login">
-  <div class="text-center">
-    <span class="wp-brand-mark mx-auto"><svg class="wp-ico" aria-hidden="true"><use href="#ti-paw"/></svg></span>
-    <div class="text-body-secondary small mt-3 wp-boot-text">正在加载…</div>
-  </div>
-</div>
 
 <!-- ── 登录页（凭据只存浏览器本地；密码在首次使用时初始化）────────── -->
 <div id="loginWrap" hidden class="page page-center wp-login">
@@ -223,6 +214,14 @@
     </div>
   </div>
 
+  <!-- 前端版本更新提示：长驻页面发现服务端换了新前端时出现（见 app.js checkFrontendVersion）。 -->
+  <div id="versionBanner" class="wp-version-banner d-none" role="alert">
+    <div class="container-xxl d-flex flex-wrap align-items-center gap-2 py-2">
+      <svg class="wp-ico text-warning" aria-hidden="true"><use href="#ti-alert-triangle"/></svg>
+      <span class="small">前端有新版本（<code id="versionBannerNew">…</code>），当前页面仍是旧版；需要重新登录并重新加载界面。</span>
+      <button class="btn btn-sm btn-warning ms-auto" id="btnApplyUpdate" type="button">立即更新并重新登录</button>
+    </div>
+  </div>
   <div class="page-wrapper">
     <div class="page-body">
       <div class="container-xxl py-4">
@@ -623,8 +622,8 @@
 
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts"></div>
 
-<script src="/assets/bootstrap.bundle.min.js"></script>
-<script src="/assets/echarts.min.js"></script>
-<script src="/assets/app.js"></script>
+<script src="/assets/bootstrap.bundle.min.js?v=__WP_VERSION__"></script>
+<script src="/assets/echarts.min.js?v=__WP_VERSION__"></script>
+<script src="/assets/app.js?v=__WP_VERSION__"></script>
 </body>
 </html>

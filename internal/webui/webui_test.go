@@ -165,50 +165,67 @@ func TestAdminPageHasQRCodeWiring(t *testing.T) {
 	}
 }
 
-// 静态资源缓存策略：除了第三方框架包，其余资源一律 no-cache + ETag（升级即时生效）。
-//
-// 回归背景：升级后曾出现"HTML 是新版、app.js 还是旧版"（旧 JS 找不到新 DOM，
-// 概览图表区一片空白，最长持续 5 分钟）。现在自己的资源每次回源校验，未变回 304；
-// 只有 vendored 的框架包（tabler.min.css / bootstrap.bundle.min.js）保留短缓存。
+// 缓存策略：入口页 no-cache（每次拿到最新的资源 URL）；/assets/* 的 URL 带内容哈希
+// `?v=…`，所以可以 immutable 长缓存一年；/assets/version.json 永远 no-store，
+// 长驻页面靠它发现"服务端换了新前端"。
 func TestAssetCachePolicy(t *testing.T) {
 	h := Handler()
+	ver := Version()
+	if len(ver) != 12 {
+		t.Fatalf("Version()=%q，期望 12 位十六进制", ver)
+	}
 
-	// 自己的资源 + 入口页：no-cache + ETag，且带 If-None-Match 时回 304 空体。
-	for _, path := range []string{"/", "/assets/app.js", "/assets/app.css", "/assets/NOTICE.txt"} {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("%s code=%d want 200", path, w.Code)
+	// 入口页：no-cache + ETag（未变回 304），且资源 URL 带上当前版本。
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("/ code=%d", w.Code)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("/ Cache-Control=%q want no-cache", cc)
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("/ 缺 ETag（无法做 304 校验）")
+	}
+	html := w.Body.String()
+	if !strings.Contains(html, "/assets/app.js?v="+ver) {
+		t.Error("入口页的资源 URL 未带 ?v=<Version()>")
+	}
+	if strings.Contains(html, "__WP_VERSION__") {
+		t.Error("入口页仍残留 __WP_VERSION__ 占位符")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("If-None-Match", etag)
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, req)
+	if w2.Code != http.StatusNotModified || w2.Body.Len() != 0 {
+		t.Errorf("入口页带 If-None-Match 应回 304 空体，实际 %d/%d", w2.Code, w2.Body.Len())
+	}
+
+	// 静态资源：一年 immutable（URL 版本化，内容变则 URL 变）。
+	for _, path := range []string{"/assets/app.js", "/assets/app.css", "/assets/tabler.min.css", "/assets/bootstrap.bundle.min.js", "/assets/echarts.min.js"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s code=%d", path, rec.Code)
 		}
-		if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
-			t.Errorf("%s Cache-Control=%q want no-cache", path, cc)
-		}
-		etag := w.Header().Get("ETag")
-		if etag == "" {
-			t.Fatalf("%s 缺 ETag（无法做 304 校验）", path)
-		}
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("If-None-Match", etag)
-		w2 := httptest.NewRecorder()
-		h.ServeHTTP(w2, req)
-		if w2.Code != http.StatusNotModified {
-			t.Errorf("%s 带 If-None-Match 应回 304，实际 %d", path, w2.Code)
-		}
-		if w2.Body.Len() != 0 {
-			t.Errorf("%s 304 不应带响应体", path)
+		if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") || !strings.Contains(cc, "max-age=31536000") {
+			t.Errorf("%s Cache-Control=%q want immutable/max-age=31536000", path, cc)
 		}
 	}
 
-	// 框架基础包：保留缓存（不需要回源校验）。
-	for _, path := range []string{"/assets/tabler.min.css", "/assets/bootstrap.bundle.min.js", "/assets/echarts.min.js"} {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("%s code=%d want 200", path, w.Code)
-		}
-		if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=") {
-			t.Errorf("%s Cache-Control=%q want 含 max-age", path, cc)
-		}
+	// 版本探针：no-store，值必须与 Version() 一致（JS 用它判断是否需要更新）。
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/version.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("version.json code=%d", rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("version.json Cache-Control=%q want no-store", cc)
+	}
+	if !strings.Contains(rec.Body.String(), `"version":"`+ver+`"`) {
+		t.Errorf("version.json 内容=%s，want version=%s", rec.Body.String(), ver)
 	}
 }
 
@@ -498,29 +515,44 @@ func TestAccountsNowrapAndCatColumn(t *testing.T) {
 	}
 }
 
-// 启动遮罩 + 概览轮询的接线：不允许刷新时先闪登录页；概览必须走聚合接口。
-func TestOverviewPollingAndBootSplashWiring(t *testing.T) {
+// 概览轮询 + 前端版本更新的接线：刷新不闪屏（没有启动 Logo），资源 URL 带版本号，
+// 长驻页面能通过 version.json 发现服务端换了新前端。
+func TestOverviewPollingAndVersionWiring(t *testing.T) {
+	ver := Version()
 	idx := httptest.NewRecorder()
 	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
 	html := idx.Body.String()
-	for _, want := range []string{`id="bootSplash"`, `id="overviewUpdated"`, `id="loginWrap" hidden`} {
+	for _, want := range []string{`id="overviewUpdated"`, `id="loginWrap" hidden`, `id="versionBanner"`, `id="btnApplyUpdate"`, `name="wp-frontend-version"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("入口页缺少 %s", want)
 		}
+	}
+	if strings.Contains(html, "bootSplash") {
+		t.Error("入口页不应再有启动遮罩（会闪 Logo）")
+	}
+	if !strings.Contains(html, "?v="+ver) {
+		t.Error("资源 URL 应带 ?v=<Version()>（长缓存的前提）")
 	}
 
 	js := httptest.NewRecorder()
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
-	for _, want := range []string{"/admin/overview", "refreshOverview", "startOverviewPolling", "OVERVIEW_POLL_MS"} {
+	for _, want := range []string{
+		"/admin/overview", "refreshOverview", "startOverviewPolling", "OVERVIEW_POLL_MS",
+		"checkFrontendVersion", "pageVersion", "/assets/version.json", "applyFrontendUpdate", "wp.frontend.version",
+	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("app.js 缺少 %s（概览轮询）", want)
+			t.Errorf("app.js 缺少 %s（概览轮询/前端版本）", want)
 		}
 	}
 
 	css := httptest.NewRecorder()
 	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
-	if !strings.Contains(css.Body.String(), ".wp-boot-text") {
-		t.Error("app.css 缺少 .wp-boot-text（启动遮罩）")
+	cssBody := css.Body.String()
+	if !strings.Contains(cssBody, ".wp-version-banner") {
+		t.Error("app.css 缺少 .wp-version-banner（版本更新提示）")
+	}
+	if strings.Contains(cssBody, ".wp-boot-text") {
+		t.Error("app.css 不应再保留启动遮罩样式")
 	}
 }
