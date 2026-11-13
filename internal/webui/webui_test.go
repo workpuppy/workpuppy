@@ -455,18 +455,19 @@ func TestSettingsAndSetupWiring(t *testing.T) {
 	}
 }
 
-// 账号表「状态」列同时展示 状态 / 猫猫 / 今日已签 三个标签：列要够宽、UID 要收窄。
+// 账号表：**任何列都不换行**（含 36 字符 UID），状态列展示 状态 / 猫猫 / 已签。
 //
-// 回归背景：账号表原来是自动布局，UID 列被内容均分拿走多余空白，状态列塞不下猫猫
-// 标签；改成 fixed 布局并给出列宽比例。猫猫状态读池里的快照（pool.CatState，由旅行
-// 巡检写入），页面打开时不为每行额外打上游；没巡检过的账号不占位。
-func TestAccountsCatColumnWiring(t *testing.T) {
+// 回归背景：曾用 fixed + 百分比列宽（UID 8%），UID 被挤成 2~3 行；现在改成
+// 自动布局 + 单元格 nowrap，窄屏交给 .table-responsive 横向滚动。
+// 猫猫状态读池里的快照（pool.CatState，由旅行巡检写入），页面打开时不为每行
+// 额外打上游；没巡检过显示「猫未巡检」而不是留空。
+func TestAccountsNowrapAndCatColumn(t *testing.T) {
 	js := httptest.NewRecorder()
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
-	for _, want := range []string{"catBadge", "badge-row", "a.cat", "fmtAgo"} {
+	for _, want := range []string{"catBadge", "badge-row", "a.cat", "fmtAgo", "猫未巡检", "text: '已签'"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("app.js 缺少 %s（猫猫状态列）", want)
+			t.Errorf("app.js 缺少 %s（账号表猫猫/签到标签）", want)
 		}
 	}
 
@@ -474,14 +475,19 @@ func TestAccountsCatColumnWiring(t *testing.T) {
 	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
 	cssBody := css.Body.String()
 	for _, want := range []string{
-		"#view-accounts table th:nth-child(4)", // 状态列加宽
-		"#view-accounts table th:nth-child(2)", // UID 列收窄
+		"#view-accounts table th",
+		"white-space: nowrap",
+		"flex-wrap: nowrap",
 		".cat-badge",
 		"#view-accounts .badge-row",
 	} {
 		if !strings.Contains(cssBody, want) {
-			t.Errorf("app.css 缺少 %s（状态列布局/猫猫标签）", want)
+			t.Errorf("app.css 缺少 %s（账号表不换行/猫猫标签）", want)
 		}
+	}
+	// 百分比列宽是 UID 折行的根因，不允许再回来。
+	if strings.Contains(cssBody, "#view-accounts table th:nth-child") {
+		t.Error("账号表不应再用百分比列宽（会导致 UID 折行）")
 	}
 }
 

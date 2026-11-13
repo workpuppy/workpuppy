@@ -194,27 +194,28 @@
   padding-bottom: 0.55rem;
 }
 
-/* 账号表：固定列宽（fixed），把「状态」列加宽（现在要塞 状态 + 猫猫 + 今日已签 三个
- * 标签），「UID」列收窄（uid 本身短，之前被内容均分挤出了多余空白）。 */
+/* 账号表：**任何列都不换行**（硬约束）。
+ *
+ * 之前用 fixed + 百分比列宽，UID（36 字符 UUID）被挤成 2~3 行，非常难读。
+ * 现在交给自动布局：单元格 nowrap，表格按内容自动加宽；窄屏由外层
+ * .table-responsive 横向滚动（横向滚动比折行更好读，也不会串行）。
+ * min-width 只是下限，内容更长时表格继续变宽。 */
 #view-accounts table {
-  table-layout: fixed;
-  min-width: 1180px; /* 窄屏交给 .table-responsive 横向滚动 */
+  table-layout: auto;
+  min-width: 1260px;
 }
 
-#view-accounts table th:nth-child(1) { width: 13%; } /* 昵称 */
-#view-accounts table th:nth-child(2) { width: 8%; }  /* UID（短，收窄） */
-#view-accounts table th:nth-child(3) { width: 7%; }  /* 版本 */
-#view-accounts table th:nth-child(4) { width: 22%; } /* 状态：状态 + 猫猫 + 今日已签 */
-#view-accounts table th:nth-child(5) { width: 9%; }  /* 积分 */
-#view-accounts table th:nth-child(6) { width: 6%; }  /* 在途 */
-#view-accounts table th:nth-child(7) { width: 14%; } /* 凭证 */
-#view-accounts table th:nth-child(8) { width: 10%; } /* 线路/权重 */
-#view-accounts table th:nth-child(9) { width: 11%; } /* 操作 */
+#view-accounts table th,
+#view-accounts table td {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
 
-/* 状态列里的多个标签排一行、放不下就换行（不要挤成竖排单字）。 */
+/* 状态列里的多个标签排一行（状态 · 猫猫 · 已签），同样不换行。 */
 #view-accounts .badge-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.25rem;
   align-items: center;
 }
@@ -223,11 +224,6 @@
 #view-accounts .cat-badge {
   font-size: 0.72rem;
   font-weight: 500;
-}
-
-/* fixed 布局下长昵称 / 凭证说明会顶出单元格：允许列内换行。 */
-#view-accounts table td {
-  overflow-wrap: anywhere;
 }
 
 /* 模型表：描述最长、给最多；两个数字列留够 4 个字头宽；能力列放得下

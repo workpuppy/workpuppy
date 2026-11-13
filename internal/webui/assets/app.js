@@ -722,10 +722,17 @@ function statusBadge(a) {
 
 // catBadge 猫猫状态：来自最近一次旅行巡检的快照（a.cat），不是实时查询。
 // none=未领养 / idle=空闲(或今日已派出) / traveling=旅行中 / arrived=到站可领 N / error=查询失败。
-// 从没巡检过（没有 a.cat）时返回 null：不占位，避免新号一上来就显示"未知"。
+// 从没巡检过（没有 a.cat）时显示「猫未巡检」而不是留空：账号页打开时不能为列表
+// 额外请求上游，所以这里只如实说明"还没采集到"，鼠标悬停解释数据来源。
 function catBadge(a) {
   const c = a.cat;
-  if (!c || !c.state) return null;
+  if (!c || !c.state) {
+    return el('span', {
+      class: 'badge cat-badge text-bg-secondary',
+      text: '猫未巡检',
+      title: '猫状态来自最近一次旅行巡检的快照（不会为列表额外请求上游）；该账号还没巡检过',
+    });
+  }
   let text = '';
   let cls = 'text-bg-secondary';
   switch (c.state) {
@@ -825,7 +832,7 @@ async function loadAccounts() {
           catBadge(a),
           a.checked_in_today ? el('span', {
             class: 'badge text-bg-success-subtle text-success-emphasis',
-            text: '今日已签',
+            text: '已签',
             title: a.last_checkin_status ? '最近一次：' + a.last_checkin_status : '',
           }) : null,
         ].filter(Boolean))]),
