@@ -353,15 +353,16 @@ function stopOverviewPolling() {
 
 // ── 账号 ────────────────────────────────────────────────────
 
-// ── 积分曲线（ECharts：流水堆叠面积 + 余额折线）────────────────────────────
+// ── 积分曲线（ECharts：四条独立折线，共用对数轴）────────────────────────────
 // 数据源：GET /admin/credit-daily?days=30 —— histories[] 已按天给出**每账号**
 // earned/spent/adjust/credits_end，所以 7/15/30 天只是同一份数据切片，不需要额外接口。
 //
 // 为什么用 ECharts：CSP 是 `default-src 'self'`（引不了 CDN），所以把 echarts.min.js
 // 原样 vendored 进本目录（见 NOTICE.txt、internal/webui/webui.go 的 frameworkAssets），
 // 从 /assets 自托管；仍然没有 npm/构建步骤这一层。
-// 为什么「堆叠」：获得 / 消耗 / 调整都是**当天流水**，量级相近，堆叠面积能直接看出
-// 结构与总量；「日终总计」是存量、比流水大一个数量级，单独走左轴折线、不参与堆叠。
+// 四条线**各自独立**：每条线的位置只由当天的值决定，0 就落在 0 轴上。
+// 早期版本把它们堆在同一个 stack 里，导致「调整=0」被画到「获得+消耗」的累计高度
+// （工具提示是 0、图上却不是 0）；现在不堆叠，读数与曲线一致。
 
 // 四条序列的语义（ax 字段决定挂哪个轴；flow=true 的按栈叠加）。
 const CREDIT_SERIES = [
@@ -401,10 +402,8 @@ function fmtAxis(v) {
 // **喂给 ECharts 的数值取 log1p**（视觉压缩），轴刻度与 tooltip 再用 expm1 还原成
 // 原始积分——数据本身不插值、口径不变，只是把"视觉缩放"和"读数"分开：
 //   - 用 log1p 不用 log：数据里有大量 0（当天没流水 / 没记录），log(0) 会是 -Inf；
-//   - 三条流水仍是**堆叠面积**，但堆叠必须发生在原始值上再取对数：直接堆 log 值等于
-//     把对数相加（= 对数相乘），stack 高度对应的是一个没有意义的乘积。所以喂给
-//     ECharts 的是「累计值的对数差」：Σ delta = log1p(当天三条流水的真实总和)，
-//     stack 的顶端仍然等于"当天总流水"的对数量，轴标签如实。
+//   - 每条线喂的是 log1p(自己的值)：0 仍然是 0，不会被相邻序列抬高；
+//     轴刻度与 tooltip 再按原始积分展示（不是对数差）。
 const logData = (v) => Math.log1p(Math.max(0, Number(v) || 0));
 const invLog = (v) => Math.expm1(Math.max(0, Number(v) || 0));
 
@@ -426,37 +425,25 @@ function chartBaselines(maxRaw) {
   return out;
 }
 
-// creditChartOption 组装 ECharts option：四条线同轴堆叠（对数压缩）。
-// 轴刻度不用 ECharts 的等分，而是画在"常识基准线"上（markLine），标签是原始积分。
+// creditChartOption 组装 ECharts option：四条线**各自独立**（不堆叠）画在同一个
+// 对数轴上。早期版本把四条线放进同一个 stack，结果"调整=0"的那条线会被画到
+// "获得+消耗"的累计高度，看起来和获得持平——工具提示写着 0、图上却不是 0。
 function creditChartOption(labels, rows) {
   const t = chartTheme();
-  // 堆叠顺序：三条当日流水在下（量级相近，叠在一起看得出结构），日终余额作为最上面
-  // 的一段压顶。为什么余额放最后：放最下的话（对数下它最大）会把三条流水挤成 1% 的
-  // 细线，等于把它们藏起来。
-  const stackOrder = [...CREDIT_SERIES.filter((s) => s.flow), CREDIT_SERIES[0]];
+  // 图例顺序：三条流水在前，日终余额最后（余额量级最大，放最后更符合阅读顺序）。
+  const order = [...CREDIT_SERIES.filter((s) => s.flow), CREDIT_SERIES[0]];
 
-  // 四条线全部进同一个堆叠：喂给 ECharts 的是「累计值的对数差」——
-  //   Δ₁ = log1p(获得)
-  //   Δ₂ = log1p(获得+消耗) − log1p(获得)
-  //   Δ₃ = log1p(前两项+调整) − log1p(前两项)
-  //   Δ₄ = log1p(四项合计) − log1p(前三项)
-  // 于是 stack 顶端 = log1p(当天"余额 + 当日流水")，轴标签反解出来是真实的整数，
-  // 而不是把对数直接相加得到的"乘积"（早期版本 b 端因此印出过 327 万）。
-  const seriesData = new Map(stackOrder.map((s) => [s.key, []]));
-  const totals = [];
+  // 每条线喂 log1p(自己的值)：0 仍然是 0，不会因为别人的值被抬高。
+  const seriesData = new Map(order.map((s) => [s.key, []]));
+  let maxPositive = 0;
   rows.forEach((r) => {
-    let cum = 0;
-    let prevLog = 0;
-    stackOrder.forEach((s) => {
-      cum += Math.max(0, Number(r[s.key]) || 0);
-      const curLog = logData(cum);
-      seriesData.get(s.key).push(curLog - prevLog);
-      prevLog = curLog;
+    order.forEach((s) => {
+      const raw = Number(r[s.key]) || 0;
+      if (raw > maxPositive) maxPositive = raw;
+      seriesData.get(s.key).push(logData(raw));
     });
-    totals.push(cum);
   });
-  const maxTotal = totals.reduce((m, v) => Math.max(m, v), 0);
-  const baselines = chartBaselines(maxTotal);
+  const baselines = chartBaselines(maxPositive);
   // 轴上限 = 最后一条基准线再留 5%（对数空间）：顶端那条基准线就在 max 上，
   // 不留余量的话它的标签会被画布上边缘裁掉（5000 那行曾经看不见）。
   const axisMax = logData(baselines[baselines.length - 1]) * 1.05;
@@ -511,16 +498,14 @@ function creditChartOption(labels, rows) {
       axisLabel: { show: false },
       splitLine: { show: false },
     },
-    series: stackOrder.map((s, idx) => ({
-      // 四条线同轴、同一 stack：喂的是"累计对数差"，堆叠顶端 = log1p(余额+当日流水)。
-      // 余额那段用更淡的填充 + 实线，和三条流水区分开。
+    series: order.map((s, idx) => ({
+      // 四条线各自独立、不堆叠：每条线的位置只由自己的值决定（0 就画在 0 上）。
       name: s.name,
-      type: 'line', stack: 'credit', smooth: 0.25,
+      type: 'line', smooth: 0.25,
       symbol: s.flow ? 'none' : 'circle', symbolSize: s.flow ? 0 : 5,
       showSymbol: !s.flow && labels.length <= 15,
-      lineStyle: { width: s.flow ? 1.2 : 2.2, color: s.color },
+      lineStyle: { width: s.flow ? 1.6 : 2.2, color: s.color },
       itemStyle: { color: s.color },
-      areaStyle: { opacity: s.flow ? 0.3 : 0.16, color: s.color },
       emphasis: { focus: 'series' },
       z: s.flow ? 2 : 3,
       data: seriesData.get(s.key),
@@ -663,7 +648,7 @@ function chartRows(payload, days, uid) {
   return { labels, rows };
 }
 
-// renderOverviewChart 概览「积分日账本」曲线：整池流水堆叠面积 + 余额折线，7/15/30 可切换。
+// renderOverviewChart 概览「积分日账本」曲线：整池四条独立折线（对数轴），7/15/30 可切换。
 function renderOverviewChart() {
   const days = state.overviewDays || 7;
   $$('#overviewRange button').forEach((b) => {
