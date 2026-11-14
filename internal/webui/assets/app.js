@@ -750,10 +750,19 @@ function catBadge(a) {
       text = '旅行中';
       cls = 'text-bg-info';
       break;
-    case 'arrived':
-      text = '可领 ' + fmtNum(c.reward || 0);
-      cls = 'text-bg-warning';
+    case 'arrived': {
+      // 兼容旧快照：修复前"领奖成功"仍把 state 记成 arrived，界面会显示「可领 N」
+      // 但 tooltip 写「已领奖」。看到这种旧数据就按"已领奖"展示，别再诱导去领。
+      const claimed = String(c.detail || '').includes('已领奖');
+      if (claimed) {
+        text = '已领奖';
+        cls = 'text-bg-secondary';
+      } else {
+        text = '可领 ' + fmtNum(c.reward || 0);
+        cls = 'text-bg-warning';
+      }
       break;
+    }
     case 'error':
       text = '猫状态未知';
       cls = 'text-bg-danger';

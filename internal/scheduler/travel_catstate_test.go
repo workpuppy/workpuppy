@@ -3,6 +3,7 @@ package scheduler
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -10,13 +11,14 @@ import (
 // 页面打开时不再为每行额外打上游。
 func TestRunTravelRecordsCatState(t *testing.T) {
 	cases := []struct {
-		name      string
-		buddy     string
-		state     string
-		wantState string
-		wantBuddy string
-		wantLimit bool
-		wantAwait int64
+		name       string
+		buddy      string
+		state      string
+		wantState  string
+		wantBuddy  string
+		wantLimit  bool
+		wantAwait  int64
+		wantDetail string
 	}{
 		{
 			name: "旅行中", buddy: `{"id":7,"name":"档案喵"}`,
@@ -24,9 +26,10 @@ func TestRunTravelRecordsCatState(t *testing.T) {
 			wantState: "traveling", wantBuddy: "档案喵",
 		},
 		{
-			name: "到站可领奖", buddy: `{"id":7,"name":"档案喵"}`,
-			state:     `{"state":"arrived","record_id":9,"reward_credit":20}`,
-			wantState: "arrived", wantBuddy: "档案喵", wantAwait: 20,
+			name: "到站领奖成功后回到空闲", buddy: `{"id":7,"name":"档案喵"}`,
+			state: `{"state":"arrived","record_id":9,"reward_credit":20}`,
+			// 领奖成功（stub 返回 reward_credit=9）后猫回到空闲，reward 清零，详情记到账数。
+			wantState: "idle", wantBuddy: "档案喵", wantAwait: 0, wantDetail: "已领奖 +9",
 		},
 		{
 			name: "空闲且今日已派出", buddy: `{"id":7,"name":"档案喵"}`,
@@ -51,6 +54,9 @@ func TestRunTravelRecordsCatState(t *testing.T) {
 			if cat.State != c.wantState || cat.Buddy != c.wantBuddy || cat.DailyLimitReached != c.wantLimit || cat.Reward != c.wantAwait {
 				t.Fatalf("cat=%+v want state=%s buddy=%s limit=%v reward=%d",
 					cat, c.wantState, c.wantBuddy, c.wantLimit, c.wantAwait)
+			}
+			if c.wantDetail != "" && !strings.Contains(cat.Detail, c.wantDetail) {
+				t.Errorf("cat.Detail=%q want 含 %q", cat.Detail, c.wantDetail)
 			}
 			if cat.UpdatedAt.IsZero() {
 				t.Error("UpdatedAt 应被填上（账号页显示「更新于…」）")

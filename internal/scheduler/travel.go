@@ -5,6 +5,7 @@ package scheduler
 import (
 	"context"
 	"log"
+	"strconv"
 	"time"
 
 	"wp/internal/auth"
@@ -156,8 +157,20 @@ func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 	}
 	switch ts.State {
 	case travelStateArrived:
-		s.travelClaim(a, ts)
-		cat.Detail = "已领奖"
+		reward, claimed := s.travelClaim(a, ts)
+		if claimed {
+			// 领完奖猫就回到空闲：快照必须跟着变，否则列表会一直显示「可领 N」、
+			// 悬停提示却写「已领奖」——语义自相矛盾（真实反馈）。
+			cat.State = travelStateIdle
+			cat.Reward = 0
+			cat.Detail = "已领奖"
+			if reward > 0 {
+				cat.Detail = "已领奖 +" + strconv.FormatInt(reward, 10)
+			}
+		} else {
+			// 领奖没完成：保持 arrived，界面继续显示「可领 N」，但说明原因。
+			cat.Detail = "领奖未完成"
+		}
 	case travelStateIdle:
 		s.travelDepart(a, ts)
 		if ts.DailyLimitReached {
@@ -198,18 +211,19 @@ func (s *Scheduler) travelDepart(a *auth.Auth, ts *upstream.TravelState) {
 	log.Printf("travel %s: depart ok location=%d", logfmt.Label(a.UID, a.Nickname), travelLocationID)
 }
 
-// travelClaim 到站领奖（必须带 record_id）。
-func (s *Scheduler) travelClaim(a *auth.Auth, ts *upstream.TravelState) {
+// travelClaim 到站领奖（必须带 record_id）。返回实际到账积分与是否成功。
+func (s *Scheduler) travelClaim(a *auth.Auth, ts *upstream.TravelState) (int64, bool) {
 	if ts.RecordID == 0 {
 		log.Printf("travel %s: claim skipped (arrived but no record_id)", logfmt.Label(a.UID, a.Nickname))
-		return
+		return 0, false
 	}
 	reward, err := s.cfg.Upstream.TravelClaim(a, ts.RecordID)
 	if err != nil {
 		log.Printf("travel %s: claim record=%d: %v", logfmt.Label(a.UID, a.Nickname), ts.RecordID, err)
-		return
+		return 0, false
 	}
 	log.Printf("travel %s: claim ok record=%d reward=%d", logfmt.Label(a.UID, a.Nickname), ts.RecordID, reward)
+	return reward, true
 }
 
 // travelAdopt 旅行巡检时领养。force=true 时豁免 adoptTriedToday 当日防抖

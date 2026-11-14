@@ -350,7 +350,7 @@ func TestRunTravelStateMachine(t *testing.T) {
 			srv := stub.server()
 			defer srv.Close()
 
-			s, _ := newTravelScheduler(t, srv, "u1")
+			s, p := newTravelScheduler(t, srv, "u1")
 			s.RunTravelNow()
 
 			got := map[string]int32{
@@ -373,6 +373,19 @@ func TestRunTravelStateMachine(t *testing.T) {
 			}
 			if tc.wantClaim > 0 && stub.record.Load() != tc.wantRecord {
 				t.Errorf("record_id=%d want %d", stub.record.Load(), tc.wantRecord)
+			}
+			// 猫猫快照的语义：领奖成功后必须回到 idle（不能继续显示"可领 N"），
+			// 领奖失败/未领则保持 arrived 并说明原因。
+			cat, ok := p.CatOf("u1")
+			switch tc.name {
+			case "有猫-arrived-领奖":
+				if !ok || cat.State != "idle" || cat.Reward != 0 || !strings.Contains(cat.Detail, "已领奖 +9") {
+					t.Fatalf("领奖成功后快照 = %+v（want idle / reward=0 / 已领奖 +9）", cat)
+				}
+			case "有猫-arrived-缺record_id-跳过领奖":
+				if !ok || cat.State != "arrived" || strings.Contains(cat.Detail, "已领奖") {
+					t.Fatalf("未领奖时快照 = %+v（want arrived / 不写已领奖）", cat)
+				}
 			}
 		})
 	}
