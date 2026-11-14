@@ -172,17 +172,25 @@ func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 			cat.Detail = "领奖未完成"
 		}
 	case travelStateIdle:
-		s.travelDepart(a, ts)
 		if ts.DailyLimitReached {
 			cat.Detail = "今日已派出"
-		} else {
+		} else if s.travelDepart(a, ts) {
+			// 派出成功后猫就在路上：快照必须跟着变成 traveling，
+			// 否则账号页会一直显示「待派出」，与实际状态不符。
+			cat.State = travelStateTraveling
+			cat.DailyLimitReached = true
 			cat.Detail = "已派出"
+		} else {
+			cat.Detail = "派出失败"
 		}
 	case travelStateTraveling:
 		log.Printf("travel %s: skip (traveling record=%d)", logfmt.Label(a.UID, a.Nickname), ts.RecordID)
 		cat.Detail = "旅行中"
 	default:
 		log.Printf("travel %s: skip (unknown state %q)", logfmt.Label(a.UID, a.Nickname), ts.State)
+		// 未知状态统一落到 error，界面显示「查询失败」+ 原始状态说明；
+		// 不要把上游的原始字符串直接透到徽章上（会显示英文状态码）。
+		cat.State = "error"
 		cat.Detail = "未知状态 " + ts.State
 	}
 	s.recordCat(a, cat)
@@ -199,16 +207,18 @@ func (s *Scheduler) recordCat(a *auth.Auth, cat pool.CatState) {
 }
 
 // travelDepart 空闲且未达当日上限时派出（每日 1 次，自然日 00:00 CST 重置）。
-func (s *Scheduler) travelDepart(a *auth.Auth, ts *upstream.TravelState) {
+// 返回是否真的派出成功（调用方据此把快照改成 traveling）。
+func (s *Scheduler) travelDepart(a *auth.Auth, ts *upstream.TravelState) bool {
 	if ts.DailyLimitReached {
 		log.Printf("travel %s: skip (daily limit reached)", logfmt.Label(a.UID, a.Nickname))
-		return
+		return false
 	}
 	if err := s.cfg.Upstream.TravelDepart(a, travelLocationID); err != nil {
 		log.Printf("travel %s: depart: %v", logfmt.Label(a.UID, a.Nickname), err)
-		return
+		return false
 	}
 	log.Printf("travel %s: depart ok location=%d", logfmt.Label(a.UID, a.Nickname), travelLocationID)
+	return true
 }
 
 // travelClaim 到站领奖（必须带 record_id）。返回实际到账积分与是否成功。

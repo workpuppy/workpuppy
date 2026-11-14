@@ -487,7 +487,7 @@ func TestAccountsNowrapAndCatColumn(t *testing.T) {
 	js := httptest.NewRecorder()
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
-	for _, want := range []string{"catBadge", "badge-row", "a.cat", "fmtAgo", "猫未巡检", "text: '已签'", "text: '未签'", "已领奖"} {
+	for _, want := range []string{"catBadge", "badge-row", "a.cat", "fmtAgo", "猫未巡检", "text: '已签'", "text: '未签'", "已领奖", "未领养", "待派出", "查询失败"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("app.js 缺少 %s（账号表猫猫/签到标签）", want)
 		}

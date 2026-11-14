@@ -34,7 +34,17 @@ func TestRunTravelRecordsCatState(t *testing.T) {
 		{
 			name: "空闲且今日已派出", buddy: `{"id":7,"name":"档案喵"}`,
 			state:     `{"state":"idle","daily_limit_reached":true}`,
-			wantState: "idle", wantBuddy: "档案喵", wantLimit: true,
+			wantState: "idle", wantBuddy: "档案喵", wantLimit: true, wantDetail: "今日已派出",
+		},
+		{
+			name: "空闲未达上限-派出后旅行中", buddy: `{"id":7,"name":"档案喵"}`,
+			state:     `{"state":"idle","daily_limit_reached":false}`,
+			wantState: "traveling", wantBuddy: "档案喵", wantLimit: true, wantDetail: "已派出",
+		},
+		{
+			name: "未知状态归到查询失败", buddy: `{"id":7,"name":"档案喵"}`,
+			state:     `{"state":"teleporting"}`,
+			wantState: "error", wantBuddy: "档案喵", wantDetail: "未知状态 teleporting",
 		},
 	}
 	for _, c := range cases {

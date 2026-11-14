@@ -724,9 +724,15 @@ function statusBadge(a) {
 }
 
 // catBadge 猫猫状态：来自最近一次旅行巡检的快照（a.cat），不是实时查询。
-// none=未领养 / idle=空闲(或今日已派出) / traveling=旅行中 / arrived=到站可领 N / error=查询失败。
-// 从没巡检过（没有 a.cat）时显示「猫未巡检」而不是留空：账号页打开时不能为列表
-// 额外请求上游，所以这里只如实说明"还没采集到"，鼠标悬停解释数据来源。
+// 状态与徽章文字的对应关系（与 scheduler 的写入一一对应）：
+//   none       未领养         还没领猫（含"领养前置对话量未达/已发起领养"）
+//   idle       待派出         猫在空闲、今日还没出行
+//   idle       今日已派       今日已出行过（daily_limit_reached=true）
+//   traveling  旅行中         已派出，正在路上
+//   arrived    可领 N         到站可领 N（领奖失败时也停在这里）
+//   arrived    已领奖         兼容旧快照：detail 已写"已领奖"但 state 还是 arrived
+//   error      查询失败        buddy-info / travel-status 查询失败或状态未知
+// 从没巡检过（没有 a.cat）显示「猫未巡检」：页面打开时不为列表额外请求上游。
 function catBadge(a) {
   const c = a.cat;
   if (!c || !c.state) {
@@ -740,10 +746,10 @@ function catBadge(a) {
   let cls = 'text-bg-secondary';
   switch (c.state) {
     case 'none':
-      text = '未领猫';
+      text = '未领养';
       break;
     case 'idle':
-      text = c.daily_limit_reached ? '今日已派' : '猫空闲';
+      text = c.daily_limit_reached ? '今日已派' : '待派出';
       cls = c.daily_limit_reached ? 'text-bg-secondary' : 'text-bg-success';
       break;
     case 'traveling':
@@ -764,11 +770,11 @@ function catBadge(a) {
       break;
     }
     case 'error':
-      text = '猫状态未知';
+      text = '查询失败';
       cls = 'text-bg-danger';
       break;
     default:
-      text = c.state;
+      text = '未知状态';
   }
   const tip = [
     c.buddy ? '猫：' + c.buddy : '',

@@ -386,6 +386,18 @@ func TestRunTravelStateMachine(t *testing.T) {
 				if !ok || cat.State != "arrived" || strings.Contains(cat.Detail, "已领奖") {
 					t.Fatalf("未领奖时快照 = %+v（want arrived / 不写已领奖）", cat)
 				}
+			case "有猫-idle-未达上限-派出":
+				if !ok || cat.State != "traveling" || cat.Detail != "已派出" {
+					t.Fatalf("派出成功后快照 = %+v（want traveling / 已派出）", cat)
+				}
+			case "有猫-idle-已达上限-跳过":
+				if !ok || cat.State != "idle" || cat.Detail != "今日已派出" {
+					t.Fatalf("已达上限时快照 = %+v（want idle / 今日已派出）", cat)
+				}
+			case "有猫-未知状态-跳过":
+				if !ok || cat.State != "error" || !strings.Contains(cat.Detail, "未知状态") {
+					t.Fatalf("未知状态快照 = %+v（want error / 未知状态 …）", cat)
+				}
 			}
 		})
 	}

@@ -446,6 +446,24 @@ docker compose restart wp
 页面响应带 CSP（`default-src 'self'`）、`nosniff`、`frame-ancestors 'none'`，
 渲染一律 `textContent`（账号昵称等外部输入不进 HTML）。
 
+### 账号页「猫猫」徽章状态一览
+
+猫猫状态是**最近一次旅行巡检留下的快照**（上游没有批量查猫接口，打开账号页不会为每行额外请求）。
+徽章文字与 `pool.CatState` 的对应关系：
+
+| state | 徽章文字 | 含义 | 由什么写入 |
+|---|---|---|---|
+| （无快照） | 猫未巡检 | 还没巡检过（新号/刚启动） | — |
+| `none` | 未领养 | 还没有猫；可能正在补领养前置对话 | buddy-info 无猫；含「前置对话量未达 / 已发起领养」 |
+| `idle` + 未达上限 | 待派出 | 猫空闲，今天还能出行 | travel/status = idle |
+| `idle` + 已达上限 | 今日已派 | 今天已经出行过 | travel/status = idle 且 daily_limit_reached=true |
+| `traveling` | 旅行中 | 已派出，正在路上 | travel/status = traveling；或刚刚派出成功 |
+| `arrived` | 可领 N | 到站可领 N 积分（领奖未完成） | travel/status = arrived，且领奖失败/缺 record_id |
+| `error` | 查询失败 | 上游查询失败或状态未知 | buddy-info / travel-status 出错、未知 state |
+| `arrived` + detail 含「已领奖」 | 已领奖 | 旧快照兼容（领奖成功但 state 仍写 arrived） | 升级前的历史数据 |
+
+鼠标悬停还会显示：猫名 · 细节（已领奖 +N / 领奖未完成 / 今日已派出 …）· 快照更新时间。
+
 **缓存与升级**：`/assets/*` 的 URL 都带 `?v=<内容哈希>`（`Version()` 由全部前端资源算出），
 因此可以 `public, max-age=31536000, immutable` 长缓存一年；入口页保持 `no-cache`，升级后
 立刻拿到新的资源 URL，不会出现"HTML 是新版、`app.js` 还是旧版"的错配。
