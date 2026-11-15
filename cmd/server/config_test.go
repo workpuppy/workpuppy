@@ -780,7 +780,7 @@ func TestUpstreamVersionConfig(t *testing.T) {
 	if c2, err := Load(""); err != nil || c2.Upstream.ClientVersion == "" || c2.Upstream.CliVersion == "" {
 		t.Errorf("default versions=%q/%q 应取自示例配置 (err=%v)",
 			c2.Upstream.ClientVersion, c2.Upstream.CliVersion, err)
-	} else if c2.Upstream.ClientVersion != "5.5.4" || c2.Upstream.CliVersion != "2.137.1" {
+	} else if c2.Upstream.ClientVersion != "5.9.3" || c2.Upstream.CliVersion != "2.179.0" {
 		t.Errorf("示例配置的默认版本=%q/%q，若刚改过 config.default.json 请同步本断言",
 			c2.Upstream.ClientVersion, c2.Upstream.CliVersion)
 	}
