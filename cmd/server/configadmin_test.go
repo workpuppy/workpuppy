@@ -162,6 +162,67 @@ func TestConfigStoreSaveAndReset(t *testing.T) {
 	}
 }
 
+// TestConfigStoreSaveEmptyStringPersistsAsEmpty 回答「后台清空字符串字段后落盘是什么」：
+// 前端对文本字段读的是 input.value（空 = `""`），所以后端拿到的 patch 值就是空串，
+// 落盘是 `"client_version": ""` —— **既不是 null，也不是删键**。
+// 于是运行期（Load 只对缺失/null 回落）不会变回 config.default.json 的 5.9.3。
+//
+// 对照：Reset（页面上的「恢复默认」）走的是"删键 → 用 Default() 物化"的路径，
+// 落盘结果是默认值字面量本身，同样不是 null。
+func TestConfigStoreSaveEmptyStringPersistsAsEmpty(t *testing.T) {
+	s, path := newTestConfigStore(t)
+
+	snap, fieldErrs, err := s.Save(map[string]any{
+		"upstream": map[string]any{"client_version": "", "cli_version": ""},
+	})
+	if err != nil || len(fieldErrs) != 0 {
+		t.Fatalf("保存空串应成功（空串是合法取值）：err=%v fieldErrs=%v", err, fieldErrs)
+	}
+	up, _ := snap.Values["upstream"].(map[string]any)
+	if v, _ := up["client_version"].(string); v != "" {
+		t.Fatalf("快照 client_version = %q want 空串（不能被默认值回填）", v)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("落盘文件不是合法 JSON：%v", err)
+	}
+	saved, _ := doc["upstream"].(map[string]any)
+	for _, key := range []string{"client_version", "cli_version"} {
+		v, present := saved[key]
+		if !present {
+			t.Fatalf("落盘文件里 %s 键被删掉了（want 空串）", key)
+		}
+		if v == nil {
+			t.Fatalf("落盘文件里 %s 是 null（want 空串）", key)
+		}
+		if s, _ := v.(string); s != "" {
+			t.Fatalf("落盘文件里 %s = %q want 空串", key, s)
+		}
+	}
+	// 保存写的是"物化后的整份配置"：没碰的字段也被写成默认值字面量。
+	if listen, _ := doc["listen"].(string); listen != Default().Listen {
+		t.Errorf("落盘 listen = %q want %q（保存会物化全部字段）", listen, Default().Listen)
+	}
+
+	// 对照：恢复默认（删键 + 物化）→ 文件里出现默认值本身。
+	if _, _, err := s.Reset(server.ConfigResetRequest{Scope: "fields", Paths: []string{"upstream.client_version"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(path)
+	doc = nil
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := doc["upstream"].(map[string]any)["client_version"].(string); v != Default().Upstream.ClientVersion {
+		t.Errorf("恢复默认后 = %q want %q（默认值字面量）", v, Default().Upstream.ClientVersion)
+	}
+}
+
 func TestConfigStoreSaveRejectsUnknownKey(t *testing.T) {
 	s, _ := newTestConfigStore(t)
 	_, fieldErrs, err := s.Save(map[string]any{"pool": map[string]any{"no_such": 1.0}})
