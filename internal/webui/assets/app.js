@@ -322,7 +322,7 @@ function applyCredits(c, opts = {}) {
     '　（账号 ' + Object.keys(c.accounts || {}).length + ' 个）');
   setText('#kpiEarned', fmtNum(t.earned || 0));
   setText('#kpiSpent', fmtNum(t.spent || 0));
-  setText('#kpiAdjust', fmtNum(t.adjust || 0));
+  renderTodayAdjust(c);
 
   // 只对"历史日"做变化检测：今天的热值每轮都在变，不能拿它当重画依据。
   const past = (c.histories || []).filter((h) => h.date !== c.today);
@@ -333,6 +333,32 @@ function applyCredits(c, opts = {}) {
     state.overviewChartSig = sig;
     state.overviewChartDrawnAt = now;
     renderOverviewChart();
+  }
+}
+
+// 今日调整(过期+校正)：后端在 /admin/overview 里按
+//   Σ(昨日日终 + 今日获得 − 今日记录消耗 − 当前余额)
+// 算好 today_adjust（有符号）。卡片用 ∆/∇ 表示正负、不显示负号；
+// 图表里的「调整」仍是账本记录的正值流水，不受这里影响。
+function renderTodayAdjust(c) {
+  const el = $('#kpiAdjust');
+  if (!el) return;
+  el.classList.remove('text-warning-emphasis', 'text-success', 'text-danger');
+  const v = c && typeof c.today_adjust === 'number' ? c.today_adjust : null;
+  if (v === null) {
+    el.textContent = '–';
+    el.classList.add('text-warning-emphasis');
+    return;
+  }
+  if (v > 0) {
+    el.textContent = '∆ ' + fmtNum(v);
+    el.classList.add('text-success');
+  } else if (v < 0) {
+    el.textContent = '∇ ' + fmtNum(-v);
+    el.classList.add('text-danger');
+  } else {
+    el.textContent = '0';
+    el.classList.add('text-warning-emphasis');
   }
 }
 

@@ -601,7 +601,7 @@ func TestOverviewWording(t *testing.T) {
 	html := idx.Body.String()
 	for _, want := range []string{
 		"账号总数", "可用账号", "冷却中账号", "已禁用账号", "在途占满", "粘性会话",
-		"总积分", "今日获得", "今日消耗", "今日调整",
+		"总积分", "今日获得", "今日消耗", "今日调整(过期+校正)",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("概览缺少文案 %q", want)
@@ -613,7 +613,7 @@ func TestOverviewWording(t *testing.T) {
 	body := js.Body.String()
 	for _, want := range []string{
 		"name: '日终总计'", "name: '获得'", "name: '消耗'", "name: '调整'",
-		"日终总计：", "获得：", "消耗：", "调整：",
+		"日终总计：", "获得：", "消耗：", "调整：", "renderTodayAdjust", "today_adjust", "∆ ", "∇ ",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("图表文案缺少 %q（概览/弹窗系列名）", want)
