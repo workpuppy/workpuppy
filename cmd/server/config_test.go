@@ -764,7 +764,8 @@ func TestPromptLegacyConfigNoImpact(t *testing.T) {
 }
 
 // TestUpstreamVersionConfig 配置 upstream.client_version / cli_version 与 env
-// WP_CLIENT_VERSION / WP_CLI_VERSION 均生效；缺省空串 = headers 层回落内置默认。
+// WP_CLIENT_VERSION / WP_CLI_VERSION 均生效；键缺失 = 取 config.default.json 的值
+// （headers 层不再有第二层兜底，见 upstream.TestUserAgentNoBuiltinVersionFallback）。
 func TestUpstreamVersionConfig(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
@@ -793,6 +794,50 @@ func TestUpstreamVersionConfig(t *testing.T) {
 	}
 	if c3.Upstream.ClientVersion != "7.0.0" || c3.Upstream.CliVersion != "4.0.0" {
 		t.Errorf("env versions=%q/%q want 7.0.0/4.0.0", c3.Upstream.ClientVersion, c3.Upstream.CliVersion)
+	}
+}
+
+// TestUpstreamVersionExplicitEmptyNotRefilled 钉死默认配置的兜底边界：
+// config.default.json 只在「键缺失」或「写成 null」时生效——显式写空串 **不会**被回填。
+//
+// 也就是说 upstream.client_version / cli_version 一旦在 config.json 里显式置空，运行期
+// 就是空串（UA 变 `WorkBuddy/ WorkBuddy/ CLI/`、X-IDE-Version 变空），不会悄悄变回
+// config.default.json 里的 5.9.3 / 2.179.0。想回默认值要么删掉该键，要么写 null。
+func TestUpstreamVersionExplicitEmptyNotRefilled(t *testing.T) {
+	dir := t.TempDir()
+
+	// 显式空串：保持空，不回填默认值。
+	fpEmpty := filepath.Join(dir, "empty.json")
+	if err := os.WriteFile(fpEmpty, []byte(`{"upstream":{"client_version":"","cli_version":""}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cEmpty, err := Load(fpEmpty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cEmpty.Upstream.ClientVersion != "" || cEmpty.Upstream.CliVersion != "" {
+		t.Errorf("显式空串被回填了：client_version=%q cli_version=%q want 空/空",
+			cEmpty.Upstream.ClientVersion, cEmpty.Upstream.CliVersion)
+	}
+
+	// 键写成 null（或整个 upstream 段缺失）：按「未定义」处理 → 取默认值。
+	fpNull := filepath.Join(dir, "nulls.json")
+	if err := os.WriteFile(fpNull, []byte(`{"upstream":{"client_version":null,"cli_version":null}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cNull, err := Load(fpNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cNull.Upstream.ClientVersion == "" || cNull.Upstream.CliVersion == "" {
+		t.Errorf("null 应回落到默认值：client_version=%q cli_version=%q",
+			cNull.Upstream.ClientVersion, cNull.Upstream.CliVersion)
+	}
+	if cNull.Upstream.ClientVersion != Default().Upstream.ClientVersion ||
+		cNull.Upstream.CliVersion != Default().Upstream.CliVersion {
+		t.Errorf("null 回落值=%q/%q want %q/%q（= config.default.json）",
+			cNull.Upstream.ClientVersion, cNull.Upstream.CliVersion,
+			Default().Upstream.ClientVersion, Default().Upstream.CliVersion)
 	}
 }
 
