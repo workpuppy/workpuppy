@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"wp/internal/adminauth"
@@ -232,6 +233,78 @@ func TestConfigStoreSaveRejectsUnknownKey(t *testing.T) {
 	if len(fieldErrs) == 0 || fieldErrs[0].Path != "pool.no_such" {
 		t.Fatalf("未知键应报错：%v", fieldErrs)
 	}
+}
+
+// TestConfigStoreSaveNullResetsToDefault 设置页的"清空"现在编码成 null（见 app.js 的
+// readString：先 trim，空了就发 null）。后端对 null 的处理是**删键**，于是该字段回落
+// config.default.json 的默认值——落盘是默认值字面量，不是空串、也不是 null。
+func TestConfigStoreSaveNullResetsToDefault(t *testing.T) {
+	s, path := newTestConfigStore(t)
+
+	// 先写空串：证明"空串会被原样落盘"（这正是要避免的形态）。
+	if _, _, err := s.Save(map[string]any{"upstream": map[string]any{"client_version": ""}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFiledPath(t, path, "upstream.client_version"); got != "" {
+		t.Fatalf("空串应原样落盘，got %q", got)
+	}
+
+	// 再用 null 抵消：键被删掉 → 回落默认。
+	snap, fieldErrs, err := s.Save(map[string]any{
+		"upstream": map[string]any{"client_version": nil, "cli_version": nil},
+	})
+	if err != nil || len(fieldErrs) != 0 {
+		t.Fatalf("保存 null 应成功：err=%v fieldErrs=%v", err, fieldErrs)
+	}
+	up, _ := snap.Values["upstream"].(map[string]any)
+	if v, _ := up["client_version"].(string); v != Default().Upstream.ClientVersion {
+		t.Errorf("快照 client_version = %q want %q（默认值）", v, Default().Upstream.ClientVersion)
+	}
+	if v, _ := up["cli_version"].(string); v != Default().Upstream.CliVersion {
+		t.Errorf("快照 cli_version = %q want %q（默认值）", v, Default().Upstream.CliVersion)
+	}
+	// 落盘的是物化后的默认值字面量（不是 null、也不是空串）。
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := doc["upstream"].(map[string]any)
+	if v, _ := saved["client_version"].(string); v != Default().Upstream.ClientVersion {
+		t.Errorf("落盘 client_version = %v want %q", saved["client_version"], Default().Upstream.ClientVersion)
+	}
+	if v, _ := saved["cli_version"].(string); v != Default().Upstream.CliVersion {
+		t.Errorf("落盘 cli_version = %v want %q", saved["cli_version"], Default().Upstream.CliVersion)
+	}
+}
+
+// readFiledPath 读落盘文件里某个点分路径的值（字符串化），供断言默认值/空串用。
+func readFiledPath(t *testing.T, path, dotted string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	cur := any(doc)
+	for _, seg := range strings.Split(dotted, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			t.Fatalf("%s 在落盘文件里不存在", dotted)
+		}
+		cur, ok = m[seg]
+		if !ok {
+			t.Fatalf("%s 在落盘文件里不存在", dotted)
+		}
+	}
+	s, _ := cur.(string)
+	return s
 }
 
 func TestConfigStoreResetAllKeepsAdmin(t *testing.T) {

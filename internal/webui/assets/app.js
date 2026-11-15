@@ -1471,8 +1471,13 @@ function renderField(field, values) {
       showFieldError(field.path, '');
     }
     const orig = getPath(state.config.values || {}, field.path);
-    if (sameValue(out.value, orig)) state.configDirty.delete(field.path);
-    else state.configDirty.set(field.path, out.value);
+    // null（清空 → 用默认）与当前值本来就是空串，视为同一状态：
+    // 否则"清空一个本来就空的项"也会变成待保存的改动。
+    if (sameValue(out.value, orig) || (configValueEmpty(out.value) && configValueEmpty(orig))) {
+      state.configDirty.delete(field.path);
+    } else {
+      state.configDirty.set(field.path, out.value);
+    }
     refreshSaveState();
   };
   node.addEventListener('input', onEdit);
@@ -1559,7 +1564,7 @@ function buildControl(field, value, inputId) {
         attrs: { ...common, type: field.secret ? 'password' : 'text', placeholder: field.placeholder || '' },
       });
       input.value = value == null ? '' : String(value);
-      if (!field.secret) return { node: input, read: () => ({ value: input.value }) };
+      if (!field.secret) return { node: input, read: () => readString(input.value) };
       const btn = el('button', {
         class: 'btn btn-outline-secondary btn-icon',
         attrs: { type: 'button', title: '显示 / 隐藏' },
@@ -1568,9 +1573,25 @@ function buildControl(field, value, inputId) {
         input.type = input.type === 'password' ? 'text' : 'password';
       });
       const group = el('div', { class: 'input-group input-group-sm' }, [input, btn]);
-      return { node: group, read: () => ({ value: input.value }) };
+      return { node: group, read: () => readString(input.value) };
     }
   }
+}
+
+// readString 文本字段取值：**先去首尾空白**；清空（或只剩空白）= 未设置 → null。
+//
+// 为什么发 null 而不是 ""：后端 Save 只对 null 做"删键"（configadmin.go 的 v == nil
+// 分支），键删掉后该字段回落 config.default.json 的默认值；而空串会被原样落盘，
+// 变成"显式空值"，默认配置再也不会生效。数字字段（readNumber）本来就是这么做的，
+// 这里让字符串字段与之对齐。
+function readString(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  return { value: s === '' ? null : s };
+}
+
+// configValueEmpty 值是否等于「未设置」：null/undefined，或去空白后的空串。
+function configValueEmpty(v) {
+  return v == null || (typeof v === 'string' && v.trim() === '');
 }
 
 function readNumber(field, raw) {
@@ -1676,6 +1697,7 @@ function validateField(field, v) {
     const opts = (field.options || []).map((o) => o.value);
     return opts.includes(String(v)) ? '' : '取值不在允许范围内';
   }
+  if (v == null) return ''; // 留空 = 用默认值（null），没有格式可校验
   if (field.pattern) {
     try {
       if (!new RegExp(field.pattern).test(String(v ?? ''))) return '格式不正确';
