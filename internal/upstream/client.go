@@ -799,12 +799,12 @@ type Client struct {
 	ClientName string
 
 	// ClientVersion WorkBuddy 客户端版本段（出站 UA 的 `WorkBuddy/<ver>` + B 段的
-	// X-IDE-Version）。空 = 内置默认 defaultClientVersion（对齐官方 5.5.4 分发包）。
-	// config upstream.client_version 覆盖。
+	// X-IDE-Version）。唯一来源：config upstream.client_version（默认值见
+	// config.default.json）；本层不再兜底，空即空段。
 	ClientVersion string
 
-	// CliVersion 出站 UA 中 `CLI/<ver>` 段版本。空 = 内置默认 defaultCliVersion
-	// （对齐官方内置 CLI 2.137.1）。config upstream.cli_version 覆盖。
+	// CliVersion 出站 UA 中 `CLI/<ver>` 段版本。唯一来源：config upstream.cli_version
+	// （默认值见 config.default.json），同样不做兜底。
 	CliVersion string
 
 	// PassthroughIP 是否透传客户端 IP 给上游（X-Forwarded-For/X-Real-IP 首段）。

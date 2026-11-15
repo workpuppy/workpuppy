@@ -44,6 +44,10 @@ func globalE2EClient() *Client {
 		HTTP:          &http.Client{Timeout: 60 * time.Second},
 		ChatHTTP:      &http.Client{Timeout: 60 * time.Second},
 		GlobalEnabled: true,
+		// 版本段来自 config（真机由 config.default.json 提供）；探测用固定值，
+		// 保证出站 UA/X-IDE-Version 与真实客户端同形，不被上游当异常客户端。
+		ClientVersion: testClientVersion,
+		CliVersion:    testCliVersion,
 	}
 }
 
@@ -277,7 +281,7 @@ func TestGlobalE2EProbeChatVariants(t *testing.T) {
 			r.Header.Set("X-Agent-Purpose", "conversation")
 			r.Header.Set("X-IDE-Name", "WorkBuddy")
 			r.Header.Set("X-IDE-Type", "WorkBuddy")
-			r.Header.Set("X-IDE-Version", "5.5.4")
+			r.Header.Set("X-IDE-Version", testClientVersion)
 			r.Header.Set("X-Product", "WorkBuddy")
 		}},
 		{"no-content-type", "gpt-5.4", func(r *http.Request) { r.Header.Del("Content-Type") }},

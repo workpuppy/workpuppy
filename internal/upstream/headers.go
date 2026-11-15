@@ -13,17 +13,6 @@ import (
 )
 
 const (
-	// defaultClientVersion 出站 WorkBuddy 客户端版本段（UA 的 `WorkBuddy/<ver>` 与
-	// 白名单头组的 X-IDE-Version）。对齐官方 WorkBuddy Desktop 分发包版本
-	// （WORKBUDDY_CLIENT_VERSION = 桌面端 package.json version，5.5.4 分发包即 5.5.4）。
-	// config upstream.client_version 可覆盖（空 = 内置默认）。
-	defaultClientVersion = "5.5.4"
-	// defaultCliVersion 出站 UA 中 `CLI/<ver>` 段版本。对齐官方内置 CLI
-	// （cli/package.json publishConfig.customPackage version = 2.137.1
-	// → resolveBundledCliUserAgent() 返回 CLI/2.137.1）。config upstream.cli_version
-	// 可覆盖（空 = 内置默认）。
-	defaultCliVersion = "2.137.1"
-
 	originRefererCN     = "https://www.codebuddy.cn"
 	originRefererGlobal = "https://www.workbuddy.ai"
 )
@@ -37,21 +26,24 @@ func originRefererFor(a *auth.Auth) string {
 	return originRefererCN
 }
 
-// clientVersion 生效的 WorkBuddy 客户端版本：Client.ClientVersion 非空则取之，
-// 否则内置默认 defaultClientVersion。
+// clientVersion 出站 WorkBuddy 客户端版本段（UA 的 `WorkBuddy/<ver>` 与白名单头组的
+// X-IDE-Version）。唯一来源 = config upstream.client_version——默认值写死在
+// config.default.json（内嵌默认配置），headers 层不再自带内置兜底版本，避免同一份
+// 默认值在两处各写一遍、各自漂移（此前这里还放过一份 5.5.4）。
 func (c *Client) clientVersion() string {
-	if c != nil && c.ClientVersion != "" {
-		return c.ClientVersion
+	if c == nil {
+		return ""
 	}
-	return defaultClientVersion
+	return c.ClientVersion
 }
 
-// cliVersion 生效的 CLI 版本：Client.CliVersion 非空则取之，否则内置默认 defaultCliVersion。
+// cliVersion 出站 UA 中 `CLI/<ver>` 段版本。唯一来源 = config upstream.cli_version
+// （默认值同样在 config.default.json），本层不做兜底。
 func (c *Client) cliVersion() string {
-	if c != nil && c.CliVersion != "" {
-		return c.CliVersion
+	if c == nil {
+		return ""
 	}
-	return defaultCliVersion
+	return c.CliVersion
 }
 
 // defaultWorkBuddyUAFor 组装默认客户端出站 UA（官方桌面端 RestOperations 层形状）：

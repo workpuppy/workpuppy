@@ -78,11 +78,12 @@ func TestAttributionIncludesIDEVersion(t *testing.T) {
 			t.Errorf("%s = %q want %q", tc.header, got, tc.want)
 		}
 	}
-	// X-IDE-Version 缺省（client_version 空）= 内置默认 5.5.4，且四头齐全。
+	// X-IDE-Version 无兜底：client_version 空就是空段（版本唯一来源是 config，
+	// 正常启动由 config.default.json 提供），不会被填成某个写死的版本号。
 	c2 := &Client{ClientName: "WorkBuddy"}
 	h2 := chatHeadersReq(t, c2, a, "")
-	if got := h2.Get("X-IDE-Version"); got != "5.5.4" {
-		t.Errorf("X-IDE-Version = %q want %q (default)", got, "5.5.4")
+	if got := h2.Get("X-IDE-Version"); got != "" {
+		t.Errorf("X-IDE-Version = %q want empty (client_version 空)", got)
 	}
 	// 显式 ClientName="SaaS" 时 X-IDE-Version 不设（还原旧行为：只有 X-Product=SaaS）。
 	c3 := &Client{ClientName: "SaaS"}
@@ -96,13 +97,14 @@ func TestAttributionIncludesIDEVersion(t *testing.T) {
 // X-Product=WorkBuddy 且 X-IDE-* / X-Agent-Purpose 四头齐全（本 PR 核心变更）。
 func TestProductDefaultWorkBuddyFingerprint(t *testing.T) {
 	a := &auth.Auth{AccessToken: "at", UID: "u1"}
-	c := &Client{} // ClientName 空 → 默认 WorkBuddy 指纹
+	// ClientName 空 → 默认 WorkBuddy 指纹；版本段按规定来自 config（测试给固定值）。
+	c := &Client{ClientVersion: testClientVersion, CliVersion: testCliVersion}
 	h := chatHeadersReq(t, c, a, "")
 	for hdr, want := range map[string]string{
 		"X-Product":       "WorkBuddy",
 		"X-IDE-Name":      "WorkBuddy",
 		"X-IDE-Type":      "WorkBuddy",
-		"X-IDE-Version":   "5.5.4",
+		"X-IDE-Version":   testClientVersion,
 		"X-Agent-Purpose": "conversation",
 	} {
 		if got := h.Get(hdr); got != want {

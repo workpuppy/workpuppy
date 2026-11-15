@@ -57,6 +57,8 @@ func TestUserAgentDefaultEmptyKeepsClientUA(t *testing.T) {
 				ChatHTTP:      &http.Client{Transport: uaCaptureTransport{ua: &ua}},
 				ChatBaseCN:    "https://chat.example",
 				BillingBaseCN: "https://billing.example",
+				ClientVersion: testClientVersion,
+				CliVersion:    testCliVersion,
 			}
 			if err := tc.call(c); err != nil {
 				t.Fatalf("call: %v", err)
@@ -153,17 +155,23 @@ func TestFetchModelsUsesConfiguredUA(t *testing.T) {
 
 // --- A 段：UA 对齐官方 WorkBuddy 三段式 ---
 
+// UA 的版本段唯一来源是 config upstream.client_version / cli_version（headers 层
+// 不再内置兜底），所以测试一律把版本显式喂进 Client，再断言拼装形态。
 const (
-	defaultUAString      = "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1"
+	testClientVersion = "5.5.4"
+	testCliVersion    = "2.137.1"
+
+	defaultUAString      = "WorkBuddy/" + testClientVersion + " WorkBuddy/" + testClientVersion + " CLI/" + testCliVersion
 	explicitString       = "MyCustomAgent/3.1"
-	clientVerUAString    = "WorkBuddy/6.0.0 WorkBuddy/6.0.0 CLI/2.137.1"
-	billingUAWorkBuddy   = "WorkBuddy/5.5.4"
+	clientVerUAString    = "WorkBuddy/6.0.0 WorkBuddy/6.0.0 CLI/" + testCliVersion
+	billingUAWorkBuddy   = "WorkBuddy/" + testClientVersion
 	billingUACustomVer   = "WorkBuddy/6.0.0"
 	billingUAAgentString = "BillingAgent/1"
 )
 
-// TestUserAgentDefaultWorkBuddyShape 默认（无任何配置）聊天/刷新出站 UA =
-// 官方 WorkBuddy 三段式，旧值 `CLI/2.63.2 CodeBuddy/2.63.2` 已被对齐替换。
+// TestUserAgentDefaultWorkBuddyShape 未配 user_agent 时聊天/刷新出站 UA =
+// 官方 WorkBuddy 三段式（版本段来自 config，测试里由 testClientVersion/testCliVersion
+// 代替），旧值 `CLI/2.63.2 CodeBuddy/2.63.2` 已被对齐替换。
 func TestUserAgentDefaultWorkBuddyShape(t *testing.T) {
 	a := &auth.Auth{AccessToken: "at", UID: "u1"}
 	c := &Client{
@@ -171,6 +179,8 @@ func TestUserAgentDefaultWorkBuddyShape(t *testing.T) {
 		ChatHTTP:      &http.Client{Transport: uaCaptureTransport{ua: new(string)}},
 		ChatBaseCN:    "https://chat.example",
 		BillingBaseCN: "https://billing.example",
+		ClientVersion: testClientVersion,
+		CliVersion:    testCliVersion,
 	}
 	rc, status, _, err := c.ChatStream(a, []byte(`{"model":"deepseek-v4-flash","messages":[]}`), "", ChatMeta{})
 	if status != 200 || err != nil {
@@ -221,7 +231,7 @@ func TestUserAgentExplicitOverride(t *testing.T) {
 }
 
 // TestUserAgentClientVersionOverride config client_version 生效：UA 的 WorkBuddy 段跟随
-// 且成对相同（platform 段 = applicationName 段），CLI 段保持默认。
+// 且成对相同（platform 段 = applicationName 段），CLI 段保持配置值。
 func TestUserAgentClientVersionOverride(t *testing.T) {
 	a := &auth.Auth{AccessToken: "at", UID: "u1"}
 	c := &Client{
@@ -230,6 +240,7 @@ func TestUserAgentClientVersionOverride(t *testing.T) {
 		ChatBaseCN:    "https://chat.example",
 		BillingBaseCN: "https://billing.example",
 		ClientVersion: "6.0.0",
+		CliVersion:    testCliVersion,
 	}
 	rc, status, _, err := c.ChatStream(a, []byte(`{"model":"deepseek-v4-flash","messages":[]}`), "", ChatMeta{})
 	if status != 200 || err != nil {
@@ -247,7 +258,7 @@ func TestUserAgentClientVersionOverride(t *testing.T) {
 // `WorkBuddy/<clientVersion>`（不带 CLI 段，对齐官方 banner/check-in 显式头组）。
 func TestBillingUA_WhenClientNameSet(t *testing.T) {
 	a := &auth.Auth{AccessToken: "at", UID: "u1"}
-	// 默认 client_version → WorkBuddy/5.5.4
+	// 配置的 client_version → WorkBuddy/<testClientVersion>
 	c := &Client{
 		HTTP: &http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 			if got := r.Header.Get("User-Agent"); got != billingUAWorkBuddy {
@@ -258,6 +269,8 @@ func TestBillingUA_WhenClientNameSet(t *testing.T) {
 		ChatBaseCN:    "https://chat.example",
 		BillingBaseCN: "https://billing.example",
 		ClientName:    "WorkBuddy",
+		ClientVersion: testClientVersion,
+		CliVersion:    testCliVersion,
 	}
 	if _, err := c.UserResource(a); err != nil {
 		t.Errorf("userResource: %v", err)
@@ -320,6 +333,33 @@ func TestBillingUA_WhenClientNameSaaS(t *testing.T) {
 	}
 	if got := c.billingUA(); got != "" {
 		t.Errorf("billingUA() = %q want empty", got)
+	}
+}
+
+// TestUserAgentNoBuiltinVersionFallback 版本段只有一个来源（config
+// upstream.client_version / cli_version）：headers 层不再自带内置兜底版本，
+// Client 上留空就是空段，不会悄悄变回某个写死的版本号。
+func TestUserAgentNoBuiltinVersionFallback(t *testing.T) {
+	c := &Client{ClientName: "WorkBuddy"}
+	if got, want := c.defaultWorkBuddyUAFor(&auth.Auth{}), "WorkBuddy/ WorkBuddy/ CLI/"; got != want {
+		t.Errorf("CN UA = %q want %q（空配置不应回落内置版本）", got, want)
+	}
+	if got, want := c.billingUA(), "WorkBuddy/"; got != want {
+		t.Errorf("billingUA() = %q want %q", got, want)
+	}
+	if got := c.clientVersion(); got != "" {
+		t.Errorf("clientVersion() = %q want empty", got)
+	}
+	if got := c.cliVersion(); got != "" {
+		t.Errorf("cliVersion() = %q want empty", got)
+	}
+	// nil 接收者同样不 panic、不兜底。
+	var nilClient *Client
+	if got := nilClient.clientVersion(); got != "" {
+		t.Errorf("nil.clientVersion() = %q want empty", got)
+	}
+	if got := nilClient.cliVersion(); got != "" {
+		t.Errorf("nil.cliVersion() = %q want empty", got)
 	}
 }
 

@@ -287,8 +287,8 @@ go build -o wp ./cmd/server
 | `header_timeout_seconds` | `0` | 聊天 SSE **响应头**上限；`<=0` 回落 `rpc_timeout_seconds` |
 | `idle_timeout_seconds` | `0` | 聊天 SSE **流中空闲**上限（活跃吐数据会续命）；`<=0` 回落 300 秒 |
 | `user_agent` | `""` | 固定 UA；空 = 由 `client_version` + `cli_version` 拼出官方形态 |
-| `client_version` | `"5.9.3"` | 伪造的客户端版本（进 UA 与 `X-IDE-*` 头） |
-| `cli_version` | `"2.179.0"` | 伪造的 CLI 版本 |
+| `client_version` | `"5.9.3"` | 伪造的客户端版本（进 UA 与 `X-IDE-*` 头）；唯一来源，headers 层无内置兜底，勿置空 |
+| `cli_version` | `"2.179.0"` | 伪造的 CLI 版本；同上，勿置空 |
 | `device_token` | `""` | 全局 `X-Device-Token`（可选，容器内无桌面端 SDK 时的注入入口） |
 | `device_token_file` | `""` | device token 文件路径；空 = 不读 |
 | `device_token_ttl` | `"5m"` | 上述文件内容的缓存有效期 |
