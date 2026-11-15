@@ -107,7 +107,7 @@ func TestDerivedTodayAdjust(t *testing.T) {
 		t.Fatalf("adjust=%d ok=%v want 20/true", got, ok)
 	}
 
-	// 当前余额高于预期 → 负数（界面用 ∇ 表示，不显示负号）。
+	// 当前余额高于预期 → 负数（界面用 ▼ 表示，不显示负号）。
 	statuses[0].Credits = 1150
 	if got, ok := derivedTodayAdjust(snap, statuses); !ok || got != -80 {
 		t.Fatalf("adjust=%d ok=%v want -80/true", got, ok)

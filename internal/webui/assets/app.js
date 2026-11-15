@@ -338,7 +338,7 @@ function applyCredits(c, opts = {}) {
 
 // 今日调整(过期+校正)：后端在 /admin/overview 里按
 //   Σ(昨日日终 + 今日获得 − 今日记录消耗 − 当前余额)
-// 算好 today_adjust（有符号）。卡片用 ∆/∇ 表示正负、不显示负号；
+// 算好 today_adjust（有符号）。卡片用 ▲/▼ 表示正负、不显示负号；
 // 图表里的「调整」仍是账本记录的正值流水，不受这里影响。
 function renderTodayAdjust(c) {
   const el = $('#kpiAdjust');
@@ -351,10 +351,10 @@ function renderTodayAdjust(c) {
     return;
   }
   if (v > 0) {
-    el.textContent = '∆ ' + fmtNum(v);
+    el.textContent = '▲ ' + fmtNum(v);
     el.classList.add('text-success');
   } else if (v < 0) {
-    el.textContent = '∇ ' + fmtNum(-v);
+    el.textContent = '▼ ' + fmtNum(-v);
     el.classList.add('text-danger');
   } else {
     el.textContent = '0';

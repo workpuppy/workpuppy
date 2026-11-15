@@ -613,7 +613,7 @@ func TestOverviewWording(t *testing.T) {
 	body := js.Body.String()
 	for _, want := range []string{
 		"name: '日终总计'", "name: '获得'", "name: '消耗'", "name: '调整'",
-		"日终总计：", "获得：", "消耗：", "调整：", "renderTodayAdjust", "today_adjust", "∆ ", "∇ ",
+		"日终总计：", "获得：", "消耗：", "调整：", "renderTodayAdjust", "today_adjust", "▲ ", "▼ ",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("图表文案缺少 %q（概览/弹窗系列名）", want)
