@@ -47,19 +47,24 @@ type Schedule struct {
 	TravelAccountDelay   string `json:"travel_account_delay"`   // 旅行相邻账号间隔（默认 800ms）
 	ActivityAccountDelay string `json:"activity_account_delay"` // 活跃上报相邻账号间隔（默认 800ms）
 	CheckinRefreshSkew   string `json:"checkin_refresh_skew"`   // 签到前多久判定 token 将过期（默认 10m）
-	WakeupGrace          string `json:"wakeup_grace"`           // 迟到唤醒补跑前的网络宽限（默认 5s）
-	CatchupWindow        string `json:"catchup_window"`         // 补跑窗口，超过则放弃老槽位（默认 24h）
+	// BalanceRefreshInterval 定期刷新所有账号余额的间隔（时长字符串，默认 30m；"0" = 关闭）。
+	// 每次逐号调用只读 billing 接口（UserResource），把权威余额回写池；负差额会记进
+	// 积分日账本的"调整"（积分过期/上游回收/本地估算误差）。
+	BalanceRefreshInterval string `json:"balance_refresh_interval"`
+	WakeupGrace            string `json:"wakeup_grace"`   // 迟到唤醒补跑前的网络宽限（默认 5s）
+	CatchupWindow          string `json:"catchup_window"` // 补跑窗口，超过则放弃老槽位（默认 24h）
 	// CheckinRetryDelays 签到遇到上游瞬时拒绝（5xx / code 10001）时的退避序列（默认 5s,15s,60s）。
 	CheckinRetryDelays []string `json:"checkin_retry_delays"`
 
 	// 以下为解析结果（json:"-"），供 scheduler 直接使用。
-	CheckinAccountDelayDur  time.Duration   `json:"-"`
-	TravelAccountDelayDur   time.Duration   `json:"-"`
-	ActivityAccountDelayDur time.Duration   `json:"-"`
-	CheckinRefreshSkewDur   time.Duration   `json:"-"`
-	WakeupGraceDur          time.Duration   `json:"-"`
-	CatchupWindowDur        time.Duration   `json:"-"`
-	CheckinRetryDelaysDur   []time.Duration `json:"-"`
+	CheckinAccountDelayDur    time.Duration   `json:"-"`
+	TravelAccountDelayDur     time.Duration   `json:"-"`
+	ActivityAccountDelayDur   time.Duration   `json:"-"`
+	CheckinRefreshSkewDur     time.Duration   `json:"-"`
+	BalanceRefreshIntervalDur time.Duration   `json:"-"`
+	WakeupGraceDur            time.Duration   `json:"-"`
+	CatchupWindowDur          time.Duration   `json:"-"`
+	CheckinRetryDelaysDur     []time.Duration `json:"-"`
 
 	// ── 六类任务的执行时刻 ────────────────────────────────────────────────
 	// 值形如 "09:30"（24 小时制，精确到分）；一个任务可配多个时刻。
@@ -206,6 +211,7 @@ func (s *Schedule) Normalize() error {
 		{"travel_account_delay", s.TravelAccountDelay, &s.TravelAccountDelayDur},
 		{"activity_account_delay", s.ActivityAccountDelay, &s.ActivityAccountDelayDur},
 		{"checkin_refresh_skew", s.CheckinRefreshSkew, &s.CheckinRefreshSkewDur},
+		{"balance_refresh_interval", s.BalanceRefreshInterval, &s.BalanceRefreshIntervalDur},
 		{"wakeup_grace", s.WakeupGrace, &s.WakeupGraceDur},
 		{"catchup_window", s.CatchupWindow, &s.CatchupWindowDur},
 	}
@@ -221,6 +227,10 @@ func (s *Schedule) Normalize() error {
 			return fmt.Errorf("schedule.%s: 不能为负（关闭请写 0）", d.key)
 		}
 		*d.out = v
+	}
+	// 余额定期刷新太密会把上游 billing 打成扫描器：允许关闭（0），但开着时至少 5m。
+	if s.BalanceRefreshIntervalDur > 0 && s.BalanceRefreshIntervalDur < 5*time.Minute {
+		return fmt.Errorf("schedule.balance_refresh_interval: 至少 5m（0 = 关闭）")
 	}
 	if len(s.CheckinRetryDelays) > 0 {
 		out := make([]time.Duration, 0, len(s.CheckinRetryDelays))

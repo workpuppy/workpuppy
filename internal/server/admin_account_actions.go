@@ -4,78 +4,35 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
-	"sync"
-	"time"
 
-	"wp/internal/logfmt"
+	"wp/internal/balancerefresh"
 )
 
 // adminRefreshBalances POST /admin/accounts/refresh —— 逐账号拉一次余额（只读）。
 //
 // 为什么需要：从旧平台导入的 auth 文件里**没有积分字段**，池里的 credits 只有在
-// 签到 / 单号签到 / 首次请求后才有值，所以导入后一律显示 0（顶部刷新以前只重画页面，
-// 并不会去上游取数）。这里做成显式的一次批量只读刷新：
-//   - 串行 + 账号间 sleep（复用 schedule.intra_request_jitter 量级），不打爆上游；
-//   - 只调 billing/meter 只读接口（UserResource），不碰签到；
+// 签到 / 手动刷新 / 定时刷新后才有值；而积分日账本的「调整」也只有权威回写产生
+// 负差额时才会出现。这里手动触发一轮，与定时任务共用 balancerefresh 的单飞锁：
+//   - 串行 + 账号间 sleep，不打爆上游；
+//   - 只调 billing 只读接口（UserResource），不碰签到；
 //   - 结果回写池（credits / creditsExpiring），并顺手解冻"积分恢复"的冷却账号。
-type balanceRefresh struct {
-	mu      sync.Mutex
-	running bool
-}
-
-var balanceRefreshState balanceRefresh // 单飞：同一时刻只允许一轮刷新
-
 func (h *Handler) adminRefreshBalances(w http.ResponseWriter, r *http.Request) {
-	if !balanceRefreshState.mu.TryLock() {
-		writeOpenAIError(w, http.StatusConflict, "busy", "余额刷新正在进行中")
+	res, err := balancerefresh.Refresh(context.Background(), h.cfg.Pool, h.cfg.Upstream)
+	if errors.Is(err, balancerefresh.ErrBusy) {
+		writeOpenAIError(w, http.StatusConflict, "busy", err.Error())
 		return
 	}
-	defer balanceRefreshState.mu.Unlock()
-
-	statuses := h.cfg.Pool.List()
-	type row struct {
-		UID      string `json:"uid"`
-		Nickname string `json:"nickname,omitempty"`
-		Status   string `json:"status"` // ok / skipped / fail
-		Credits  *int64 `json:"credits,omitempty"`
-		Detail   string `json:"detail,omitempty"`
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "refresh_failed", err.Error())
+		return
 	}
-	rows := make([]row, 0, len(statuses))
-	var okN, skipN, failN int
-
-	for _, st := range statuses {
-		if st.Disabled || h.cfg.Pool.RiskPaused(st.UID) {
-			rows = append(rows, row{UID: st.UID, Nickname: st.Nickname, Status: "skipped", Detail: "disabled"})
-			skipN++
-			continue
-		}
-		a := h.cfg.Pool.AuthByUID(st.UID)
-		if a == nil || a.RefreshTokenValue() == "" {
-			rows = append(rows, row{UID: st.UID, Nickname: st.Nickname, Status: "skipped", Detail: "no credentials"})
-			skipN++
-			continue
-		}
-		remain, buckets, err := h.cfg.Upstream.UserResourceDetailed(a, 0) // 0 = 不分桶，只要总量
-		if err != nil {
-			rows = append(rows, row{UID: st.UID, Nickname: st.Nickname, Status: "fail", Detail: err.Error()})
-			failN++
-			log.Printf("refresh-balance %s: %v", logfmt.Label(st.UID, st.Nickname), err)
-		} else {
-			h.cfg.Pool.ReenableIfCredits(st.UID, remain)
-			h.cfg.Pool.SetCreditsDetailed(st.UID, remain, buckets.Expiring)
-			v := remain
-			rows = append(rows, row{UID: st.UID, Nickname: st.Nickname, Status: "ok", Credits: &v})
-			okN++
-		}
-		// 账号之间留一点间隔，避免一轮刷新把上游打热（与签到同一量级）。
-		time.Sleep(200 * time.Millisecond)
-	}
-
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": okN, "skipped": skipN, "fail": failN, "total": len(rows),
-		"accounts": rows,
+		"ok": res.OK, "skipped": res.Skipped, "fail": res.Fail, "total": res.Total,
+		"accounts": res.Rows,
 		"hint":     "余额来自上游 billing 只读接口；导入的账号首次刷新后才有值",
 	})
 }

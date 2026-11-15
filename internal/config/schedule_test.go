@@ -190,3 +190,28 @@ func TestScheduleDefaultsSurvivePartialUnmarshal(t *testing.T) {
 		t.Errorf("开关默认应保留 true：%+v", s)
 	}
 }
+
+// 余额定期刷新间隔：允许关闭（0），开着时最小 5m（避免把上游 billing 打成扫描器）。
+func TestBalanceRefreshIntervalBounds(t *testing.T) {
+	cases := []struct {
+		raw string
+		ok  bool
+	}{
+		{"0", true},
+		{"5m", true},
+		{"30m", true},
+		{"1m", false},
+		{"-30s", false},
+	}
+	for _, c := range cases {
+		s := DefaultSchedule()
+		s.BalanceRefreshInterval = c.raw
+		err := s.Normalize()
+		if c.ok && err != nil {
+			t.Errorf("%q 应通过，实际 %v", c.raw, err)
+		}
+		if !c.ok && err == nil {
+			t.Errorf("%q 应被拒绝", c.raw)
+		}
+	}
+}

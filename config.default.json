@@ -49,6 +49,7 @@
     "checkin_account_delay": "3s",
     "travel_account_delay": "800ms",
     "activity_account_delay": "800ms",
+    "balance_refresh_interval": "30m",
     "checkin_retry_delays": [
       "5s",
       "15s",

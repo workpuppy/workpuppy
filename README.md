@@ -255,7 +255,7 @@ go build -o wp ./cmd/server
 | `random_delay_minutes` | `0` | **整批起点**在小时内的小幅抖动（0–60 分钟）；`0` = 严格按时点 |
 | `checkin_account_delay` | `"3s"` | 签到相邻账号最小间隔（3 个号 3 秒内连打会被上游 `10001` 拒） |
 | `travel_account_delay` | `"800ms"` | 猫猫旅行相邻账号间隔 |
-| `activity_account_delay` | `"800ms"` | 活跃上报相邻账号间隔 |
+| `activity_account_delay` | `"800ms"` | 活跃上报相邻账号间隔 |`n| `balance_refresh_interval` | `"30m"` | **定期刷新全部账号余额**：每 N 逐号调一次只读 billing 接口并回写池（负差额记入日账本「调整」）；`"0"` = 关闭，最小 5m。global 账号不签到，靠它保持余额新鲜 |
 | `checkin_retry_delays` | `["5s","15s","60s"]` | 签到瞬时失败（HTTP 5xx / code 10001）的退避序列；`[]` = 不重试 |
 | `checkin_refresh_skew` | `"10m"` | 签到前多久判定 token 将过期并预刷新 |
 | `wakeup_grace` | `"5s"` | 睡眠唤醒后、补跑错过的槽位前的网络宽限 |

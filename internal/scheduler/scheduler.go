@@ -61,6 +61,11 @@ type Config struct {
 	IntraJitterMin time.Duration
 	IntraJitterMax time.Duration
 
+	// BalanceRefreshInterval 定期刷新全部账号余额的间隔（0 = 关闭）。
+	// 与签到/旅行无关，只读 billing 接口；用于让积分余额与积分日账本的「调整」
+	// 不再是"只有手动刷新才动"的状态。
+	BalanceRefreshInterval time.Duration
+
 	// CheckinDisabled 显式关闭签到排程（对应 config 的 schedule.checkin_enabled=false）。
 	// 禁用后不再有任何签到时点。旅行不再搭签到便车（已剥离为独立排程）。
 	CheckinDisabled bool
@@ -349,6 +354,9 @@ func (s *Scheduler) dueSlots(cursor, now time.Time) []dueSlot {
 
 // Run 主循环，阻塞直到 ctx 取消。
 func (s *Scheduler) Run(ctx context.Context) {
+	if s.cfg.BalanceRefreshInterval > 0 {
+		go s.runBalanceRefreshLoop(ctx)
+	}
 	// cursor：已派发的最后一个槽位（不是 time.Now()）。见上方「唤醒与补跑」。
 	cursor := nowFunc()
 	for {

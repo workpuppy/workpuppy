@@ -212,6 +212,7 @@ func main() {
 		KeepaliveAt:            cfg.Schedule.KeepaliveAt,
 		SchoolAt:               cfg.Schedule.SchoolAt,
 		CatAt:                  cfg.Schedule.CatAt,
+		BalanceRefreshInterval: cfg.Schedule.BalanceRefreshIntervalDur,
 		ActivityReportCount:    cfg.Schedule.ActivityReportCount,
 		ExpiringSoonWindow:     cfg.ExpiringSoonDur, // 快过期积分优先消耗（issue:积分过期）
 		SpreadWindow:           cfg.SpreadWindowDur, // 定时任务账号随机分布窗口（schedule.spread_window）
@@ -269,6 +270,11 @@ func main() {
 			cfg.IntraJitterMinD, cfg.IntraJitterMaxD)
 	} else {
 		log.Printf("同账号连续请求间隔：未加随机间隔（schedule.intra_request_jitter_min/max 均为 0）")
+	}
+	if iv := cfg.Schedule.BalanceRefreshIntervalDur; iv > 0 {
+		log.Printf("余额定期刷新已启用：每 %v 逐号拉一次只读余额（负差额记入积分日账本「调整」）", iv)
+	} else {
+		log.Printf("余额定期刷新已关闭（schedule.balance_refresh_interval=0）：余额只在签到/手动刷新时更新")
 	}
 
 	// 管理面凭据：从配置里的 admin.password 哈希加载（加盐 10 轮 SHA256）。

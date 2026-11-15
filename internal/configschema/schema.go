@@ -232,6 +232,8 @@ var fields = []Field{
 	{Path: "schedule.checkin_account_delay", Group: "schedule", Label: "签到相邻账号间隔", Kind: KindDuration, Restart: true},
 	{Path: "schedule.travel_account_delay", Group: "schedule", Label: "旅行相邻账号间隔", Kind: KindDuration, Restart: true},
 	{Path: "schedule.activity_account_delay", Group: "schedule", Label: "上报相邻账号间隔", Kind: KindDuration, Restart: true},
+	{Path: "schedule.balance_refresh_interval", Group: "schedule", Label: "余额定期刷新间隔", Kind: KindDuration, Restart: true,
+		Hint: "每隔 N 逐号拉一次只读余额并回写池（负差额记入「调整」）；0 = 关闭，最小 5m，默认 30m。"},
 	{Path: "schedule.checkin_retry_delays", Group: "schedule", Label: "签到重试间隔", Kind: KindDurationList, Restart: true},
 	{Path: "schedule.checkin_refresh_skew", Group: "schedule", Label: "签到前刷新提前量", Kind: KindDuration, Restart: true},
 	{Path: "schedule.wakeup_grace", Group: "schedule", Label: "迟到唤醒宽限", Kind: KindDuration, Restart: true},
