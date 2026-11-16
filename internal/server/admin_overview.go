@@ -35,7 +35,7 @@ func (h *Handler) adminOverview(w http.ResponseWriter, _ *http.Request) {
 			"days":      30,
 			"hint":      "totals/accounts 是当日内存热值；histories 是落盘的每日汇总",
 		}
-		// 卡片「今日调整(过期+校正)」用的派生值：昨日日终 + 今日获得 − 今日消耗 − 当前总分。
+		// 卡片「今日调整(过期+校正)」用的派生值：当前余额 + 今日消耗 − 昨日日终 − 今日获得。
 		// 图表里的「调整」仍用账本自己记录的正值，两者互不影响。
 		if adj, ok := derivedTodayAdjust(snap, h.cfg.Pool.List()); ok {
 			credits["today_adjust"] = adj
@@ -49,9 +49,9 @@ func (h *Handler) adminOverview(w http.ResponseWriter, _ *http.Request) {
 
 // derivedTodayAdjust 计算「今日调整(过期+校正)」的**有符号**值：
 //
-//	Σ(每个账号：昨日日终余额 + 今日获得 − 今日记录消耗 − 当前余额)
+//	Σ(每个账号：当前余额 + 今日记录消耗 − 昨日日终余额 − 今日获得)
 //
-// 正数 = 实际余额低于预期（过期/上游回收/本地估算误差），负数 = 高于预期。
+// 正数 = 实际余额高于预期（多出来的校正），负数 = 低于预期（过期/上游回收/本地估算误差）。
 // 逐个账号取"今天之前最近一条 credits_end"作为日终基准：某天没有记录的账号沿用
 // 更早的基准；从未有历史基准的新号不参与（否则首次导入的余额会被算成调整）。
 //
@@ -87,7 +87,7 @@ func derivedTodayAdjust(snap creditledger.Snapshot, statuses []pool.Status) (int
 		if a, ok := snap.Accounts[uid]; ok {
 			earned, spent = a.Earned, a.Spent
 		}
-		sum += before.credits + earned - spent - cur
+		sum += cur + spent - before.credits - earned
 		counted++
 	}
 	return sum, counted > 0

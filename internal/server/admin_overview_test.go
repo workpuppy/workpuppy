@@ -80,7 +80,7 @@ func TestAdminOverviewWithoutLedger(t *testing.T) {
 	}
 }
 
-// 今日调整：昨日日终 + 今日获得 − 今日消耗 − 当前总分（按账号逐个求和）。
+// 今日调整：当前总分 + 今日消耗 − 昨日日终 − 今日获得（按账号逐个求和）。
 func TestDerivedTodayAdjust(t *testing.T) {
 	snap := creditledger.Snapshot{
 		Today: "2026-11-15",
@@ -99,18 +99,18 @@ func TestDerivedTodayAdjust(t *testing.T) {
 		},
 	}
 	statuses := []pool.Status{
-		{UID: "u1", Credits: 1050}, // 1000 + 100 − 30 − 1050 = 20
-		{UID: "u2", Credits: 500},  // 500 + 0 − 0 − 500 = 0
+		{UID: "u1", Credits: 1050}, // 1050 + 30 − 1000 − 100 = -20
+		{UID: "u2", Credits: 500},  // 500 + 0 − 500 − 0 = 0
 		{UID: "u3", Credits: 777},  // 无历史基准：不参与
 	}
-	if got, ok := derivedTodayAdjust(snap, statuses); !ok || got != 20 {
-		t.Fatalf("adjust=%d ok=%v want 20/true", got, ok)
+	if got, ok := derivedTodayAdjust(snap, statuses); !ok || got != -20 {
+		t.Fatalf("adjust=%d ok=%v want -20/true", got, ok)
 	}
 
-	// 当前余额高于预期 → 负数（界面用 ▼ 表示，不显示负号）。
+	// 当前余额高于预期 → 正数（界面用 ▲ 表示）。
 	statuses[0].Credits = 1150
-	if got, ok := derivedTodayAdjust(snap, statuses); !ok || got != -80 {
-		t.Fatalf("adjust=%d ok=%v want -80/true", got, ok)
+	if got, ok := derivedTodayAdjust(snap, statuses); !ok || got != 80 {
+		t.Fatalf("adjust=%d ok=%v want 80/true", got, ok)
 	}
 
 	// 完全没有历史 → 无法计算。
