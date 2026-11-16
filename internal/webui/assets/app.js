@@ -340,25 +340,22 @@ function applyCredits(c, opts = {}) {
 //   Σ(当前余额 + 今日记录消耗 − 昨日日终 − 今日获得)
 // 算好 today_adjust（有符号）。卡片用 ▲/▼ 表示正负、不显示负号；
 // 图表里的「调整」仍是账本记录的正值流水，不受这里影响。
+// 颜色统一用卡片自带的棕/琥珀主题色（text-warning-emphasis）：正负已经由 ▲/▼
+// 表达，再叠红绿会和「获得/消耗」的语义色混在一起，反而更难读。
 function renderTodayAdjust(c) {
   const el = $('#kpiAdjust');
   if (!el) return;
-  el.classList.remove('text-warning-emphasis', 'text-success', 'text-danger');
+  el.classList.remove('text-success', 'text-danger');
+  el.classList.add('text-warning-emphasis');
   const v = c && typeof c.today_adjust === 'number' ? c.today_adjust : null;
   if (v === null) {
     el.textContent = '–';
-    el.classList.add('text-warning-emphasis');
-    return;
-  }
-  if (v > 0) {
+  } else if (v > 0) {
     el.textContent = '▲ ' + fmtNum(v);
-    el.classList.add('text-success');
   } else if (v < 0) {
     el.textContent = '▼ ' + fmtNum(-v);
-    el.classList.add('text-danger');
   } else {
     el.textContent = '0';
-    el.classList.add('text-warning-emphasis');
   }
 }
 
