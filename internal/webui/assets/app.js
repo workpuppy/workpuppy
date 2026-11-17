@@ -261,6 +261,8 @@ function render() {
   }
   if (state.view !== 'overview') stopOverviewPolling();
   updateRestartBanner();
+  // 视图从 hidden 变可见后容器才有真实宽高：下一帧统一校正（详见 fitChart）。
+  requestAnimationFrame(() => resizeCharts());
 }
 
 // ── 概览（5 秒轮询；后端只读内存/落盘缓存，不碰上游）──────────────
@@ -574,6 +576,15 @@ function chartFor(host) {
   return inst;
 }
 
+// fitChart 只在宿主已经有真实尺寸时 resize：ECharts 在 display:none / 宽度为 0 时
+// init 会把画布固定成 0 或动画中的临时宽度（表现为图例挤成竖排、曲线全挤在左边）；
+// 等容器可见后必须再 resize 一次，否则会一直保持错误尺寸。
+function fitChart(host, inst) {
+  if (!host || !inst || inst.isDisposed()) return;
+  if (host.clientWidth < 2 || host.clientHeight < 2) return;
+  try { inst.resize(); } catch { /* 实例已销毁 */ }
+}
+
 function renderChart(hostId, labels, rows) {
   const host = document.getElementById(hostId);
   if (!host || !window.echarts) return;
@@ -583,16 +594,35 @@ function renderChart(hostId, labels, rows) {
     return;
   }
   inst.setOption(creditChartOption(labels, rows), true);
-  // 宿主可能刚被显示（弹窗动画/切页签）且尺寸还是 0：下一帧补一次 resize。
-  requestAnimationFrame(() => {
-    try { inst.resize(); } catch { /* 实例已销毁 */ }
+  // 宿主可能刚被显示（弹窗动画/切页签）且尺寸还是 0：立即试一次 + 下一帧再试一次，
+  // 弹窗动画结束后再兜一次；容器从 hidden 变可见的最终兜底是下面的 ResizeObserver。
+  fitChart(host, inst);
+  requestAnimationFrame(() => fitChart(host, inst));
+  setTimeout(() => fitChart(host, inst), 80);
+}
+
+// 容器显隐/布局变化时自动 resize（ECharts 不会跟随 DOM 尺寸）。这是"图挤在左边"
+// 的根治手段：无论图表实例是在隐藏状态下初始化，还是在动画中间初始化，只要容器
+// 最终拿到了真实宽高，ResizeObserver 就会把画布拉回正确尺寸。
+let chartResizeObserver = null;
+function observeChartHosts() {
+  if (chartResizeObserver || typeof ResizeObserver === 'undefined') return;
+  chartResizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const host = entry.target;
+      fitChart(host, chartInstances.get(host.id));
+    }
   });
+  for (const id of ['overviewChart', 'creditModalChart']) {
+    const host = document.getElementById(id);
+    if (host) chartResizeObserver.observe(host);
+  }
 }
 
 // resizeCharts 窗口尺寸或容器显隐变化时同步（ECharts 不会自动跟随 DOM 尺寸）。
 function resizeCharts() {
-  for (const inst of chartInstances.values()) {
-    try { inst.resize(); } catch { /* 实例已销毁 */ }
+  for (const [id, inst] of chartInstances) {
+    fitChart(document.getElementById(id), inst);
   }
 }
 
@@ -1966,6 +1996,7 @@ function bind() {
   window.addEventListener('resize', () => resizeCharts());
   const chartModal = $('#creditChartModal');
   if (chartModal) chartModal.addEventListener('shown.bs.modal', () => resizeCharts());
+  observeChartHosts();
 
   $('#btnRefreshStatus').addEventListener('click', () => refreshOverview());
   $('#btnRefreshAccounts').addEventListener('click', loadAccounts);

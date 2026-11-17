@@ -573,9 +573,14 @@ func TestCreditChartRecreatesStaleInstance(t *testing.T) {
 	js := httptest.NewRecorder()
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
-	for _, want := range []string{"function chartFor(", "host.querySelector('canvas')", "chartInstances.delete('creditModalChart')"} {
+	for _, want := range []string{
+		"function chartFor(", "host.querySelector('canvas')", "chartInstances.delete('creditModalChart')",
+		// 容器在隐藏/动画中初始化时，ECharts 会把画布固定成临时宽度（图挤在左边）；
+		// 必须靠 fitChart + ResizeObserver 在拿到真实宽高后 resize。
+		"function fitChart(", "new ResizeObserver(", "observeChartHosts()",
+	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("app.js 缺少 %q（弹窗图表第二次会画不出来）", want)
+			t.Errorf("app.js 缺少 %q（弹窗图表第二次会画不出来 / 图表会挤在左边）", want)
 		}
 	}
 }
