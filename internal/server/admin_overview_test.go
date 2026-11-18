@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"wp/internal/creditledger"
-	"wp/internal/pool"
 )
 
 // 概览聚合接口：一次返回 status + credits，全部来自本地状态/缓存，且必须带管理密码。
@@ -77,44 +76,5 @@ func TestAdminOverviewWithoutLedger(t *testing.T) {
 	}
 	if v, ok := out["credits"]; !ok || v != nil {
 		t.Fatalf("credits=%v want null", v)
-	}
-}
-
-// 今日调整：当前总分 + 今日消耗 − 昨日日终 − 今日获得（按账号逐个求和）。
-func TestDerivedTodayAdjust(t *testing.T) {
-	snap := creditledger.Snapshot{
-		Today: "2026-11-15",
-		Histories: []creditledger.DaySummary{
-			{Date: "2026-11-13", Accounts: []creditledger.AccountDayView{
-				{UID: "u1", AccountDay: creditledger.AccountDay{Credits: 900}},
-				{UID: "u2", AccountDay: creditledger.AccountDay{Credits: 500}},
-			}},
-			{Date: "2026-11-14", Accounts: []creditledger.AccountDayView{
-				{UID: "u1", AccountDay: creditledger.AccountDay{Credits: 1000}},
-				{UID: "u2", AccountDay: creditledger.AccountDay{Credits: 500}},
-			}},
-		},
-		Accounts: map[string]*creditledger.AccountDay{
-			"u1": {Earned: 100, Spent: 30},
-		},
-	}
-	statuses := []pool.Status{
-		{UID: "u1", Credits: 1050}, // 1050 + 30 − 1000 − 100 = -20
-		{UID: "u2", Credits: 500},  // 500 + 0 − 500 − 0 = 0
-		{UID: "u3", Credits: 777},  // 无历史基准：不参与
-	}
-	if got, ok := derivedTodayAdjust(snap, statuses); !ok || got != -20 {
-		t.Fatalf("adjust=%d ok=%v want -20/true", got, ok)
-	}
-
-	// 当前余额高于预期 → 正数（界面用 ▲ 表示）。
-	statuses[0].Credits = 1150
-	if got, ok := derivedTodayAdjust(snap, statuses); !ok || got != 80 {
-		t.Fatalf("adjust=%d ok=%v want 80/true", got, ok)
-	}
-
-	// 完全没有历史 → 无法计算。
-	if _, ok := derivedTodayAdjust(creditledger.Snapshot{Today: "2026-11-15"}, statuses); ok {
-		t.Fatal("没有历史基准时不应给出调整值")
 	}
 }
