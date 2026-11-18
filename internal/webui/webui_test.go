@@ -606,7 +606,7 @@ func TestOverviewWording(t *testing.T) {
 	html := idx.Body.String()
 	for _, want := range []string{
 		"账号总数", "可用账号", "冷却中账号", "已禁用账号", "在途占满", "粘性会话",
-		"总积分", "今日获得", "今日核销(消耗+过期+校正)",
+		"总积分", "今日获得", "今日核销(消耗+过期&amp;校正)",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("概览缺少文案 %q", want)
