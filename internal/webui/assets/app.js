@@ -409,14 +409,10 @@ function fmtAxis(v) {
   return String(Math.round(v));
 }
 
-// ── 对数刻度（带偏移）：压低 0–100 的占比 ────────────────────────────────
-// 纯 log1p 在固定 0–100 万 / 0–10 万轴上会让 0–100 占 33% / 40%，太抢眼。
-// 改成 log10(v + OFFSET)：OFFSET 把低值段抬离 0，0–100 只占约 4–6%，
-// 100 以上仍保持对数手感。概览轴固定 0–100 万，单号轴固定 0–10 万。
-const SCALE_OFFSET = 250;
-
-// CHART_RANGE 每个图表的默认上限（数据更大时轴仍会自动扩到下一档基准）。
-const CHART_RANGE = { overviewChart: 1_000_000, creditModalChart: 100_000 };
+// ── 对数刻度（带偏移）：压低低值区占比 ────────────────────────────────
+// 纯 log1p 会让 0–100 吃掉太多轴高；改成 log10(v + 1000)，把低值段抬离 0。
+// 轴上限不写死：由 chartBaselines 按数据最大值取 1/2/5 刻度，刚好覆盖数据。
+const SCALE_OFFSET = 1000;
 
 function scaleData(v, axisMaxRaw) {
   const n = Math.max(0, Number(v) || 0);
@@ -456,13 +452,12 @@ function chartBaselines(maxRaw) {
 // creditChartOption 组装 ECharts option：三条线**各自独立**（不堆叠）画在同一个
 // 对数刻度轴上。早期版本把四条线放进同一个 stack，结果"调整=0"的那条线会被画到
 // "获得+消耗"的累计高度，看起来和获得持平——工具提示写着 0、图上却不是 0。
-function creditChartOption(labels, rows, cap) {
+function creditChartOption(labels, rows) {
   const t = chartTheme();
   // 图例顺序：两条流水在前，日终余额最后（余额量级最大，放最后更符合阅读顺序）。
   const order = [...CREDIT_SERIES.filter((s) => s.flow), CREDIT_SERIES[0]];
 
-  // 先求数据最大值，再与图表固定范围取大：概览 0–100 万、单号 0–10 万；
-  // 数据超过范围时轴自动扩到下一档 1/2/5 基准。
+  // 轴上限不写死：按数据最大值取 1/2/5 基准，刚好覆盖数据即可。
   let maxPositive = 0;
   rows.forEach((r) => {
     order.forEach((s) => {
@@ -470,8 +465,7 @@ function creditChartOption(labels, rows, cap) {
       if (raw > maxPositive) maxPositive = raw;
     });
   });
-  const range = Math.max(Number(cap) || 0, maxPositive);
-  const baselines = chartBaselines(range);
+  const baselines = chartBaselines(maxPositive);
   const axisRawMax = baselines[baselines.length - 1];
   // 每条线喂 scaleData(自己的值, axisRawMax)：0 仍然是 0，不会被相邻序列抬高。
   const seriesData = new Map(order.map((s) => [
@@ -614,8 +608,7 @@ function renderChart(hostId, labels, rows) {
     inst.clear();
     return;
   }
-  const cap = CHART_RANGE[hostId] || 1_000_000;
-  inst.setOption(creditChartOption(labels, rows, cap), true);
+  inst.setOption(creditChartOption(labels, rows), true);
   // 宿主可能刚被显示（弹窗动画/切页签）且尺寸还是 0：立即试一次 + 下一帧再试一次，
   // 弹窗动画结束后再兜一次；容器从 hidden 变可见的最终兜底是下面的 ResizeObserver。
   fitChart(host, inst);
