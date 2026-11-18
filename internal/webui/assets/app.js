@@ -361,17 +361,26 @@ function renderTodayAdjust(c) {
   }
 }
 
+// startOverviewPolling 让刷新落在墙钟 5 秒整数倍（:00/:05/:10…），而不是从页面
+// 加载起算的"每 5 秒"。每次 tick 后按当前时钟重新计算到下一个边界的时间，避免
+// setTimeout 的累积漂移；页面隐藏/切走时仍会继续排下一轮，但不会发请求。
+function scheduleOverviewTick() {
+  const wait = OVERVIEW_POLL_MS - (Date.now() % OVERVIEW_POLL_MS);
+  state.overviewTimer = setTimeout(() => {
+    state.overviewTimer = null;
+    if (!document.hidden && state.view === 'overview' && state.password) refreshOverview();
+    if (state.view === 'overview' && state.password) scheduleOverviewTick();
+  }, wait);
+}
+
 function startOverviewPolling() {
   if (state.overviewTimer) return;
-  state.overviewTimer = setInterval(() => {
-    if (document.hidden || state.view !== 'overview' || !state.password) return;
-    refreshOverview();
-  }, OVERVIEW_POLL_MS);
+  scheduleOverviewTick();
 }
 
 function stopOverviewPolling() {
   if (state.overviewTimer) {
-    clearInterval(state.overviewTimer);
+    clearTimeout(state.overviewTimer);
     state.overviewTimer = null;
   }
 }

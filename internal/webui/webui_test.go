@@ -543,7 +543,7 @@ func TestOverviewPollingAndVersionWiring(t *testing.T) {
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
 	for _, want := range []string{
-		"/admin/overview", "refreshOverview", "startOverviewPolling", "OVERVIEW_POLL_MS",
+		"/admin/overview", "refreshOverview", "startOverviewPolling", "scheduleOverviewTick", "OVERVIEW_POLL_MS",
 		"checkFrontendVersion", "pageVersion", "/assets/version.json", "applyFrontendUpdate", "wp.frontend.version",
 	} {
 		if !strings.Contains(body, want) {
