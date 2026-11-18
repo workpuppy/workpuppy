@@ -320,7 +320,7 @@ function applyCredits(c, opts = {}) {
   const t = c.totals || {};
   setText('#creditToday',
     c.today + '：获得 ' + fmtNum(t.earned || 0) +
-    ' / 核销（消耗 ' + fmtNum(t.spent || 0) + ' + 调整 ' + fmtNum(t.adjust || 0) + '）' +
+    ' / 核销（消耗 ' + fmtNum(t.spent || 0) + ' + 过期&校正 ' + fmtNum(t.adjust || 0) + '）' +
     ' / 净 ' + fmtNum(t.net || 0) +
     '　（账号 ' + Object.keys(c.accounts || {}).length + ' 个）');
   setText('#kpiEarned', fmtNum(t.earned || 0));
@@ -377,7 +377,7 @@ function stopOverviewPolling() {
 // （工具提示是 0、图上却不是 0）；现在不堆叠，读数与曲线一致。
 
 // 三条序列的语义（ax 字段决定挂哪个轴；flow=true 是流水线）。
-// 「核销」= 消耗 + 调整：曲线上画两项之和，tooltip 仍显示 A+B 让来源可核对。
+// 「核销」= 消耗 + 过期&校正：曲线上画两项之和，tooltip 仍显示 A+B 让来源可核对。
 const CREDIT_SERIES = [
   { key: 'credits', name: '日终总计', color: '#206bc4', ax: 'left' },
   { key: 'earned', name: '获得', color: '#2fb344', ax: 'right', flow: true },
@@ -515,7 +515,7 @@ function creditChartOption(labels, rows) {
           `<b>${labels[i]}</b>`,
           `日终总计：<b>${fmtNum(r.credits)}</b>`,
           `获得：${fmtNum(r.earned)}`,
-          // 核销 = 消耗 + 调整；按需求显示 A+B，而不是合并后的结果。
+          // 核销 = 消耗 + 过期&校正；按需求显示 A+B，而不是合并后的结果。
           `核销：${fmtNum(r.spent)} + ${fmtNum(r.adjust)}`,
           `净变化：${net > 0 ? '+' : ''}${fmtNum(net)}`,
         ].join('<br/>');
