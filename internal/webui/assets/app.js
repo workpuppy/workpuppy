@@ -422,26 +422,35 @@ function fmtAxis(v) {
   return String(Math.round(v));
 }
 
-// ── 混合刻度：0–100 线性，100 以上按 log10 压缩 ─────────────────────────────
-// 纯 log1p 会把 0–100 放得过大、100–100000 挤成一条。改成"膝盖"刻度：
-//   0–100   线性：1 积分 = 1/100 单位（低值仍然能看出非 0）
-//   >100    每个十倍固定占 1.9 单位（log10）
-// 于是 0–100 约占轴高 15%，100–1k / 1k–1万 / 1万–10万 各约占 28%，
-// 正好把细节让给 100–100000。tooltip / 基准线标签仍显示原始积分。
+// ── 混合刻度：0–100 固定占 5%，100 以上按 log10 均分 ─────────────────────
+// 纯 log1p 把 0–100 放得过大、100–100000 挤成一条。改成"膝盖"刻度：
+//   0–100   线性，固定占轴高 5%（SCALE_LOW）
+//   >100    按 log10 均分剩余 95%：数据上限越高，每个十倍占的份额越小
+// 概览要覆盖 10万–100万（100 万的 4 个数量级），账号弹窗覆盖到 10万（3 个数量级），
+// 同一套公式按"数据最大值取整后的轴上限"自适应即可。
+// 轴上限仍由 chartBaselines 取整到 1/2/5 基准，小数据不会被缩在底部。
 const SCALE_KNEE = 100; // 膝盖位置：以下线性
-const SCALE_DECADE = 1.9; // 100 以上每个数量级占的高度（单位）
+const SCALE_LOW = 0.05; // 0–100 固定占轴高 5%
 
-function scaleData(v) {
+function scaleData(v, axisMaxRaw) {
   const n = Math.max(0, Number(v) || 0);
-  if (n <= SCALE_KNEE) return n / SCALE_KNEE;
-  return 1 + Math.log10(n / SCALE_KNEE) * SCALE_DECADE;
+  if (!(axisMaxRaw > SCALE_KNEE)) {
+    // 全部数据 ≤100：直接线性（否则 0–100 只占 5%，小数据会缩成贴地一条）
+    return axisMaxRaw > 0 ? n / axisMaxRaw : 0;
+  }
+  if (n <= SCALE_KNEE) return (n / SCALE_KNEE) * SCALE_LOW;
+  const decades = Math.log10(axisMaxRaw / SCALE_KNEE);
+  const frac = decades > 0 ? Math.log10(n / SCALE_KNEE) / decades : 0;
+  return SCALE_LOW + (1 - SCALE_LOW) * Math.min(1, Math.max(0, frac));
 }
 
 // invScale 仅供调试/反解：把缩放后的坐标还原成原始积分。
-function invScale(v) {
+function invScale(v, axisMaxRaw) {
   const n = Math.max(0, Number(v) || 0);
-  if (n <= 1) return n * SCALE_KNEE;
-  return SCALE_KNEE * Math.pow(10, (n - 1) / SCALE_DECADE);
+  if (!(axisMaxRaw > SCALE_KNEE)) return n * Math.max(0, axisMaxRaw || 0);
+  if (n <= SCALE_LOW) return (n / SCALE_LOW) * SCALE_KNEE;
+  const decades = Math.log10(axisMaxRaw / SCALE_KNEE);
+  return SCALE_KNEE * Math.pow(10, ((n - SCALE_LOW) / (1 - SCALE_LOW)) * decades);
 }
 
 // chartBaselines 生成"常识基准线"：0 / 1 / 2 / 5 / 10 / 20 / 50 / 100 / 200 / 500 / 1000 …
@@ -471,29 +480,32 @@ function creditChartOption(labels, rows) {
   // 图例顺序：三条流水在前，日终余额最后（余额量级最大，放最后更符合阅读顺序）。
   const order = [...CREDIT_SERIES.filter((s) => s.flow), CREDIT_SERIES[0]];
 
-  // 每条线喂 scaleData(自己的值)：0 仍然是 0，不会因为别人的值被抬高。
-  const seriesData = new Map(order.map((s) => [s.key, []]));
+  // 先求数据最大值，再用"取整后的轴上限"作为刻度分母：0–100 固定占 5%，
+  // 其余 95% 从 100 到轴上限按 log10 均分（概览最多覆盖到 100 万）。
   let maxPositive = 0;
   rows.forEach((r) => {
     order.forEach((s) => {
       const raw = Number(r[s.key]) || 0;
       if (raw > maxPositive) maxPositive = raw;
-      seriesData.get(s.key).push(scaleData(raw));
     });
   });
   const baselines = chartBaselines(maxPositive);
   const lastRaw = baselines[baselines.length - 1];
-  // 轴上限 = 最后一条基准线再留 5%：顶端基准线的标签不会贴到画布上边缘。
-  const axisMax = scaleData(lastRaw) * 1.05;
+  // 每条线喂 scaleData(自己的值, lastRaw)：0 仍然是 0，不会被相邻序列抬高。
+  const seriesData = new Map(order.map((s) => [
+    s.key, rows.map((r) => scaleData(r[s.key], lastRaw)),
+  ]));
+  // 顶端留 3%：最后一条基准线的标签不会贴到画布上边缘。
+  const axisMax = scaleData(lastRaw, lastRaw) * 1.03;
   // 低值区被压缩后基准线会挤在一起：先按"缩放后至少占轴高 1.2%"筛线，
-  // 标签再按 5% 抽稀；0 与最后一条始终保留。
+  // 标签再按 4% 抽稀；0 与最后一条始终保留。
   const LINE_GAP = axisMax * 0.012;
-  const LABEL_GAP = axisMax * 0.05;
+  const LABEL_GAP = axisMax * 0.04;
   const marks = [];
   let lastLineY = -Infinity;
   let lastLabelY = -Infinity;
   baselines.forEach((v, i) => {
-    const y = scaleData(v);
+    const y = scaleData(v, lastRaw);
     const isLast = v === lastRaw;
     if (marks.length && !isLast && y - lastLineY < LINE_GAP) return;
     const show = i === 0 || isLast || y - lastLabelY >= LABEL_GAP;
