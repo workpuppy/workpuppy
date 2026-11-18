@@ -378,7 +378,7 @@ function stopOverviewPolling() {
 
 // ── 账号 ────────────────────────────────────────────────────
 
-// ── 积分曲线（ECharts：四条独立折线，共用对数轴）────────────────────────────
+// ── 积分曲线（ECharts：四条独立折线，共用混合刻度轴）────────────────────────
 // 数据源：GET /admin/credit-daily?days=30 —— histories[] 已按天给出**每账号**
 // earned/spent/adjust/credits_end，所以 7/15/30 天只是同一份数据切片，不需要额外接口。
 //
@@ -422,21 +422,34 @@ function fmtAxis(v) {
   return String(Math.round(v));
 }
 
-// ── 对数压缩：喂 log1p、显示原始值 ────────────────────────────────────────
-// 余额是几千、流水是几十到几百：线性轴下小的那条会被压成贴地的一条线。做法是把
-// **喂给 ECharts 的数值取 log1p**（视觉压缩），轴刻度与 tooltip 再用 expm1 还原成
-// 原始积分——数据本身不插值、口径不变，只是把"视觉缩放"和"读数"分开：
-//   - 用 log1p 不用 log：数据里有大量 0（当天没流水 / 没记录），log(0) 会是 -Inf；
-//   - 每条线喂的是 log1p(自己的值)：0 仍然是 0，不会被相邻序列抬高；
-//     轴刻度与 tooltip 再按原始积分展示（不是对数差）。
-const logData = (v) => Math.log1p(Math.max(0, Number(v) || 0));
-const invLog = (v) => Math.expm1(Math.max(0, Number(v) || 0));
+// ── 混合刻度：0–100 线性，100 以上按 log10 压缩 ─────────────────────────────
+// 纯 log1p 会把 0–100 放得过大、100–100000 挤成一条。改成"膝盖"刻度：
+//   0–100   线性：1 积分 = 1/100 单位（低值仍然能看出非 0）
+//   >100    每个十倍固定占 1.9 单位（log10）
+// 于是 0–100 约占轴高 15%，100–1k / 1k–1万 / 1万–10万 各约占 28%，
+// 正好把细节让给 100–100000。tooltip / 基准线标签仍显示原始积分。
+const SCALE_KNEE = 100; // 膝盖位置：以下线性
+const SCALE_DECADE = 1.9; // 100 以上每个数量级占的高度（单位）
+
+function scaleData(v) {
+  const n = Math.max(0, Number(v) || 0);
+  if (n <= SCALE_KNEE) return n / SCALE_KNEE;
+  return 1 + Math.log10(n / SCALE_KNEE) * SCALE_DECADE;
+}
+
+// invScale 仅供调试/反解：把缩放后的坐标还原成原始积分。
+function invScale(v) {
+  const n = Math.max(0, Number(v) || 0);
+  if (n <= 1) return n * SCALE_KNEE;
+  return SCALE_KNEE * Math.pow(10, (n - 1) / SCALE_DECADE);
+}
 
 // chartBaselines 生成"常识基准线"：0 / 1 / 2 / 5 / 10 / 20 / 50 / 100 / 200 / 500 / 1000 …
 // 即每个数量级取 1×、2×、5× 三档（k≥0，个位也算），最后一条 ≥ 数据最大值
 // （这样顶端刻度总有意义）。
-// 为什么不按等分：对数轴上等分出来的刻度是 0/6/54/402/3k 这种"看着像随机数"的值；
+// 为什么不按等分：混合轴上等分出来的刻度是 0/6/54/402/3k 这种"看着像随机数"的值；
 // 1/2/5 阶梯是工程上最顺手的量级参照，10 与 20、200 与 500 之间一眼能定位。
+// 低值区（0–100）被压缩后线会挤在一起，由 creditChartOption 按缩放后的间距再筛。
 function chartBaselines(maxRaw) {
   const out = [0];
   for (let k = 0; k <= 12; k++) {
@@ -451,29 +464,43 @@ function chartBaselines(maxRaw) {
 }
 
 // creditChartOption 组装 ECharts option：四条线**各自独立**（不堆叠）画在同一个
-// 对数轴上。早期版本把四条线放进同一个 stack，结果"调整=0"的那条线会被画到
+// 混合刻度轴上。早期版本把四条线放进同一个 stack，结果"调整=0"的那条线会被画到
 // "获得+消耗"的累计高度，看起来和获得持平——工具提示写着 0、图上却不是 0。
 function creditChartOption(labels, rows) {
   const t = chartTheme();
   // 图例顺序：三条流水在前，日终余额最后（余额量级最大，放最后更符合阅读顺序）。
   const order = [...CREDIT_SERIES.filter((s) => s.flow), CREDIT_SERIES[0]];
 
-  // 每条线喂 log1p(自己的值)：0 仍然是 0，不会因为别人的值被抬高。
+  // 每条线喂 scaleData(自己的值)：0 仍然是 0，不会因为别人的值被抬高。
   const seriesData = new Map(order.map((s) => [s.key, []]));
   let maxPositive = 0;
   rows.forEach((r) => {
     order.forEach((s) => {
       const raw = Number(r[s.key]) || 0;
       if (raw > maxPositive) maxPositive = raw;
-      seriesData.get(s.key).push(logData(raw));
+      seriesData.get(s.key).push(scaleData(raw));
     });
   });
   const baselines = chartBaselines(maxPositive);
-  // 轴上限 = 最后一条基准线再留 5%（对数空间）：顶端那条基准线就在 max 上，
-  // 不留余量的话它的标签会被画布上边缘裁掉（5000 那行曾经看不见）。
-  const axisMax = logData(baselines[baselines.length - 1]) * 1.05;
-  // 标签过密时才抽稀（1/2/5 阶梯在几千的量级大约 10 条线，正常都能显示全）
-  const labelEvery = baselines.length > 16 ? 2 : 1;
+  const lastRaw = baselines[baselines.length - 1];
+  // 轴上限 = 最后一条基准线再留 5%：顶端基准线的标签不会贴到画布上边缘。
+  const axisMax = scaleData(lastRaw) * 1.05;
+  // 低值区被压缩后基准线会挤在一起：先按"缩放后至少占轴高 1.2%"筛线，
+  // 标签再按 5% 抽稀；0 与最后一条始终保留。
+  const LINE_GAP = axisMax * 0.012;
+  const LABEL_GAP = axisMax * 0.05;
+  const marks = [];
+  let lastLineY = -Infinity;
+  let lastLabelY = -Infinity;
+  baselines.forEach((v, i) => {
+    const y = scaleData(v);
+    const isLast = v === lastRaw;
+    if (marks.length && !isLast && y - lastLineY < LINE_GAP) return;
+    const show = i === 0 || isLast || y - lastLabelY >= LABEL_GAP;
+    if (show) lastLabelY = y;
+    marks.push({ v, y, show });
+    lastLineY = y;
+  });
 
   return {
     animationDuration: 280,
@@ -490,7 +517,7 @@ function creditChartOption(labels, rows) {
       borderColor: t.tooltipBorder,
       textStyle: { color: t.tooltipText, fontSize: 12 },
       axisPointer: { type: 'line', lineStyle: { color: t.axis } },
-      // 图上的数是对数差，tooltip 直接读原始 rows，避免露出 log 值。
+      // 图上的数经过混合刻度压缩，tooltip 直接读原始 rows，避免露出缩放值。
       formatter: (params) => {
         const i = params && params.length ? params[0].dataIndex : 0;
         const r = rows[i];
@@ -539,14 +566,14 @@ function creditChartOption(labels, rows) {
         silent: true, symbol: 'none', animation: false,
         lineStyle: { color: t.split, width: 1, type: 'solid' },
         label: { position: 'start', color: t.text, fontSize: 10, distance: 6 },
-        data: baselines.map((v, i) => ({
-          yAxis: logData(v),
+        data: marks.map((m) => ({
+          yAxis: m.y,
           label: {
-            // 0 一定显示，其余按 labelEvery 抽稀（线仍然全画）
-            show: i === 0 || i === baselines.length - 1 || i % labelEvery === 0,
+            // 0 与最后一条必显，其余按缩放后的间距抽稀（线可能更多，标签不重叠）
+            show: m.show,
             // 标签就是原始整数（0/10/50/100/500/1000/5000…），不做 1k/1万 的缩写：
             // 基准线只有几条，直白数字更好对
-            formatter: String(v),
+            formatter: String(m.v),
           },
         })),
       } : undefined,
@@ -701,7 +728,7 @@ function chartRows(payload, days, uid) {
   return { labels, rows };
 }
 
-// renderOverviewChart 概览「积分日账本」曲线：整池四条独立折线（对数轴），7/15/30 可切换。
+// renderOverviewChart 概览「积分日账本」曲线：整池四条独立折线（混合刻度轴），7/15/30 可切换。
 function renderOverviewChart() {
   const days = state.overviewDays || 7;
   $$('#overviewRange button').forEach((b) => {
