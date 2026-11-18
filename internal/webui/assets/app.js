@@ -326,6 +326,9 @@ function applyCredits(c, opts = {}) {
   setText('#kpiEarned', fmtNum(t.earned || 0));
   setText('#kpiSpent', fmtNum(t.spent || 0));
   setText('#kpiAdjust', fmtNum(t.adjust || 0));
+  // 今日净变化 = 今日获得 − 今日核销（核销 = 消耗 + 过期&校正）。
+  const net = Number(t.net) || 0;
+  setText('#kpiNet', net > 0 ? '+' + fmtNum(net) : net < 0 ? '-' + fmtNum(-net) : '0');
 
   // 只对"历史日"做变化检测：今天的热值每轮都在变，不能拿它当重画依据。
   const past = (c.histories || []).filter((h) => h.date !== c.today);

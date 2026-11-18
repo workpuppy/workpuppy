@@ -290,7 +290,7 @@ func TestAccountCreditChartWiring(t *testing.T) {
 	}
 	// 概览：整池积分曲线（原日账本表格已改为折线图）+ 4 个总计卡片 + 网关状态默认折叠。
 	for _, want := range []string{
-		`id="kpiCredits"`, `id="kpiEarned"`, `id="kpiSpent"`, `id="kpiAdjust"`,
+		`id="kpiCredits"`, `id="kpiEarned"`, `id="kpiSpent"`, `id="kpiAdjust"`, `id="kpiNet"`,
 		`id="overviewChart"`, `id="overviewRange"`,
 		`data-bs-target="#statusRawWrap"`, `id="statusRawWrap"`,
 	} {
@@ -606,7 +606,7 @@ func TestOverviewWording(t *testing.T) {
 	html := idx.Body.String()
 	for _, want := range []string{
 		"账号总数", "可用账号", "冷却中账号", "已禁用账号", "在途占满", "粘性会话",
-		"总积分", "今日获得", "今日核销(消耗+过期&amp;校正)",
+		"总积分", "今日获得", "今日核销(消耗+过期&amp;校正)", "今日净变化",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("概览缺少文案 %q", want)
@@ -621,7 +621,7 @@ func TestOverviewWording(t *testing.T) {
 		"日终总计：", "获得：", "核销：", "writeoff: spent + adjust",
 		"setText('#kpiEarned', fmtNum(t.earned",
 		"setText('#kpiSpent', fmtNum(t.spent",
-		"setText('#kpiAdjust', fmtNum(t.adjust",
+		"setText('#kpiAdjust', fmtNum(t.adjust", "setText('#kpiNet'", "+' + fmtNum(net)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("图表文案缺少 %q（概览/弹窗系列名）", want)
