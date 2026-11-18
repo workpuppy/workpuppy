@@ -319,8 +319,9 @@ function applyCredits(c, opts = {}) {
   state.creditDaily = c; // 缓存给「单账号曲线」弹窗复用
   const t = c.totals || {};
   setText('#creditToday',
-    c.today + '：获得 ' + fmtNum(t.earned || 0) + ' / 消耗 ' + fmtNum(t.spent || 0) +
-    ' / 调整 ' + fmtNum(t.adjust || 0) + ' / 净 ' + fmtNum(t.net || 0) +
+    c.today + '：获得 ' + fmtNum(t.earned || 0) +
+    ' / 核销（消耗 ' + fmtNum(t.spent || 0) + ' + 调整 ' + fmtNum(t.adjust || 0) + '）' +
+    ' / 净 ' + fmtNum(t.net || 0) +
     '　（账号 ' + Object.keys(c.accounts || {}).length + ' 个）');
   setText('#kpiEarned', '+' + fmtNum(t.earned || 0));
   setText('#kpiSpent', '-' + fmtNum(t.spent || 0));
@@ -394,16 +395,16 @@ function stopOverviewPolling() {
 // 为什么用 ECharts：CSP 是 `default-src 'self'`（引不了 CDN），所以把 echarts.min.js
 // 原样 vendored 进本目录（见 NOTICE.txt、internal/webui/webui.go 的 frameworkAssets），
 // 从 /assets 自托管；仍然没有 npm/构建步骤这一层。
-// 四条线**各自独立**：每条线的位置只由当天的值决定，0 就落在 0 轴上。
+// 三条线**各自独立**：每条线的位置只由当天的值决定，0 就落在 0 轴上。
 // 早期版本把它们堆在同一个 stack 里，导致「调整=0」被画到「获得+消耗」的累计高度
 // （工具提示是 0、图上却不是 0）；现在不堆叠，读数与曲线一致。
 
-// 四条序列的语义（ax 字段决定挂哪个轴；flow=true 的按栈叠加）。
+// 三条序列的语义（ax 字段决定挂哪个轴；flow=true 是流水线）。
+// 「核销」= 消耗 + 调整：曲线上画两项之和，tooltip 仍显示 A+B 让来源可核对。
 const CREDIT_SERIES = [
   { key: 'credits', name: '日终总计', color: '#206bc4', ax: 'left' },
   { key: 'earned', name: '获得', color: '#2fb344', ax: 'right', flow: true },
-  { key: 'spent', name: '消耗', color: '#d63939', ax: 'right', flow: true },
-  { key: 'adjust', name: '调整', color: '#f59f00', ax: 'right', flow: true },
+  { key: 'writeoff', name: '核销', color: '#d63939', ax: 'right', flow: true },
 ];
 
 // chartInstances 每个宿主一个 ECharts 实例（切区间/切主题复用，不重复 init）。
@@ -481,12 +482,12 @@ function chartBaselines(maxRaw) {
   return out;
 }
 
-// creditChartOption 组装 ECharts option：四条线**各自独立**（不堆叠）画在同一个
+// creditChartOption 组装 ECharts option：三条线**各自独立**（不堆叠）画在同一个
 // 混合刻度轴上。早期版本把四条线放进同一个 stack，结果"调整=0"的那条线会被画到
 // "获得+消耗"的累计高度，看起来和获得持平——工具提示写着 0、图上却不是 0。
 function creditChartOption(labels, rows) {
   const t = chartTheme();
-  // 图例顺序：三条流水在前，日终余额最后（余额量级最大，放最后更符合阅读顺序）。
+  // 图例顺序：两条流水在前，日终余额最后（余额量级最大，放最后更符合阅读顺序）。
   const order = [...CREDIT_SERIES.filter((s) => s.flow), CREDIT_SERIES[0]];
 
   // 先求数据最大值，再用"取整后的轴上限"作为刻度分母：0–100 固定占 5%，
@@ -548,8 +549,8 @@ function creditChartOption(labels, rows) {
           `<b>${labels[i]}</b>`,
           `日终总计：<b>${fmtNum(r.credits)}</b>`,
           `获得：${fmtNum(r.earned)}`,
-          `消耗：${fmtNum(r.spent)}`,
-          `调整：${fmtNum(r.adjust)}`,
+          // 核销 = 消耗 + 调整；按需求显示 A+B，而不是合并后的结果。
+          `核销：${fmtNum(r.spent)} + ${fmtNum(r.adjust)}`,
           `净变化：${net > 0 ? '+' : ''}${fmtNum(net)}`,
         ].join('<br/>');
       },
@@ -572,7 +573,7 @@ function creditChartOption(labels, rows) {
       splitLine: { show: false },
     },
     series: order.map((s, idx) => ({
-      // 四条线各自独立、不堆叠：每条线的位置只由自己的值决定（0 就画在 0 上）。
+      // 三条线各自独立、不堆叠：每条线的位置只由自己的值决定（0 就画在 0 上）。
       name: s.name,
       type: 'line', smooth: 0.25,
       symbol: s.flow ? 'none' : 'circle', symbolSize: s.flow ? 0 : 5,
@@ -712,7 +713,7 @@ function dayLabels(todayISO, days) {
 //   - uid 非空 → 单账号：取该账号当天那条记录。
 //
 // 缺失日期一律按 0（需求：实际只有 3 天数据却看 7 天时，空的那几天用 0 填充）——
-// 四条线都不做沿用/插值，图上的空档就是 0。
+// 三条线都不做沿用/插值，图上的空档就是 0。
 // 唯一的例外是**今天**那一点：用实时值（整池=当前总积分，单号=账号当前积分），
 // 因为"此刻的余额"不是缺失数据，日末快照可能还没写。
 function chartRows(payload, days, uid) {
@@ -729,14 +730,17 @@ function chartRows(payload, days, uid) {
         adjust += Number(rec.adjust || 0);
         credits += Number(rec.credits_end || 0);
       }
-      return { date, earned, spent, adjust, credits };
+      return { date, earned, spent, adjust, writeoff: spent + adjust, credits };
     }
     const rec = list.find((a) => a.uid === uid);
+    const spent = rec ? Number(rec.spent || 0) : 0;
+    const adjust = rec ? Number(rec.adjust || 0) : 0;
     return {
       date,
       earned: rec ? Number(rec.earned || 0) : 0,
-      spent: rec ? Number(rec.spent || 0) : 0,
-      adjust: rec ? Number(rec.adjust || 0) : 0,
+      spent,
+      adjust,
+      writeoff: spent + adjust,
       credits: rec ? Number(rec.credits_end || 0) : 0,
     };
   });

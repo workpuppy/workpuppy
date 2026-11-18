@@ -617,20 +617,25 @@ func TestOverviewWording(t *testing.T) {
 	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	body := js.Body.String()
 	for _, want := range []string{
-		"name: '日终总计'", "name: '获得'", "name: '消耗'", "name: '调整'",
-		"日终总计：", "获得：", "消耗：", "调整：", "renderTodayAdjust", "today_adjust",
+		"name: '日终总计'", "name: '获得'", "name: '核销'",
+		"日终总计：", "获得：", "核销：", "writeoff: spent + adjust",
+		"renderTodayAdjust", "today_adjust",
 		"'+' + fmtNum(t.earned", "'-' + fmtNum(t.spent", "'+' + fmtNum(v)", "'-' + fmtNum(-v)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("图表文案缺少 %q（概览/弹窗系列名）", want)
 		}
 	}
-	// 回归：四条线不能再用 stack —— 堆叠会把"调整=0"画到获得/消耗的累计高度上，
+	// 「调整」已并入「核销」：图上不再单独画调整序列（tooltip 仍显示 A+B 明细）。
+	if strings.Contains(body, "name: '调整'") {
+		t.Error("图表不应再单独包含「调整」序列（已并入核销）")
+	}
+	// 回归：三条线不能再用 stack —— 堆叠会把"核销=0"画到获得的累计高度上，
 	// 工具提示是 0、图上却不是 0（真实 bug）。也不应保留互相遮挡的面积填充。
 	if strings.Contains(body, "stack: 'credit'") {
 		t.Error("积分曲线不应再堆叠（0 值的序列会被抬高）")
 	}
-	if !strings.Contains(html, "四条线各自独立") {
-		t.Error("概览图表说明应写明四条线各自独立")
+	if !strings.Contains(html, "三条线各自独立") {
+		t.Error("概览图表说明应写明三条线各自独立")
 	}
 }
