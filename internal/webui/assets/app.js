@@ -322,8 +322,8 @@ function applyCredits(c, opts = {}) {
     c.today + '：获得 ' + fmtNum(t.earned || 0) + ' / 消耗 ' + fmtNum(t.spent || 0) +
     ' / 调整 ' + fmtNum(t.adjust || 0) + ' / 净 ' + fmtNum(t.net || 0) +
     '　（账号 ' + Object.keys(c.accounts || {}).length + ' 个）');
-  setText('#kpiEarned', fmtNum(t.earned || 0));
-  setText('#kpiSpent', fmtNum(t.spent || 0));
+  setText('#kpiEarned', '+' + fmtNum(t.earned || 0));
+  setText('#kpiSpent', '-' + fmtNum(t.spent || 0));
   renderTodayAdjust(c);
 
   // 只对"历史日"做变化检测：今天的热值每轮都在变，不能拿它当重画依据。
@@ -340,9 +340,9 @@ function applyCredits(c, opts = {}) {
 
 // 今日调整(过期+校正)：后端在 /admin/overview 里按
 //   Σ(当前余额 + 今日记录消耗 − 昨日日终 − 今日获得)
-// 算好 today_adjust（有符号）。卡片用 ▲/▼ 表示正负、不显示负号；
+// 算好 today_adjust（有符号）。卡片用 +/- 表示正负（与数字同色），不显示箭头；
 // 图表里的「调整」仍是账本记录的正值流水，不受这里影响。
-// 颜色统一用卡片自带的棕/琥珀主题色（text-warning-emphasis）：正负已经由 ▲/▼
+// 颜色统一用卡片自带的棕/琥珀主题色（text-warning-emphasis）：正负已经由 +/-
 // 表达，再叠红绿会和「获得/消耗」的语义色混在一起，反而更难读。
 function renderTodayAdjust(c) {
   const el = $('#kpiAdjust');
@@ -353,9 +353,9 @@ function renderTodayAdjust(c) {
   if (v === null) {
     el.textContent = '–';
   } else if (v > 0) {
-    el.textContent = '▲ ' + fmtNum(v);
+    el.textContent = '+' + fmtNum(v);
   } else if (v < 0) {
-    el.textContent = '▼ ' + fmtNum(-v);
+    el.textContent = '-' + fmtNum(-v);
   } else {
     el.textContent = '0';
   }
