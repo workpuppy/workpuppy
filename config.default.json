@@ -15,6 +15,7 @@
     "upstream_restriction": "45m"
   },
   "schedule": {
+    "timezone": "Asia/Shanghai",
     "checkin_time": [
       "09:00",
       "21:00"

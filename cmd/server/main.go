@@ -16,6 +16,7 @@ import (
 
 	"wp/internal/adminauth"
 	"wp/internal/auth"
+	"wp/internal/config"
 	"wp/internal/creditledger"
 	"wp/internal/loginsvc"
 	"wp/internal/pool"
@@ -212,6 +213,7 @@ func main() {
 		KeepaliveAt:            cfg.Schedule.KeepaliveAt,
 		SchoolAt:               cfg.Schedule.SchoolAt,
 		CatAt:                  cfg.Schedule.CatAt,
+		Location:               cfg.Schedule.Location, // 排程时区（schedule.timezone，默认 Asia/Shanghai）
 		BalanceRefreshInterval: cfg.Schedule.BalanceRefreshIntervalDur,
 		ActivityReportCount:    cfg.Schedule.ActivityReportCount,
 		ExpiringSoonWindow:     cfg.ExpiringSoonDur, // 快过期积分优先消耗（issue:积分过期）
@@ -225,6 +227,9 @@ func main() {
 		SchoolDisabled:         !cfg.Schedule.SchoolEnabled,
 		CatDisabled:            !cfg.Schedule.CatEnabled,
 	})
+	// 排程时区先说清楚：所有 *_time 都按它解释，容器 TZ 不参与（Docker 默认 UTC）。
+	log.Printf("排程时区：%s（schedule.timezone；所有定时任务时刻按此时区解释，容器本地 TZ=%s）",
+		config.DescribeTimezone(cfg.Schedule.Location), time.Local.String())
 	switch {
 	case !cfg.Schedule.CheckinEnabled:
 		log.Printf("签到已禁用（schedule.checkin_enabled=false）")

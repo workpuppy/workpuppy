@@ -9,10 +9,16 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	// 内嵌 IANA 时区数据库：容器（alpine/distroless/scratch）里常常没有
+	// /usr/share/zoneinfo，不嵌就得依赖用户装 tzdata，否则 "Asia/Shanghai" 解析失败。
+	// 代价约 450KB 二进制体积，换「排程时区永远可用」。
+	_ "time/tzdata"
 
 	"wp/internal/configdata"
 )
@@ -23,8 +29,20 @@ import (
 // cmd/server 与 cmd/activity 共用本结构，默认值由 DefaultSchedule 填充、
 // 缺省归一由 Normalize 完成——两命令走同一份语义，不再各自复制。
 type Schedule struct {
-	AccountDelayMinSeconds int `json:"account_delay_min_seconds"`
-	AccountDelayMaxSeconds int `json:"account_delay_max_seconds"`
+	// Timezone 六类排程共用的时区：所有 *_time 时刻都按它解释——"09:00" 指
+	// **该时区的** 09:00，而不是容器本地时区（Docker 默认 UTC，会把中国的
+	// 早上 9 点签到错跑到北京时间 17:00）。
+	//
+	// 取值：IANA 名（"Asia/Shanghai"、"UTC"）｜固定偏移（"UTC+8"、"GMT-5"、"+05:30"）｜
+	// "Local"（进程本地时区）。空 = 默认 "Asia/Shanghai"（GMT+8）。
+	//
+	// 注意：**上游的"自然日"边界不跟这项走**——签到幂等、连登奖励、领养次数这些由
+	// 上游按 CST 判定（见 scheduler.travelDay / pool.checkinDay），与这里无关。
+	Timezone string `json:"timezone"`
+	// Location Timezone 的解析结果（不落盘），供 scheduler 直接用，避免每轮唤醒再解析。
+	Location               *time.Location `json:"-"`
+	AccountDelayMinSeconds int            `json:"account_delay_min_seconds"`
+	AccountDelayMaxSeconds int            `json:"account_delay_max_seconds"`
 	// RandomDelayMinutes spreads each enabled daily slot within its scheduled
 	// hour. Zero preserves the exact-hour schedule; the supported maximum is 60.
 	RandomDelayMinutes int `json:"random_delay_minutes"`
@@ -102,6 +120,73 @@ type Schedule struct {
 	// ActivityReportCount 每号每次活跃上报的条数：领猫前置需 5 次对话，
 	// 默认 5 条把 chat_5 刷满；0/缺省=1 兼容旧行为。
 	ActivityReportCount int `json:"activity_report_count"`
+}
+
+// DefaultTimezone 排程默认时区：Asia/Shanghai（GMT+8，中国无夏令时）。
+//
+// 选它而不是容器本地时区的理由：定时任务的时刻是**人的作息**（早上 9 点签到、
+// 晚上 22 点保活），只有按北京时间解释才符合预期；而容器默认 TZ 是 UTC，
+// 同样一份 "09:00" 会变成北京时间 17:00 跑。上游本身也按 CST 刷新自然日，
+// 两者对齐后"一天的签到"与"一天的连登"落在同一个自然日里。
+const DefaultTimezone = "Asia/Shanghai"
+
+// tzOffsetRe 固定偏移写法：UTC+8 / GMT-5 / +05:30 / -0800（无夏令时地区够用）。
+var tzOffsetRe = regexp.MustCompile(`(?i)^(?:utc|gmt)?([+-])(\d{1,2})(?::?(\d{2}))?$`)
+
+// ParseTimezone 解析排程时区。
+//
+//	""        → DefaultTimezone（Asia/Shanghai）
+//	"Local"   → 进程本地时区（老行为，容器里通常就是 UTC）
+//	IANA 名   → time.LoadLocation（时区库已随二进制内嵌，见文件头 import）
+//	"UTC+8"   → 固定偏移（LoadLocation 不认这些写法，单独解析）
+//
+// 解析不出来直接报错：静默回落会让"我明明配了时区"变成更难查的错。
+func ParseTimezone(name string) (*time.Location, error) {
+	s := strings.TrimSpace(name)
+	if s == "" {
+		s = DefaultTimezone
+	}
+	if strings.EqualFold(s, "local") {
+		return time.Local, nil
+	}
+	// "utc"/"Utc" 这类大小写变体：IANA 名区分大小写，配置里手写很容易写错，直接兜住。
+	if strings.EqualFold(s, "utc") {
+		return time.UTC, nil
+	}
+	if loc, err := time.LoadLocation(s); err == nil {
+		return loc, nil
+	}
+	if m := tzOffsetRe.FindStringSubmatch(s); m != nil {
+		h, errH := strconv.Atoi(m[2])
+		min := 0
+		var errM error
+		if m[3] != "" {
+			min, errM = strconv.Atoi(m[3])
+		}
+		if errH == nil && errM == nil && h <= 14 && min < 60 {
+			offset := h*3600 + min*60
+			if m[1] == "-" {
+				offset = -offset
+			}
+			return time.FixedZone(s, offset), nil
+		}
+	}
+	return nil, fmt.Errorf("无法识别的时区 %q；用 IANA 名（如 \"Asia/Shanghai\"、\"UTC\"）、"+
+		"固定偏移（如 \"UTC+8\"）或 \"Local\"", name)
+}
+
+// DescribeTimezone 时区的日志展示：`Asia/Shanghai (UTC+08:00)`。
+func DescribeTimezone(loc *time.Location) string {
+	if loc == nil {
+		loc = time.Local
+	}
+	_, off := time.Now().In(loc).Zone()
+	sign := "+"
+	if off < 0 {
+		sign = "-"
+		off = -off
+	}
+	return fmt.Sprintf("%s (UTC%s%02d:%02d)", loc.String(), sign, off/3600, (off%3600)/60)
 }
 
 // DefaultSchedule 返回排程段的默认值 —— **直接取自内嵌的 config.default.json**。
@@ -188,6 +273,17 @@ func (s *Schedule) Normalize() error {
 	}
 	if s.RandomDelayMinutes < 0 || s.RandomDelayMinutes > 60 {
 		return fmt.Errorf("schedule.random_delay_minutes must be between 0 and 60")
+	}
+
+	// 时区：解析一次存进 Location（scheduler 直接用），空值归一成默认值，
+	// 这样管理后台/落盘文件里看到的也是真正生效的时区名。
+	loc, err := ParseTimezone(s.Timezone)
+	if err != nil {
+		return fmt.Errorf("schedule.timezone: %w", err)
+	}
+	s.Location = loc
+	if strings.TrimSpace(s.Timezone) == "" {
+		s.Timezone = DefaultTimezone
 	}
 
 	for _, p := range s.schedulePairs() {

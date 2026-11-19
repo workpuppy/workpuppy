@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestDefaultScheduleActivityCount 缺省 ActivityReportCount=5（与 cmd/server Default() 对齐）。
@@ -213,5 +214,101 @@ func TestBalanceRefreshIntervalBounds(t *testing.T) {
 		if !c.ok && err == nil {
 			t.Errorf("%q 应被拒绝", c.raw)
 		}
+	}
+}
+
+// TestDefaultScheduleTimezone 排程默认时区 = Asia/Shanghai（GMT+8）：
+// 定时任务的时刻是人的作息，不能被容器 TZ（Docker 默认 UTC）带偏 8 小时。
+func TestDefaultScheduleTimezone(t *testing.T) {
+	s := DefaultSchedule()
+	if s.Timezone != DefaultTimezone {
+		t.Fatalf("默认 timezone = %q want %q（config.default.json 里应有该键）", s.Timezone, DefaultTimezone)
+	}
+	if err := s.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if s.Location == nil {
+		t.Fatal("Normalize 后 Location 不应为空")
+	}
+	if s.Location.String() != "Asia/Shanghai" {
+		t.Fatalf("Location = %q want Asia/Shanghai", s.Location.String())
+	}
+	// 北京时间 09:00 == UTC 01:00（无夏令时，固定 +8）。
+	_, offset := time.Date(2026, 9, 11, 9, 0, 0, 0, s.Location).Zone()
+	if offset != 8*3600 {
+		t.Fatalf("偏移 = %d 秒 want 28800（GMT+8）", offset)
+	}
+}
+
+// TestParseTimezone 时区写法：IANA 名 / 固定偏移 / Local / 空（= 默认）。
+func TestParseTimezone(t *testing.T) {
+	cases := []struct {
+		raw    string
+		want   string // Location.String()，空 = 只校验偏移
+		offset int    // 秒；0 表示不校验
+	}{
+		{"", "Asia/Shanghai", 8 * 3600},
+		{"Asia/Shanghai", "Asia/Shanghai", 8 * 3600},
+		{"  Asia/Shanghai  ", "Asia/Shanghai", 8 * 3600},
+		{"UTC", "UTC", 0},
+		{"utc", "UTC", 0},
+		{"UTC+8", "UTC+8", 8 * 3600},
+		{"GMT-5", "GMT-5", -5 * 3600},
+		{"+05:30", "+05:30", 5*3600 + 30*60},
+		{"-0800", "-0800", -8 * 3600},
+	}
+	for _, c := range cases {
+		loc, err := ParseTimezone(c.raw)
+		if err != nil {
+			t.Errorf("%q 应解析成功，实际 %v", c.raw, err)
+			continue
+		}
+		if c.want != "" && loc.String() != c.want {
+			t.Errorf("%q → %q want %q", c.raw, loc.String(), c.want)
+		}
+		if c.offset != 0 {
+			_, off := time.Date(2026, 9, 11, 9, 0, 0, 0, loc).Zone()
+			if off != c.offset {
+				t.Errorf("%q 偏移 = %d want %d", c.raw, off, c.offset)
+			}
+		}
+	}
+	if loc, err := ParseTimezone("local"); err != nil || loc != time.Local {
+		t.Errorf(`"local" → %v, %v want time.Local`, loc, err)
+	}
+	// 不认识的时区必须报错，不静默回落（否则用户以为改生效了）。
+	if _, err := ParseTimezone("Mars/Olympus"); err == nil {
+		t.Error("非法时区应报错")
+	}
+	if _, err := ParseTimezone("UTC+99"); err == nil {
+		t.Error("越界偏移应报错")
+	}
+}
+
+// TestNormalizeTimezone 归一化：空 → 默认值；显式值原样保留；非法值让加载失败。
+func TestNormalizeTimezone(t *testing.T) {
+	s := DefaultSchedule()
+	s.Timezone = ""
+	if err := s.Normalize(); err != nil {
+		t.Fatalf("空时区应回落默认而不是报错：%v", err)
+	}
+	if s.Timezone != DefaultTimezone {
+		t.Errorf("空时区归一化后 = %q want %q", s.Timezone, DefaultTimezone)
+	}
+
+	s2 := DefaultSchedule()
+	s2.Timezone = "UTC+9"
+	if err := s2.Normalize(); err != nil {
+		t.Fatalf("固定偏移应可用：%v", err)
+	}
+	if s2.Timezone != "UTC+9" {
+		t.Errorf("显式时区被改写成了 %q", s2.Timezone)
+	}
+
+	s3 := DefaultSchedule()
+	s3.Timezone = "Nowhere/Land"
+	err := s3.Normalize()
+	if err == nil || !strings.Contains(err.Error(), "schedule.timezone") {
+		t.Fatalf("非法时区应报错且带字段名，实际 %v", err)
 	}
 }

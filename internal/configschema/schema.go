@@ -209,6 +209,8 @@ var fields = []Field{
 		Min: f64(1), Max: f64(1000), Unit: "次", Restart: true},
 
 	// ── 定时任务 ──────────────────────────────────────────────────
+	{Path: "schedule.timezone", Group: "schedule", Label: "排程时区", Kind: KindString, Restart: true,
+		Hint: "所有时刻按此时区解释（IANA 名，如 Asia/Shanghai；也可写 UTC+8 或 Local）。默认 Asia/Shanghai。"},
 	{Path: "schedule.checkin_time", Group: "schedule", Label: "签到时刻", Kind: KindTimeList, Restart: true},
 	{Path: "schedule.travel_time", Group: "schedule", Label: "猫猫旅行时刻", Kind: KindTimeList, Restart: true},
 	{Path: "schedule.activity_time", Group: "schedule", Label: "活跃上报时刻", Kind: KindTimeList, Restart: true},

@@ -493,6 +493,48 @@ func TestScheduleEnabledByDefault(t *testing.T) {
 	}
 }
 
+// TestScheduleTimezoneConfig 排程时区：默认 Asia/Shanghai（来自内嵌默认配置），
+// 显式配置生效，非法值在**加载期**就报错——不会静默跑在容器本地时区（Docker 默认 UTC）。
+func TestScheduleTimezoneConfig(t *testing.T) {
+	c := Default()
+	if err := c.normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if c.Schedule.Timezone != "Asia/Shanghai" {
+		t.Fatalf("默认 schedule.timezone = %q want Asia/Shanghai", c.Schedule.Timezone)
+	}
+	if c.Schedule.Location == nil || c.Schedule.Location.String() != "Asia/Shanghai" {
+		t.Fatalf("默认 Location = %v want Asia/Shanghai", c.Schedule.Location)
+	}
+	// 北京 09:00 == UTC 01:00（固定 +8，无夏令时）。
+	if _, off := time.Date(2026, 9, 11, 9, 0, 0, 0, c.Schedule.Location).Zone(); off != 8*3600 {
+		t.Errorf("默认时区偏移 = %d 秒 want 28800", off)
+	}
+
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "tz.json")
+	if err := os.WriteFile(fp, []byte(`{"schedule":{"timezone":"UTC+9"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(fp)
+	if err != nil {
+		t.Fatalf("固定偏移写法应可用：%v", err)
+	}
+	if _, off := time.Date(2026, 9, 11, 9, 0, 0, 0, c2.Schedule.Location).Zone(); off != 9*3600 {
+		t.Errorf("UTC+9 偏移 = %d 秒 want 32400", off)
+	}
+
+	fpBad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(fpBad, []byte(`{"schedule":{"timezone":"Nowhere/Land"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(fpBad); err == nil {
+		t.Fatal("非法时区应让加载失败")
+	} else if !strings.Contains(err.Error(), "schedule.timezone") {
+		t.Fatalf("错误信息应点名字段，实际 %v", err)
+	}
+}
+
 // TestScheduleExplicitDisable 显式 checkin_enabled=false 即可真正关掉签到
 // （issue #27 边界：此前无论怎么配小时都关不掉）。
 func TestScheduleExplicitDisable(t *testing.T) {

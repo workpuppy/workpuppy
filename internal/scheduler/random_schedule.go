@@ -65,11 +65,13 @@ func (s *Scheduler) scheduledSlot(day time.Time, minuteOfDay int, kind taskKind)
 }
 
 func (s *Scheduler) nextScheduledFire(now time.Time, sch schedule) time.Time {
+	loc := s.loc()
 	if s.cfg.RandomDelayMinutes <= 0 {
-		return nextFire(now, sch.at)
+		return nextFireIn(loc, now, sch.at)
 	}
 	var earliest time.Time
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	n := now.In(loc)
+	day := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, loc)
 	for i := 0; i < 2; i++ {
 		for _, at := range sch.at {
 			fire := s.scheduledSlot(day.AddDate(0, 0, i), at, sch.kind)

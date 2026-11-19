@@ -37,6 +37,14 @@ type Config struct {
 	KeepaliveAt []int // 默认 [1320]（22:00）
 	SchoolAt    []int // 默认 [720]（12:00）：开学季任务（迁移自系统 crontab）
 	CatAt       []int // 默认 [60]（01:00）：夜猫子任务（迁移自系统 crontab）
+	// Location 排程时区：上面六类 *_At（自 00:00 起的分钟数）都按它解释，
+	// 自然日枚举也用它。来源 config schedule.timezone（默认 Asia/Shanghai）。
+	// nil = time.Local（零值 Config 的老行为，测试依赖）。
+	//
+	// 为什么必须有这一项：Docker 容器默认 TZ=UTC，没有它时 "09:00" 实际是
+	// 北京时间 17:00 才跑，用户配的时刻全部错位 8 小时。
+	Location *time.Location
+
 	// ActivityReportCount 每号每次活跃上报的条数：领猫前置需 5 次对话，
 	// 默认 5 条同一 conversationId 内多轮上报把 chat_5 刷满；0/缺省=1 兼容旧行为。
 	ActivityReportCount int
@@ -161,20 +169,41 @@ type CheckinOutcome struct {
 // ErrBusy 已有一次签到正在执行（手动入口与定时撞车）。
 var ErrBusy = errors.New("checkin already running")
 
-// nextFire 返回 now 之后最近的一个时点；at 为**自 00:00 起的分钟数**（0..1439）。
+// loc 生效的排程时区：配了就用配的，否则回落到进程本地时区（老行为/测试）。
+func (s *Scheduler) loc() *time.Location {
+	if s != nil && s.cfg.Location != nil {
+		return s.cfg.Location
+	}
+	return time.Local
+}
+
+// nextFireIn 返回 now 之后最近的一个时点；at 为**自 00:00 起的分钟数**（0..1439）。
 // 支持精确到分：at=570 即 09:30。
-func nextFire(now time.Time, at []int) time.Time {
+//
+// 时点按 loc 解释（而不是 now 自带的时区）：排程时刻是"用户作息"，
+// 容器里 now 通常是 UTC，两者必须解耦。loc 为 nil 时退回 now 的时区。
+func nextFireIn(loc *time.Location, now time.Time, at []int) time.Time {
+	if loc == nil {
+		loc = now.Location()
+	}
+	n := now.In(loc)
 	var earliest time.Time
 	for _, m := range at {
-		t := time.Date(now.Year(), now.Month(), now.Day(), m/60, m%60, 0, 0, now.Location())
+		t := time.Date(n.Year(), n.Month(), n.Day(), m/60, m%60, 0, 0, loc)
 		if !t.After(now) {
-			t = t.Add(24 * time.Hour)
+			// 次日同一时刻：用日期加法而不是 +24h（有夏令时的时区会少/多一小时）。
+			t = time.Date(n.Year(), n.Month(), n.Day()+1, m/60, m%60, 0, 0, loc)
 		}
 		if earliest.IsZero() || t.Before(earliest) {
 			earliest = t
 		}
 	}
 	return earliest
+}
+
+// nextFire 保留旧签名：时点按 now 自带的时区解释（测试与零值时区配置用）。
+func nextFire(now time.Time, at []int) time.Time {
+	return nextFireIn(now.Location(), now, at)
 }
 
 // taskKind 调度任务类型。
@@ -324,9 +353,12 @@ func (s *Scheduler) dueSlots(cursor, now time.Time) []dueSlot {
 	if !start.Before(now) {
 		return nil
 	}
-	loc := now.Location()
+	// 按排程时区枚举自然日：start 本身可能带着容器本地时区（UTC），
+	// 直接取 Year/Month/Day 会在跨日时段错一天（北京时间 07:00 = UTC 前一日 23:00）。
+	loc := s.loc()
+	st := start.In(loc)
 	var out []dueSlot
-	for day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc); !day.After(now); day = day.AddDate(0, 0, 1) {
+	for day := time.Date(st.Year(), st.Month(), st.Day(), 0, 0, 0, 0, loc); !day.After(now); day = day.AddDate(0, 0, 1) {
 		for _, sch := range s.schedules() {
 			if sch.disabled {
 				continue
