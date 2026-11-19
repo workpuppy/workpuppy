@@ -3,6 +3,10 @@ package scheduler
 import (
 	"testing"
 	"time"
+
+	// 测试二进制也内嵌时区库：CI 镜像（distroless/scratch 或精简 ubuntu）可能没有
+	// /usr/share/zoneinfo，否则 LoadLocation("Asia/Shanghai") 会失败。
+	_ "time/tzdata"
 )
 
 // shanghai 排程时区（生产默认值）。中国无夏令时，固定 +8。
@@ -116,16 +120,24 @@ func TestDueSlotsCrossMidnightInConfiguredTimezone(t *testing.T) {
 	}
 }
 
-// TestNilLocationFallsBackToLocal 零值 Config（未接时区）保持老行为：按进程本地时区。
-func TestNilLocationFallsBackToLocal(t *testing.T) {
+// TestNilLocationUsesClockZone 零值 Config（未接时区）保持老行为：时点按 now 自带
+// 时区解释。刻意不用 time.Local——那会让同一份测试在 UTC 容器与 +8 开发机上
+// 结果不同（CI 曾经因此失败）。
+func TestNilLocationUsesClockZone(t *testing.T) {
 	s := New(Config{CheckinAt: []int{9 * 60}})
-	if got := s.loc(); got != time.Local {
-		t.Fatalf("loc() = %v want time.Local", got)
+	now := time.Date(2026, 9, 11, 8, 0, 0, 0, time.UTC)
+	if got := s.locFor(now); got != time.UTC {
+		t.Fatalf("locFor(nil 配置) = %v want now 的时区 UTC", got)
 	}
-	now := time.Date(2026, 9, 11, 8, 0, 0, 0, time.Local)
 	at, _ := s.nextWake(now)
-	if want := time.Date(2026, 9, 11, 9, 0, 0, 0, time.Local); !at.Equal(want) {
+	if want := time.Date(2026, 9, 11, 9, 0, 0, 0, time.UTC); !at.Equal(want) {
 		t.Fatalf("nextWake = %s want %s", at, want)
+	}
+	// 换一个时区喂同一个调度器：时刻跟着 now 走，不需要改配置。
+	nowCST := time.Date(2026, 9, 11, 8, 0, 0, 0, shanghai(t))
+	atCST, _ := s.nextWake(nowCST)
+	if want := time.Date(2026, 9, 11, 9, 0, 0, 0, shanghai(t)); !atCST.Equal(want) {
+		t.Fatalf("nextWake(CST now) = %s want %s", atCST, want)
 	}
 }
 

@@ -169,12 +169,16 @@ type CheckinOutcome struct {
 // ErrBusy 已有一次签到正在执行（手动入口与定时撞车）。
 var ErrBusy = errors.New("checkin already running")
 
-// loc 生效的排程时区：配了就用配的，否则回落到进程本地时区（老行为/测试）。
-func (s *Scheduler) loc() *time.Location {
+// locFor 生效的排程时区：配了（config schedule.timezone）就用配的；没配则沿用
+// now 自带时区——即改动前的老行为，保证零值 Config 的调用方/测试与本机时区无关。
+//
+// 刻意**不**回落到 time.Local：那会让同一份测试在 UTC 容器（CI）与 +8 开发机上
+// 得到不同结果（真实事故：random_schedule_test 用 cstZone 造时刻，CI 上错位 8 小时）。
+func (s *Scheduler) locFor(now time.Time) *time.Location {
 	if s != nil && s.cfg.Location != nil {
 		return s.cfg.Location
 	}
-	return time.Local
+	return now.Location()
 }
 
 // nextFireIn 返回 now 之后最近的一个时点；at 为**自 00:00 起的分钟数**（0..1439）。
@@ -355,7 +359,7 @@ func (s *Scheduler) dueSlots(cursor, now time.Time) []dueSlot {
 	}
 	// 按排程时区枚举自然日：start 本身可能带着容器本地时区（UTC），
 	// 直接取 Year/Month/Day 会在跨日时段错一天（北京时间 07:00 = UTC 前一日 23:00）。
-	loc := s.loc()
+	loc := s.locFor(now)
 	st := start.In(loc)
 	var out []dueSlot
 	for day := time.Date(st.Year(), st.Month(), st.Day(), 0, 0, 0, 0, loc); !day.After(now); day = day.AddDate(0, 0, 1) {
