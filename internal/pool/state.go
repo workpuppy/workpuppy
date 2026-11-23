@@ -438,7 +438,7 @@ func (p *Pool) AuthByUID(uid string) *auth.Auth {
 // AvailableUIDs 返回当前 healthy 且未占满在途名额的账号 UID 列表（按 UID 排序，稳定输出）。
 // 供会话粘性路由（internal/session）做快路径命中校验 + 双段分配；无可用返回空切片。
 func (p *Pool) AvailableUIDs() []string {
-	return p.availableUIDsLocked("", func(e *entry, now time.Time) bool { return e.healthy(now) })
+	return p.availableUIDsLocked("", nil, func(e *entry, now time.Time) bool { return e.healthy(now) })
 }
 
 // AvailableUIDsForModel 同 AvailableUIDs，但把健康口径换成 healthyForModel：
@@ -449,20 +449,24 @@ func (p *Pool) AvailableUIDs() []string {
 // realm=="" 退化语义锚点测试。
 // 供会话粘性按模型分配与命中校验；model 为空时等价于 AvailableUIDs。
 func (p *Pool) AvailableUIDsForModel(model string) []string {
-	return p.availableUIDsLocked("",
+	return p.availableUIDsLocked("", nil,
 		func(e *entry, now time.Time) bool { return e.healthyForModel(now, model) })
 }
 
 // availableUIDsLocked 是 AvailableUIDs 四变体（AvailableUIDs/ForModel/ForRealm/
-// ForModelRealm）共用的遍历实现：realm 过滤（""=全池）+ 可替换健康口径（healthy /
-// healthyForModel）+ 在途占满过滤，输出按 UID 排序（稳定）。调用方必须不持锁。
-func (p *Pool) availableUIDsLocked(realm string, health func(e *entry, now time.Time) bool) []string {
+// ForModelRealm/…Scoped）共用的遍历实现：realm 过滤（""=全池）+ 账号范围过滤
+// （scope=nil 不限）+ 可替换健康口径（healthy / healthyForModel）+ 在途占满过滤，
+// 输出按 UID 排序（稳定）。调用方必须不持锁。
+func (p *Pool) availableUIDsLocked(realm string, scope Scope, health func(e *entry, now time.Time) bool) []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	now := time.Now()
 	uids := make([]string, 0, len(p.byUID))
 	for uid, e := range p.byUID {
 		if realm != "" && e.a.Realm() != realm {
+			continue
+		}
+		if !scopeAllows(scope, uid) {
 			continue
 		}
 		if !health(e, now) {
@@ -483,6 +487,16 @@ func (p *Pool) availableUIDsLocked(realm string, health func(e *entry, now time.
 // 这是粘性能"换得动"的关键：绑定只记 uid，若只按账号级 healthy 校验，
 // 被模型级限额的号（账号整体仍健康）会被持续选中直到轮换次数耗尽。
 func (p *Pool) PickByUIDForModel(uid, model string) *auth.Auth {
+	return p.PickByUIDForModelScoped(uid, model, nil)
+}
+
+// PickByUIDForModelScoped 在 PickByUIDForModel 之上叠加账号范围：scope 不允许的
+// uid 直接返回 nil，让 handler 解绑粘性并回落普通选号。这是「粘性不能把会话钉在
+// key 无权使用的账号上」的最后一道闸（可用集合已按 scope 过滤，此处双保险）。
+func (p *Pool) PickByUIDForModelScoped(uid, model string, scope Scope) *auth.Auth {
+	if !scopeAllows(scope, uid) {
+		return nil
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e, ok := p.byUID[uid]
@@ -516,23 +530,39 @@ func (p *Pool) PickByUIDForModel(uid, model string) *auth.Auth {
 // inFlightFull 是 healthy 的子集——healthy 里已达在途上限的账号数，供 /status 透出满载度。
 // 与 ServableNow 的区别见该函数注释。
 func (p *Pool) CountsDetailed() (total, healthy, cooling, disabled, inFlightFull int) {
-	return p.countsDetailedForRealm("")
+	return p.countsDetailedForRealmScoped("", nil)
+}
+
+// CountsDetailedScoped 同 CountsDetailed，但只统计 scope 范围内的账号。
+// /status 按接入 key 过滤时必须用同一个口径：账号列表缩了、汇总数却没缩，
+// 下游会看到「0 个账号却有 20 个 healthy」的自相矛盾快照。
+func (p *Pool) CountsDetailedScoped(scope Scope) (total, healthy, cooling, disabled, inFlightFull int) {
+	return p.countsDetailedForRealmScoped("", scope)
 }
 
 // CountsDetailedForRealm 同 CountsDetailed，但仅统计 Realm()==realm 的账号；
 // realm=="" 退化为全池（现状语义，走同一遍历 helper 避免重复代码）。
 // 双 realm 共存时供 /status 按域分组暴露 CN/global 各自可用性。
 func (p *Pool) CountsDetailedForRealm(realm string) (total, healthy, cooling, disabled, inFlightFull int) {
-	return p.countsDetailedForRealm(realm)
+	return p.countsDetailedForRealmScoped(realm, nil)
 }
 
-// countsDetailedForRealm 是两函数共用的遍历实现；realm=="" 不加谓词。
-func (p *Pool) countsDetailedForRealm(realm string) (total, healthy, cooling, disabled, inFlightFull int) {
+// CountsDetailedForRealmScoped 在 CountsDetailedForRealm 之上叠加账号范围。
+func (p *Pool) CountsDetailedForRealmScoped(realm string, scope Scope) (total, healthy, cooling, disabled, inFlightFull int) {
+	return p.countsDetailedForRealmScoped(realm, scope)
+}
+
+// countsDetailedForRealmScoped 是几个 Counts 变体共用的遍历实现；realm=="" 不加
+// 域谓词，scope=nil 不限范围（两者均为现状语义）。
+func (p *Pool) countsDetailedForRealmScoped(realm string, scope Scope) (total, healthy, cooling, disabled, inFlightFull int) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	now := time.Now()
-	for _, e := range p.byUID {
+	for uid, e := range p.byUID {
 		if realm != "" && e.a.Realm() != realm {
+			continue
+		}
+		if !scopeAllows(scope, uid) {
 			continue
 		}
 		total++
@@ -602,11 +632,18 @@ func (p *Pool) servableLocked(realm string) bool {
 }
 
 // List 返回所有账号状态（按 UID 排序，稳定输出）。
-func (p *Pool) List() []Status {
+func (p *Pool) List() []Status { return p.ListScoped(nil) }
+
+// ListScoped 同 List，但只返回 scope 范围内的账号（nil = 全池）。
+// /status 的数据面视图按接入 key 收缩到白名单，避免下游看到整池账号。
+func (p *Pool) ListScoped(scope Scope) []Status {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	uids := make([]string, 0, len(p.byUID))
 	for uid := range p.byUID {
+		if !scopeAllows(scope, uid) {
+			continue
+		}
 		uids = append(uids, uid)
 	}
 	sort.Strings(uids)

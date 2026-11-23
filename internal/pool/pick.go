@@ -25,6 +25,17 @@ func (p *Pool) Pick(model string) *auth.Auth {
 	return p.pick(nil, model, "")
 }
 
+// pick 是不带范围过滤的既有入口：scope=nil（不限），行为与引入 Scope 前逐位一致。
+func (p *Pool) pick(tried map[string]bool, reqModel, realm string) *auth.Auth {
+	return p.pickScoped(tried, reqModel, realm, nil)
+}
+
+// pickScoped 在既有 pick 之上叠加一层账号范围（接入 key 的账号白名单）。
+//
+// scope 必须同时作用于**正常候选**与**全冷却兜底**：否则 key 的账号全部冷却时，
+// 兜底会把请求打到该 key 无权使用的账号上——分流在降级路径上漏掉是最隐蔽的一类
+// 越权。scope=nil 时每个判定恒真，老调用语义零改动。
+//
 // pick 在 healthy 候选集中按三因子权重加权随机选出账号，并记录 lastUsed（防并发撞号）。
 // 候选集是 top5 近似：先按三因子权重（weightOf）降序取前 5（credits 只是权重的一个因子，
 // 闲置补偿与成功率同样决定谁进短名单），再在 top5 内做防撞号过滤。
@@ -35,7 +46,7 @@ func (p *Pool) Pick(model string) *auth.Auth {
 // realm 非空时候选过滤叠加 Realm()==realm 谓词（分池选号域；PickExcluding 传 ""）。
 // 注意：模型豁免只进 normal 选号（候选 healthy 判定）；全冷却兜底不参与模型豁免——
 // 兜底本来就是在"无任何 direct 可用"时的降级，切模型可用性已在 normal 阶段体现。
-func (p *Pool) pick(tried map[string]bool, reqModel, realm string) *auth.Auth {
+func (p *Pool) pickScoped(tried map[string]bool, reqModel, realm string, scope Scope) *auth.Auth {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
@@ -53,6 +64,9 @@ func (p *Pool) pick(tried map[string]bool, reqModel, realm string) *auth.Auth {
 	var cands []*entry
 	for uid, e := range p.byUID {
 		if tried != nil && tried[uid] {
+			continue
+		}
+		if !scopeAllows(scope, uid) {
 			continue
 		}
 		if !healthyOf(e) {
@@ -80,7 +94,7 @@ func (p *Pool) pick(tried map[string]bool, reqModel, realm string) *auth.Auth {
 	if len(cands) == 0 {
 		// 全冷却兜底：无 healthy 候选时，从冷却账号里选 until 最早到期的一个
 		// （熔断/冷却共用 expiry 口径，取较早截止者）。禁用的账号永不参与兜底。
-		return p.pickEarliestExpiryLocked(tried, now, realm)
+		return p.pickEarliestExpiryLocked(tried, now, realm, scope)
 	}
 	// top5 短名单按三因子权重降序截断（而非 credits 单纯降序）：否则闲置补偿
 	// 根本进不了短名单决策，低 credits 但久置的账号会永远排不进 top5。
@@ -243,11 +257,14 @@ func (p *Pool) pick(tried map[string]bool, reqModel, realm string) *auth.Auth {
 // 分级：disabled 永不参与；CoolHard（余额耗尽，等签到的号）同样排除——调了必 402，浪费轮换并产生噪音日志；
 // CoolSoft 与熔断号允许参与（可能已恢复，失败成本仅一轮换）。
 // 被 tried 排除、在途占满的账号同样跳过（维持请求级轮换 + 租约语义）。无任何可用返回 nil。
-func (p *Pool) pickEarliestExpiryLocked(tried map[string]bool, now time.Time, realm string) *auth.Auth {
+func (p *Pool) pickEarliestExpiryLocked(tried map[string]bool, now time.Time, realm string, scope Scope) *auth.Auth {
 	var best *entry
 	for uid, e := range p.byUID {
 		if tried != nil && tried[uid] {
 			continue
+		}
+		if !scopeAllows(scope, uid) {
+			continue // 兜底同样不能越出 key 的账号范围
 		}
 		if realm != "" && e.a.Realm() != realm {
 			continue // 域过滤：池内跨 realm 的冷却账号不参与本 realm 兜底

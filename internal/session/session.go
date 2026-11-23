@@ -28,6 +28,13 @@ type entry struct {
 	lastActive time.Time
 }
 
+// Scope 会话可用账号范围（与 pool.Scope 同形，本包不反向依赖 pool）。
+// nil = 不限；非 nil 时只有 Allows 为真的 uid 可被绑定/命中。空范围不等于 nil——
+// 调用方用空范围表达「一把都不允许」，不能回落成"不限"。
+type Scope interface {
+	Allows(uid string) bool
+}
+
 // Config 路由依赖；Available 返回"可用账号"（healthy 且未占满在途）的有序 uid 列表，
 // 由 pool.AvailableUIDs 提供。Store 可为 redisstore.Noop（纯内存）。
 type Config struct {
@@ -43,6 +50,10 @@ type Config struct {
 	// 模型级限额后对**其他模型**仍可用（issue #31 豁免），此时若只按账号级可用性
 	// 校验，会话会被钉在这个号上反复失败——正是"限额后换不动号"的观感来源。
 	AvailableForModel func(model string) []string
+	// AvailableForModelScoped 在 AvailableForModel 之上再按 scope 过滤（接入 key 的
+	// 账号白名单）。未注入时回落 AvailableForModel 的结果并在本包内按 scope 过滤，
+	// 因此**不会**因为没接线而把范围外账号分配给会话。scope=nil 时等价于旧路径。
+	AvailableForModelScoped func(model string, scope Scope) []string
 	// PickForModel 在给定候选集内按账号池真实权重选一个 uid（空串 = 该集合此刻无可用）。
 	// 供粘性**首绑**使用（issue #265）；nil 时回落 hashIndex 稳定散列（旧行为，
 	// 无 pool 依赖的调用方与既有测试保留该语义）。
@@ -57,6 +68,9 @@ type Config struct {
 	// 实现方注意：本回调在 Router 写锁内被调用，实现不得回调本 Router（会有死锁风险），
 	// 也不应长时间阻塞。
 	PickForModel func(model string, candidates []string) string
+	// PickForModelScoped 是 PickForModel 的带范围版本（可选）。未注入时仍用
+	// PickForModel——传进去的候选集已经按 scope 过滤过，不会越界。
+	PickForModelScoped func(model string, candidates []string, scope Scope) string
 }
 
 // Router 会话粘性路由器。
@@ -155,8 +169,24 @@ func (r *Router) LoadFromStore() {
 // 对其他模型仍可用（见 pool.healthyForModel 的模型级冷却豁免）。若只按账号级
 // 可用性校验，会话会被钉在一个"对当前模型不可用"的号上反复失败。
 func (r *Router) ResolveForModel(key, model string) (string, bool) {
+	return r.resolveForModel(key, model, nil)
+}
+
+// ResolveForModelScoped 在 ResolveForModel 之上叠加账号范围（接入 key 白名单）。
+//
+// 三处都不能省 scope：
+//  1. 可用集合（快路径命中校验 + 慢路径候选）必须只含范围内账号——否则范围外的
+//     旧绑定会被判为"可用"而继续沿用；
+//  2. 事实上的重分配只能落在范围内；
+//  3. 首绑回调拿到的候选集已过滤，权重选号不会越界。
+// scope=nil 与 ResolveForModel 逐位一致（开闭原则：新层不改旧层）。
+func (r *Router) ResolveForModelScoped(key, model string, scope Scope) (string, bool) {
+	return r.resolveForModel(key, model, scope)
+}
+
+func (r *Router) resolveForModel(key, model string, scope Scope) (string, bool) {
 	now := time.Now()
-	available := r.availableSet(model)
+	available := r.availableSet(model, scope)
 
 	// ── Fast path: RLock 快查 ──────────────────────────────
 	r.mu.RLock()
@@ -183,7 +213,7 @@ func (r *Router) ResolveForModel(key, model string) (string, bool) {
 		delete(r.entries, key) // 失效：清掉再分配
 	}
 
-	uids := r.availableSlice(model)
+	uids := r.availableSlice(model, scope)
 	if len(uids) == 0 {
 		return "", false
 	}
@@ -212,7 +242,16 @@ func (r *Router) ResolveForModel(key, model string) (string, bool) {
 	// 参与本模型/本段分配的号——那正是「粘性钉在不可用号上反复失败」的老问题，所以宁可
 	// 回落哈希也不采信越界值。
 	var uid string
-	if r.cfg.PickForModel != nil {
+	if r.cfg.PickForModelScoped != nil {
+		if picked := r.cfg.PickForModelScoped(model, pool2, scope); picked != "" {
+			for _, u := range pool2 {
+				if u == picked {
+					uid = picked
+					break
+				}
+			}
+		}
+	} else if r.cfg.PickForModel != nil {
 		if picked := r.cfg.PickForModel(model, pool2); picked != "" {
 			for _, u := range pool2 {
 				if u == picked {
@@ -298,8 +337,8 @@ func (r *Router) gcOnce(now time.Time) int {
 }
 
 // availableSet 把可用账号列表转集合（快路径命中校验用）。
-func (r *Router) availableSet(model string) map[string]bool {
-	uids := r.availableSlice(model)
+func (r *Router) availableSet(model string, scope Scope) map[string]bool {
+	uids := r.availableSlice(model, scope)
 	set := make(map[string]bool, len(uids))
 	for _, u := range uids {
 		set[u] = true
@@ -308,15 +347,31 @@ func (r *Router) availableSet(model string) map[string]bool {
 }
 
 // availableSlice 安全调用可用账号函数（nil 函数视空池）。
-// 优先走 AvailableForModel（带模型过滤）；未注入时回落 Available（无模型维度）。
-func (r *Router) availableSlice(model string) []string {
-	if r.cfg.AvailableForModel != nil {
-		return r.cfg.AvailableForModel(model)
-	}
-	if r.cfg.Available == nil {
+// 优先走 AvailableForModelScoped（带模型 + 范围过滤）；未注入时回落
+// AvailableForModel / Available，并在本包内补一次 scope 过滤——接线缺失不能变成
+// 越权（宁可少给，不可多给）。
+func (r *Router) availableSlice(model string, scope Scope) []string {
+	var uids []string
+	switch {
+	case r.cfg.AvailableForModelScoped != nil:
+		uids = r.cfg.AvailableForModelScoped(model, scope)
+	case r.cfg.AvailableForModel != nil:
+		uids = r.cfg.AvailableForModel(model)
+	case r.cfg.Available != nil:
+		uids = r.cfg.Available()
+	default:
 		return nil
 	}
-	return r.cfg.Available()
+	if scope == nil {
+		return uids
+	}
+	out := make([]string, 0, len(uids))
+	for _, uid := range uids {
+		if scope.Allows(uid) {
+			out = append(out, uid)
+		}
+	}
+	return out
 }
 
 func expired(e entry, now time.Time, ttl time.Duration) bool {
