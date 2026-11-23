@@ -12,7 +12,7 @@
 //
 // 安全边界：
 //   - 页面本身可以匿名打开（不含任何密钥），但每个数据请求都要带 `Authorization:
-//     Bearer <网关 api_key>`，由服务端 withAuth 判定；api_key 只存在浏览器 localStorage。
+//     Bearer <接入 key>`，由服务端 withAccessKey 判定；接入 key 只存在浏览器 localStorage。
 //   - 响应统一带 CSP（default-src 'self'，禁 inline script / 外链），因此本包内不允许
 //     出现内联 <script> 或 onclick= 属性；所有交互走 assets/app.js 的事件委托。
 //   - 不开 `Access-Control-Allow-Origin`：跨站页面读不到管理面数据。

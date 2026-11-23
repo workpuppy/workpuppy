@@ -48,6 +48,13 @@ const state = {
   configFilter: '',
   setupMode: false,      // 首次初始化密码
   restartPending: false, // 有改动等待重启
+
+  // 接入映射（下游 key 的账号/模型白名单）
+  accessKeys: [],        // /admin/access-keys 的 keys[]
+  accessAccounts: [],    // 账号选择器数据（/admin/accounts）
+  accessModels: [],      // 模型选择器数据（/admin/models）
+  accessRevealed: new Set(), // 已点眼睛的 key id（只在前端内存，刷新即回到掩码）
+  accessDraft: null,     // {id,name,key,enabled,all_accounts,all_models,accounts:Set,models:Set}
 };
 
 // ── 基础工具 ────────────────────────────────────────────────
@@ -226,7 +233,7 @@ async function api(path, opts = {}) {
 }
 
 // ── 视图切换（hash 路由，零框架）─────────────────────────────
-const VIEWS = ['overview', 'accounts', 'models', 'playground', 'add', 'settings'];
+const VIEWS = ['overview', 'accounts', 'access', 'models', 'playground', 'add', 'settings'];
 
 function currentView() {
   const raw = (location.hash || '').replace(/^#\/?/, '');
@@ -254,6 +261,7 @@ function render() {
       startOverviewPolling();
       break;
     case 'accounts': loadAccounts(); break;
+    case 'access': loadAccessKeys(); break;
     case 'models': loadModels(); break;
     case 'playground': loadModels(true); break;
     case 'add': break;
@@ -986,6 +994,413 @@ async function checkinAll() {
   } finally {
     btn.disabled = false;
     btn.textContent = '一键签到';
+  }
+}
+
+// ── 接入映射（下游 key 的账号 / 模型白名单）─────────────────────
+//
+// 数据面鉴权只认这里的 key（config.json 的 api_key 已退役）。页面职责：
+//   1. 列出每把 key 的授权范围与状态；
+//   2. 新建/编辑：从账号池勾账号、从模型清单勾模型；空列表 = 全部拒绝，
+//      所以「全部账号 / 全部模型」必须是显式开关，不能靠空列表暗示；
+//   3. key 明文可查看/复制/重新生成（文件本身 0600，与旧 api_key 同口径）。
+// 所有渲染仍走 textContent（key 名称、昵称、模型描述都是外部输入）。
+let accessModalInst = null;
+let accessHideTimer = null;
+function accessModal() {
+  if (!accessModalInst) accessModalInst = new bootstrap.Modal($('#accessKeyModal'));
+  return accessModalInst;
+}
+
+async function loadAccessKeys() {
+  const body = $('#accessKeysBody');
+  body.replaceChildren(el('tr', {}, [el('td', {
+    class: 'text-center text-body-secondary py-4', attrs: { colspan: '7' }, text: '加载中…',
+  })]));
+  try {
+    // 账号/模型选择器与列表并行拉取：账号页的元信息（昵称/状态）与模型清单分别来自
+    // /admin/accounts、/admin/models；两者失败不应阻断 key 列表本身。
+    const [keys, accounts, models] = await Promise.all([
+      api('/admin/access-keys'),
+      api('/admin/accounts').catch(() => ({ accounts: [] })),
+      api('/admin/models').catch(() => ({ data: [] })),
+    ]);
+    state.accessKeys = keys.keys || [];
+    state.accessAccounts = accounts.accounts || [];
+    state.accessModels = models.data || [];
+    const enabled = state.accessKeys.filter((k) => k.enabled).length;
+    $('#accessKeysHint').textContent =
+      '共 ' + state.accessKeys.length + ' 把 · 启用 ' + enabled +
+      ' · 存储 ' + (keys.path || 'data/access-keys.json');
+    renderAccessKeyRows();
+  } catch (e) {
+    body.replaceChildren(el('tr', {}, [el('td', {
+      class: 'text-center text-danger py-4', attrs: { colspan: '7' }, text: String(e.message || e),
+    })]));
+    $('#accessKeysHint').textContent = '';
+  }
+}
+
+function accessNickname(uid) {
+  const a = state.accessAccounts.find((x) => x.uid === uid);
+  return (a && a.nickname) || uid;
+}
+
+// accessKeyMask 掩码规则：未点眼睛时只露头尾，避免截图/投屏泄露完整 key。
+function accessKeyMask(k) {
+  if (state.accessRevealed.has(k.id)) return k.key;
+  if (!k.key || k.key.length <= 12) return k.key || '';
+  return k.key.slice(0, 6) + '…' + k.key.slice(-4);
+}
+
+function accessAccountSummary(k) {
+  if (k.all_accounts) return '全部';
+  const list = k.accounts || [];
+  if (list.length === 0) return '0 个（拒绝全部）';
+  const names = list.slice(0, 2).map(accessNickname).join('、');
+  return list.length + ' 个：' + names + (list.length > 2 ? '…' : '');
+}
+
+function accessModelSummary(k) {
+  if (k.all_models) return '全部';
+  const list = k.models || [];
+  if (list.length === 0) return '0 个（拒绝全部）';
+  return list.length + ' 个：' + list.slice(0, 2).join('、') + (list.length > 2 ? '…' : '');
+}
+
+function accessActionBtn(label, kind, id, action) {
+  return el('button', {
+    class: 'btn btn-sm btn-outline-' + kind + ' me-1',
+    text: label,
+    attrs: { type: 'button', 'data-ak-id': id, 'data-ak-action': action },
+  });
+}
+
+function renderAccessKeyRows() {
+  const body = $('#accessKeysBody');
+  if (state.accessKeys.length === 0) {
+    body.replaceChildren(el('tr', {}, [el('td', {
+      class: 'text-center text-body-secondary py-4', attrs: { colspan: '7' },
+      text: '还没有接入 key：下游现在无法调用 /v1；点「新建接入 Key」创建第一把',
+    })]));
+    return;
+  }
+  const rows = state.accessKeys.map((k) => {
+    const revealed = state.accessRevealed.has(k.id);
+    const keyCell = el('td', {}, [
+      el('div', { class: 'access-key-mono', text: accessKeyMask(k) }),
+      el('div', { class: 'd-flex gap-1 mt-1' }, [
+        el('button', {
+          class: 'btn btn-sm btn-ghost-secondary py-0 px-1', text: revealed ? '隐藏' : '查看',
+          attrs: { type: 'button', 'data-ak-id': k.id, 'data-ak-action': 'reveal' },
+        }),
+        el('button', {
+          class: 'btn btn-sm btn-ghost-secondary py-0 px-1', text: '复制',
+          attrs: { type: 'button', 'data-ak-id': k.id, 'data-ak-action': 'copy' },
+        }),
+      ]),
+    ]);
+    return el('tr', {}, [
+      el('td', { text: k.name || '–', title: k.id }),
+      keyCell,
+      el('td', {
+        class: 'small', text: accessAccountSummary(k),
+        title: (k.accounts || []).join('\n'),
+      }),
+      el('td', {
+        class: 'small', text: accessModelSummary(k),
+        title: (k.models || []).join('\n'),
+      }),
+      el('td', {}, [el('span', {
+        class: 'badge ' + (k.enabled ? 'text-bg-success' : 'text-bg-secondary'),
+        text: k.enabled ? '启用' : '停用',
+      })]),
+      el('td', { class: 'small text-body-secondary', text: fmtAgo(k.updated_at || k.created_at) || '–' }),
+      el('td', { class: 'text-start text-nowrap' }, [
+        accessActionBtn('编辑', 'primary', k.id, 'edit'),
+        accessActionBtn(k.enabled ? '停用' : '启用', k.enabled ? 'secondary' : 'success', k.id, 'toggle'),
+        accessActionBtn('换 key', 'warning', k.id, 'regenerate'),
+        accessActionBtn('删除', 'danger', k.id, 'delete'),
+      ]),
+    ]);
+  });
+  body.replaceChildren(...rows);
+}
+
+async function doAccessKeyAction(id, action) {
+  const k = state.accessKeys.find((x) => x.id === id);
+  if (!k) return;
+  try {
+    if (action === 'reveal') {
+      if (state.accessRevealed.has(id)) state.accessRevealed.delete(id);
+      else state.accessRevealed.add(id);
+      renderAccessKeyRows();
+      return;
+    }
+    if (action === 'copy') {
+      await copyText(k.key);
+      return;
+    }
+    if (action === 'edit') {
+      openAccessKeyModal(k);
+      return;
+    }
+    if (action === 'toggle') {
+      const next = !k.enabled;
+      await api('/admin/access-keys/' + encodeURIComponent(id) + '/' + (next ? 'enable' : 'disable'), {
+        method: 'POST', body: {},
+      });
+      toast(next ? '已启用：该 key 可继续调用' : '已停用：该 key 的下游请求将立即 401', next ? 'success' : 'secondary');
+      loadAccessKeys();
+      return;
+    }
+    if (action === 'regenerate') {
+      if (!confirm('重新生成后旧 key 立即失效，下游必须换新 key。继续？')) return;
+      const r = await api('/admin/access-keys/' + encodeURIComponent(id) + '/regenerate', { method: 'POST', body: {} });
+      toast('已生成新 key：' + r.key.key + '（请立即复制）', 'success');
+      loadAccessKeys();
+      return;
+    }
+    if (action === 'delete') {
+      if (!confirm('删除「' + (k.name || id) + '」？下游用这把 key 的请求会立即 401，且不可恢复。')) return;
+      await api('/admin/access-keys/' + encodeURIComponent(id), { method: 'DELETE' });
+      toast('已删除接入 key', 'success');
+      loadAccessKeys();
+    }
+  } catch (e) {
+    toast(String(e.message || e), 'danger');
+  }
+}
+
+// copyText 复制到剪贴板：优先 Clipboard API（CSP 下同源页面可用），失败回退 textarea。
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      toast('已复制到剪贴板', 'success');
+      return;
+    }
+  } catch (_) { /* 回退到 execCommand */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  ta.remove();
+  toast(ok ? '已复制到剪贴板' : '复制失败：请手动选中复制', ok ? 'success' : 'warning');
+}
+
+function openAccessKeyModal(k) {
+  // 取消上一次保存遗留的「过渡结束后补 hide」定时器：否则用户保存后立刻点编辑，
+  // 新打开的弹窗会被这个补丁在 400ms 后关掉。
+  clearTimeout(accessHideTimer);
+  accessHideTimer = null;
+  const draft = k
+    ? {
+      id: k.id, key: k.key, enabled: !!k.enabled,
+      all_accounts: !!k.all_accounts, all_models: !!k.all_models,
+      accounts: new Set(k.accounts || []), models: new Set(k.models || []),
+    }
+    : {
+      id: '', key: '', enabled: true, all_accounts: false, all_models: false,
+      accounts: new Set(), models: new Set(),
+    };
+  state.accessDraft = draft;
+  $('#accessKeyModalTitle').textContent = k ? '编辑接入 Key' : '新建接入 Key';
+  $('#accessKeyModalMeta').textContent = k
+    ? 'ID ' + k.id + ' · 创建于 ' + new Date(k.created_at).toLocaleString('zh-CN', { hour12: false })
+    : '保存后自动生成 key；账号/模型留空不会放行，必须显式勾选（或勾「全部」）。';
+  $('#akName').value = k ? (k.name || '') : '';
+  $('#akEnabled').checked = draft.enabled;
+  $('#akAllAccounts').checked = draft.all_accounts;
+  $('#akAllModels').checked = draft.all_models;
+  $('#akSecretWrap').hidden = !k;
+  $('#akSecret').value = k ? k.key : '';
+  $('#akAccountFilter').value = '';
+  $('#akModelFilter').value = '';
+  hideAccessKeyError();
+  renderAccessPickers();
+  showAccessKeyModal();
+}
+
+function accessPickRow(kind, value, label, sub, checked, muted) {
+  const input = el('input', {
+    class: 'form-check-input',
+    attrs: { type: 'checkbox', 'data-ak-kind': kind, value },
+  });
+  input.checked = !!checked;
+  const text = el('span', { class: 'access-pick-text' }, [
+    el('span', { text: label }),
+    sub ? el('span', { class: 'access-pick-sub font-monospace', text: sub }) : null,
+  ]);
+  return el('label', {
+    class: 'form-check access-pick' + (muted ? ' text-body-secondary' : ''),
+  }, [input, text]);
+}
+
+function renderAccessPickers() {
+  const d = state.accessDraft;
+  if (!d) return;
+  const accKw = ($('#akAccountFilter').value || '').trim().toLowerCase();
+  const accRows = state.accessAccounts
+    .filter((a) => !accKw ||
+      (a.nickname || '').toLowerCase().includes(accKw) ||
+      (a.uid || '').toLowerCase().includes(accKw))
+    .map((a) => accessPickRow(
+      'account', a.uid, a.nickname || a.uid,
+      a.uid + (a.realm ? ' · ' + a.realm : '') + (a.disabled ? ' · 已禁用' : ''),
+      d.accounts.has(a.uid), a.disabled,
+    ));
+  $('#akAccountList').replaceChildren(...(accRows.length ? accRows : [el('div', {
+    class: 'small text-body-secondary py-2', text: '没有匹配的账号（先到「账号」页加号）',
+  })]));
+
+  const modKw = ($('#akModelFilter').value || '').trim().toLowerCase();
+  const modRows = state.accessModels
+    .filter((m) => !modKw ||
+      (m.id || '').toLowerCase().includes(modKw) ||
+      (m.description || '').toLowerCase().includes(modKw))
+    .map((m) => accessPickRow(
+      'model', m.id, m.id,
+      m.description || '', d.models.has(m.id), false,
+    ));
+  $('#akModelList').replaceChildren(...(modRows.length ? modRows : [el('div', {
+    class: 'small text-body-secondary py-2', text: '没有匹配的模型（先到「模型」页刷新清单）',
+  })]));
+
+  syncAccessPickerDisabled();
+  updateAccessSelectionHint();
+}
+
+function syncAccessPickerDisabled() {
+  const d = state.accessDraft;
+  if (!d) return;
+  [[$('#akAccountList'), $('#akAllAccounts').checked],
+    [$('#akModelList'), $('#akAllModels').checked]].forEach(([host, all]) => {
+    host.classList.toggle('is-disabled', !!all);
+    host.querySelectorAll('input[data-ak-kind]').forEach((cb) => { cb.disabled = !!all; });
+  });
+}
+
+function updateAccessSelectionHint() {
+  const d = state.accessDraft;
+  if (!d) return;
+  const acc = $('#akAllAccounts').checked ? '全部账号' : '已选 ' + d.accounts.size + ' 个账号';
+  const mod = $('#akAllModels').checked ? '全部模型' : '已选 ' + d.models.size + ' 个模型';
+  $('#akSelectionHint').textContent = acc + ' · ' + mod;
+}
+
+function showAccessKeyError(msg) {
+  const box = $('#akError');
+  box.textContent = msg;
+  box.classList.remove('d-none');
+  box.scrollIntoView({ block: 'nearest' });
+}
+
+function hideAccessKeyError() {
+  const box = $('#akError');
+  box.classList.add('d-none');
+  box.textContent = '';
+}
+
+// showAccessKeyModal 打开弹窗，并绕开 Bootstrap 的过渡竞态。
+// show/hide 在 300ms 过渡期间互相忽略：保存后立刻点「编辑」时，show 会落在上一条
+// hide 的过渡里被丢掉（表现：点了编辑没反应）。这里在过渡结束后重试，最多 1s。
+function showAccessKeyModal() {
+  const host = $('#accessKeyModal');
+  const m = accessModal();
+  const tryShow = () => {
+    if (host.classList.contains('show')) return true;
+    if (m._isTransitioning) return false;
+    m.show();
+    return true;
+  };
+  if (tryShow()) return;
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (tryShow() || tries > 20) clearInterval(timer);
+  }, 50);
+}
+
+// hideAccessKeyModal 关闭编辑弹窗，并兜住「show 过渡中调 hide 被忽略」的边界。
+// Bootstrap 的 Modal 在 show 的 300ms 过渡里会把 hide 当成过渡冲突直接丢掉；
+// 用户手速极快（或自动化）时会出现「保存成功但弹窗还开着」。过渡结束后补一次。
+function hideAccessKeyModal() {
+  const m = accessModal();
+  m.hide();
+  clearTimeout(accessHideTimer);
+  accessHideTimer = setTimeout(() => {
+    accessHideTimer = null;
+    const host = $('#accessKeyModal');
+    if (host && host.classList.contains('show')) m.hide();
+  }, 400);
+}
+
+// regenerateAccessKeyFromModal 在编辑弹窗里换密钥：旧 key 立即失效，授权范围不变。
+async function regenerateAccessKeyFromModal() {
+  const d = state.accessDraft;
+  if (!d || !d.id) {
+    toast('先保存这把 key，再重新生成密钥', 'warning');
+    return;
+  }
+  if (!confirm('重新生成后旧 key 立即失效，下游必须换新 key。继续？')) return;
+  try {
+    const r = await api('/admin/access-keys/' + encodeURIComponent(d.id) + '/regenerate', {
+      method: 'POST', body: {},
+    });
+    d.key = r.key.key;
+    $('#akSecret').value = r.key.key;
+    $('#accessKeyModalMeta').textContent = '已换新 key：请立即复制给下游，旧 key 已失效';
+    toast('已生成新 key', 'success');
+    loadAccessKeys();
+  } catch (e) {
+    showAccessKeyError(String(e.message || e));
+  }
+}
+
+async function saveAccessKey() {
+  const d = state.accessDraft;
+  if (!d) return;
+  const body = {
+    name: ($('#akName').value || '').trim(),
+    enabled: $('#akEnabled').checked,
+    all_accounts: $('#akAllAccounts').checked,
+    all_models: $('#akAllModels').checked,
+    accounts: Array.from(d.accounts),
+    models: Array.from(d.models),
+  };
+  // 前端先拦一次：空白名单是「全部拒绝」，直接提交只会拿到 400；这里给出更具体的指引。
+  if (!body.all_accounts && body.accounts.length === 0) {
+    showAccessKeyError('至少选择一个账号（或勾选「全部账号」）——空列表等于全部拒绝。');
+    return;
+  }
+  if (!body.all_models && body.models.length === 0) {
+    showAccessKeyError('至少选择一个模型（或勾选「全部模型」）——空列表等于全部拒绝。');
+    return;
+  }
+  const btn = $('#btnSaveAccessKey');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  hideAccessKeyError();
+  try {
+    if (d.id) {
+      await api('/admin/access-keys/' + encodeURIComponent(d.id), { method: 'PUT', body });
+      toast('已保存：账号/模型授权立即生效', 'success');
+    } else {
+      const r = await api('/admin/access-keys', { method: 'POST', body });
+      toast('已创建接入 key：' + r.key.key, 'success');
+    }
+    hideAccessKeyModal();
+    loadAccessKeys();
+  } catch (e) {
+    showAccessKeyError(String(e.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存';
   }
 }
 
@@ -1893,7 +2308,7 @@ function resetSection(section) {
 }
 
 function resetAll() {
-  if (!confirm('把所有配置恢复默认？\n\n注意：api_key 会回到 test_key，监听地址等也会重置；管理密码与「启用管理面」保持不变。')) return;
+  if (!confirm('把所有配置恢复默认？\n\n注意：监听地址、上游指纹等会重置；管理密码、「启用管理面」与「接入映射」里的 key 保持不变。')) return;
   resetConfig({ scope: 'all' }, '全部配置已恢复默认（重启后生效）');
 }
 
@@ -2024,6 +2439,46 @@ function bind() {
   $('#btnCheckinAll').addEventListener('click', checkinAll);
   $('#btnRefreshModels').addEventListener('click', () => loadModels(true));
   $('#modelFilter').addEventListener('input', renderModelRows);
+
+  // 接入映射：列表操作走事件委托（行是动态生成的）。
+  if ($('#btnAccessKeyNew')) $('#btnAccessKeyNew').addEventListener('click', () => openAccessKeyModal(null));
+  if ($('#btnRefreshAccessKeys')) $('#btnRefreshAccessKeys').addEventListener('click', loadAccessKeys);
+  if ($('#accessKeysBody')) {
+    $('#accessKeysBody').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-ak-action]');
+      if (btn) doAccessKeyAction(btn.dataset.akId, btn.dataset.akAction);
+    });
+  }
+  const onAccessPickChange = (ev) => {
+    const cb = ev.target.closest('input[data-ak-kind]');
+    const d = state.accessDraft;
+    if (!cb || !d) return;
+    const set = cb.dataset.akKind === 'account' ? d.accounts : d.models;
+    if (cb.checked) set.add(cb.value);
+    else set.delete(cb.value);
+    updateAccessSelectionHint();
+  };
+  if ($('#akAccountList')) $('#akAccountList').addEventListener('change', onAccessPickChange);
+  if ($('#akModelList')) $('#akModelList').addEventListener('change', onAccessPickChange);
+  if ($('#akAccountFilter')) $('#akAccountFilter').addEventListener('input', renderAccessPickers);
+  if ($('#akModelFilter')) $('#akModelFilter').addEventListener('input', renderAccessPickers);
+  if ($('#akAllAccounts')) {
+    $('#akAllAccounts').addEventListener('change', () => {
+      if (state.accessDraft) state.accessDraft.all_accounts = $('#akAllAccounts').checked;
+      syncAccessPickerDisabled();
+      updateAccessSelectionHint();
+    });
+  }
+  if ($('#akAllModels')) {
+    $('#akAllModels').addEventListener('change', () => {
+      if (state.accessDraft) state.accessDraft.all_models = $('#akAllModels').checked;
+      syncAccessPickerDisabled();
+      updateAccessSelectionHint();
+    });
+  }
+  if ($('#btnSaveAccessKey')) $('#btnSaveAccessKey').addEventListener('click', saveAccessKey);
+  if ($('#btnCopyAccessKey')) $('#btnCopyAccessKey').addEventListener('click', () => copyText($('#akSecret').value));
+  if ($('#btnRegenerateAccessKey')) $('#btnRegenerateAccessKey').addEventListener('click', regenerateAccessKeyFromModal);
 
   // 账号行操作走事件委托（行是动态生成的，逐个绑定会漏）。
   // 第一列 UID 是「打开积分曲线」，其余按钮是「动作」——同一委托里按目标分流。

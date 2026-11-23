@@ -5,7 +5,7 @@
 # WorkPuppy
 
 把多个 WorkBuddy（CodeBuddy）账号聚合成一个 **OpenAI 兼容** HTTP 网关：下游客户端只需改
-`base_url` 与 `api_key`，就能共享整池账号的额度；网关负责鉴权、会话粘性、轮转、冷却、
+`base_url` 与在「接入映射」里创建的 key，就能共享整池账号的额度；网关负责鉴权、会话粘性、轮转、冷却、
 熔断、指纹改写与定时积分任务，并自带一个只做**账号运营**的 Web 管理后台。
 
 - **单二进制、单端口**：Go 实现（无 Python / 无 Node），同一进程既托管管理页面又提供 API，
@@ -47,7 +47,8 @@
 | 指纹伪装 | 伪造官方桌面端 UA / `X-IDE-*` 头组，请求体黑名单指纹脱敏，可配出口线路 |
 | 定时积分 | 签到、活跃上报、猫猫旅行、token 保活、开学季、夜猫子六类任务，账号之间随机分布 |
 | 管理后台 | 概览 / 账号 / 模型 / 测试台 / 扫码加号，Tabler（内嵌 Bootstrap 5）+ 原生 JS、无前端构建 |
-| 管理凭据 | 与 `/v1` 的 `api_key` **完全分离**；首次打开页面时由用户设置，密码以加盐 10 轮 SHA256 的哈希存进 `data/config.json` |
+| 管理凭据 | 与 `/v1` 的接入 key **完全分离**；首次打开页面时由用户设置，密码以加盐 10 轮 SHA256 的哈希存进 `data/config.json` |
+| 接入映射 | 下游 key 不再写死在配置里：每把 key 独立勾选**可调用的账号**与**可用模型**，选号/粘性/模型清单/状态视图全按它分流；key 落盘 `data/access-keys.json`（0600） |
 | 观测 | `/status`（给 SDK/监控）、`/healthz` 存活探测、请求指标环形缓冲、可选 Redis 会话镜像 |
 
 ---
@@ -114,8 +115,9 @@ go build -o wp ./cmd/server
 > 但这也意味着任何先连上的人都能设密码。部署到公网时请在初始化完成前限制访问来源，
 > 或者先在本机初始化、再把 `data/` 带到服务器。
 >
-> **首次生成的 `api_key` 是占位符 `test_key`**：记得在「设置」页或文件里换成自己的随机串，
-> 否则 `/v1` 等于不鉴权。
+> **不再有 `api_key` 配置项**：下游凭据改为管理后台「接入映射」里创建的受管 key
+> （每把 key 自带账号/模型白名单）。升级后旧 `config.json` 里的 `api_key` 会被当作
+> 未知键忽略（启动日志点名），**旧 key 一律 401**；先打开后台创建第一把 key，再改下游配置。
 
 ---
 
@@ -134,20 +136,17 @@ go build -o wp ./cmd/server
 配置模板是 [`config.default.json`](config.default.json)，**它就是全部默认值的权威来源**
 （编译进二进制；仓库根目录那份是同步副本，改完执行 `go run ./cmd/config-default -write`）。
 
-### 开箱即用，只需改 `api_key`
+### 开箱即用，只需创建一把接入 key
 
-首次启动会生成 `data/config.json`（完整内容 = `config.default.json`）。默认值全部可用，
-唯一强烈建议改的是 `api_key`（默认占位符 `test_key`，等于 `/v1` 不鉴权）：
+首次启动会生成 `data/config.json`（完整内容 = `config.default.json`），默认值全部可用。
+下游调用 `/v1` 前需要先在管理后台创建一把接入 key：
 
-```json
-{
-  "api_key": "换成你自己的随机串"
-}
-```
+1. 打开后台 →「接入映射」→「新建接入 Key」；
+2. 勾选这把 key 可调用的账号与可用模型（空列表 = 全部拒绝，必须显式选择或勾「全部」）；
+3. 保存后复制 key，作为下游的 `Authorization: Bearer <key>`。
 
-| 键 | 为什么 |
-|---|---|
-| `api_key` | 下游调 `/v1/*`、`/status` 的凭据。**留空 = 不鉴权**，公网部署务必设置 |
+key 明文保存在 `data/access-keys.json`（0600），升级/重启都不会丢；停用或删除后下游
+立即 401。**没有任何 key 时 `/v1` 与 `/status` 一律 401**（不再有"留空 = 不鉴权"）。
 
 `admin.enabled` 不用手动处理：首次在页面初始化管理员密码时，服务端会把它置为 `true`
 （之后也可以在设置页关掉，但关掉后设置页本身也会 404，只能改文件恢复）。
@@ -194,7 +193,7 @@ go build -o wp ./cmd/server
 > **文本框留空 = 回落默认值**：字符串项在保存前会先 trim（去掉首尾空白），trim 后为空则
 > 按"未设置"处理——写成 `null` → 落盘时该键被删掉 → 运行期取 `config.default.json` 的默认值。
 > 也就是说页面上清空 `upstream.client_version` 等于恢复默认，而不是写入一个空串（空串会被
-> 原样落盘，默认值从此不再生效）。数字项同理；只有像 `api_key` 这种默认值本身为空串的项，
+> 原样落盘，默认值从此不再生效）。数字项同理；只有像 `upstream.device_token` 这种默认值本身为空串的项，
 > 留空与写空串结果才一样。
 
 ### 顶层
@@ -202,7 +201,6 @@ go build -o wp ./cmd/server
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `listen` | string | `":7863"` | 监听地址。容器内用 `:7863`，宿主机用 `-p 7863:7863` 暴露端口 |
-| `api_key` | string | `"test_key"` | **数据面**密钥：下游调 `/v1/*`、`/status` 时 `Authorization: Bearer <api_key>`。留空 = 不鉴权（公网部署务必设置） |
 | `auth_dir` | string | `"./auths"` | 账号凭据目录（`workbuddy-<uid>.json`），新增文件几秒内自动热加载 |
 | `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复。同目录另有 `credit-daily.json`（积分日账本，保留 30 天） |
 | `qrcode_ttl` | string | `"15m"` | **扫码加号二维码的有效期**（不是管理后台的会话超时——管理密码是持久化的，没有会话）。到点后台把二维码标「已失效」、链接加删除线并停止轮询 |
@@ -279,7 +277,7 @@ go build -o wp ./cmd/server
 | `password` | 空 | 管理密码的哈希（`sha256x10$<salt>$<digest>`，加盐 10 轮 SHA256）。由页面写入，**不要手写**；删掉它并重启 = 回到初始化状态 |
 
 
-> 管理密码与 `api_key` 完全分离：拿下游 key 打 `/admin/*` 一律 401。
+> 管理密码与接入 key 完全分离：拿下游 key 打 `/admin/*` 一律 401。
 > 管理面未初始化时接口回 **428**，前端据此显示"初始化密码"向导；
 > 密码只以哈希落盘，明文既不打印也不存储；改密需先登录（Bearer 就是旧密码）。
 
@@ -392,7 +390,7 @@ go build -o wp ./cmd/server
 | 变量 | 覆盖的配置项 |
 |---|---|
 | `WP_LISTEN` | `listen` |
-| `WP_API_KEY` | `api_key` |
+| `WP_API_KEY` | **仅本地运维 CLI**（stats/acct/login）：数据面接入 key；网关进程本身不读它 |
 | `WP_AUTH_DIR` / `WP_STATE_FILE` | `auth_dir` / `state_file` |
 | `WP_PROXIES` | `proxies`（`name=url,name=url`） |
 | `WP_REASONING_AS_CONTENT` | `reasoning_as_content` |
@@ -428,9 +426,13 @@ curl -s http://127.0.0.1:7863/v1/chat/completions \
 ```
 
 **选号策略**（自动生效，无需配置）：会话粘性优先 → 三因子加权随机（余额 ×10 + 快过期积分 ×8
-+ 闲置补偿）→ 排除冷却/熔断/降权/在途已满的账号 → 防惊群跳过刚选中的号。
++ 闲置补偿）→ 排除冷却/熔断/降权/在途已满的账号 → 防惊群跳过刚选中的号。**接入 key 的账号
+白名单是本轮选号的第一道硬过滤**：粘性命中、正常轮换与全冷却兜底都不会落到白名单之外。
 
-模型前缀 `cn:` / `global:` 可显式指定域；`/status` 与 `/v1` 共用 `api_key`。
+模型前缀 `cn:` / `global:` 可显式指定域；`/v1`、`/v1/models`、`/status` 都只认「接入映射」
+里启用且授权了对应账号/模型的 key。`/v1/models` 只列该 key 可用的模型，`/status` 只统计
+该 key 可调用的账号（管理面 `/admin/status` 仍看全池）。`/v1/stats` 是进程级聚合视图，
+不按 key 切分（只要求一把有效 key）。
 
 ---
 
@@ -447,10 +449,11 @@ docker compose restart wp
 |---|---|
 | 概览 | 账号总数 / 可用账号 / 冷却中账号 / 已禁用账号 / 在途占满 / 粘性会话 + **积分四卡**（总积分、今日获得、今日核销(消耗+过期&校正)、今日净变化）+ **积分日账本曲线**（整池近 7/15/30 天折线图：日终总计 / 获得 / 核销，缺记录的日期按 0）+ 网关状态（默认折叠，排障用）；后端返回的原始状态 JSON 也在这里。**每 5 秒自动刷新**（`/admin/overview` 聚合快照，只读内存/落盘缓存，不请求上游） |
 | 账号 | 顶部三个动作：**一键签到**（跳过今天已签）/ **一键猫猫旅行**（补自动任务）/ **刷新余额**（上游只读）；列表（昵称、UID、状态、今日已签、积分、在途、凭证、线路、权重）+ 行内 禁用 / 启用 / 休养；**点每行第一列的昵称** 弹出该号近 7/15/30 天积分曲线（日终总计 / 获得 / 核销，缺记录的日期按 0） |
+| **接入映射** | 管理下游接入 key：新建 / 编辑 / 停用 / 删除 / 换 key；每把 key 从账号池勾选**可调用账号**、从模型清单勾选**可用模型**（支持「全部」）；key 可查看 / 复制；来源 `data/access-keys.json` |
 | 模型 | 模型中心：描述、上下文、最大输出、思考档位、积分倍率、能力标记 |
 | 测试台 | 选模型 → 填提示词 → 流式或非流式试跑（复用 `/v1` 整条链路） |
 | 扫码加号 | 选域名 → 拿授权链接 → **页面直接显示二维码 + 有效期倒计时**（也可复制链接）→ 轮询 → 账号自动落盘并进入池；过期后链接打删除线、二维码盖「已失效」遮罩 |
-| **设置** | 全部配置项的分组表单（14 组 / 100+ 项）：前端即时校验 + 后端字段级校验；单字段 / 整组 / 全部恢复默认；敏感项（api_key、token）默认掩码、可点眼睛看明文；保存后写盘并在顶部挂「重启容器后生效」横幅；另有「修改管理员密码」 |
+| **设置** | 全部配置项的分组表单（14 组 / 100+ 项）：前端即时校验 + 后端字段级校验；单字段 / 整组 / 全部恢复默认；敏感项（token）默认掩码、可点眼睛看明文；保存后写盘并在顶部挂「重启容器后生效」横幅；另有「修改管理员密码」 |
 
 **边界**：后台只管账号运营与自身配置，**不影响正在运行的进程**：设置页保存只写
 `data/config.json`，除「启用管理面」「密码强度」外都要重启容器才生效（横幅会一直挂着，
@@ -488,7 +491,7 @@ docker compose restart wp
 
 ## 管理面 REST API
 
-凭据是**管理密码**（不是 `api_key`）：`Authorization: Bearer <密码>`。登录失败按 IP 限速
+凭据是**管理密码**（不是接入 key）：`Authorization: Bearer <密码>`。登录失败按 IP 限速
 （5 分钟 10 次后 429）；密码未初始化时管理面回 **428**（前端据此显示初始化向导）。
 
 | 方法 | 路径 | 说明 |
@@ -500,7 +503,14 @@ docker compose restart wp
 | `PUT` | `/admin/config` | 深合并保存：`{"values":{…}}`；字段级校验失败回 400 + `error.fields[]` |
 | `POST` | `/admin/config/reset` | 恢复默认：`{"scope":"fields","paths":[…]}` / `{"scope":"section","section":"pool"}` / `{"scope":"all"}`；`admin.enabled` 与密码哈希不会被清 |
 | `POST` | `/admin/login` | 验密码：`{"password":"…"}` → `{"ok":true}`；401 / 429 / 428 |
-| `GET` | `/admin/status` | 与 `/status` 同形，但走管理凭据 |
+| `GET` | `/admin/status` | 与 `/status` 同形，但走管理凭据；**不按接入 key 过滤，看全池** |
+| `GET` | `/admin/access-keys` | **接入映射**：列出全部 key（含明文密钥）、存储路径 |
+| `POST` | `/admin/access-keys` | 新建 key：`{"name","enabled","all_accounts","all_models","accounts":[…],"models":[…]}`；空列表且未勾「全部」回 400 |
+| `PUT` | `/admin/access-keys/{id}` | 更新名称/启用态/账号与模型白名单（密钥不变） |
+| `POST` | `/admin/access-keys/{id}/enable` | 启用该 key |
+| `POST` | `/admin/access-keys/{id}/disable` | 停用该 key（下游立即 401，配置保留） |
+| `POST` | `/admin/access-keys/{id}/regenerate` | 换密钥（旧 key 立即失效，授权范围不变） |
+| `DELETE` | `/admin/access-keys/{id}` | 删除 key（不可恢复） |
 | `GET` | `/admin/overview` | 概览页轮询用：`status` + `credits` 一次返回，只读内存/落盘缓存，不触发任何上游请求 |
 | `POST` | `/admin/accounts/refresh` | **刷新余额**：逐账号打上游只读 `billing` 接口回写积分（导入的号首次刷新后才有值）；串行 + 间隔，单飞防重入 |
 | `POST` | `/admin/travel/run` | **一键猫猫旅行**：手动补一次自动计划任务（领养 / 派出 / 领奖），异步执行回 202。无猫账号会**先补齐领养前置的对话量上报**（同日已发过则跳过），再领养——不再出现"点了按钮却因为 `chat_5` 未满而 400" |
@@ -614,6 +624,7 @@ internal/auth/       账号凭据模型
 internal/config/     排程配置段（server 与 activity 共用）
 internal/configdata/ 内嵌默认配置（config.default.json）
 internal/configschema/ 配置项元数据（设置页分组/校验/默认值，前后端共用）
+internal/accesskey/  下游接入 key：账号/模型白名单、校验与 data/access-keys.json 落盘
 internal/webui/      管理后台静态资源（vendored Tabler，embed）
 internal/session/    会话粘性与路由
 internal/redisstore/ 会话镜像（可选）
@@ -676,7 +687,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 | 设置页保存成功但行为没变 | 正常：除「启用管理面」「密码强度」外都要**重启容器**；顶部横幅即提示（重启后消失） |
 | 容器起不来，日志说 `config.json 是个**目录**` | 旧版 `-v ./config.json:/app/config.json:ro` 挂载遗留：删掉该目录与 `-v` 行，重启会自动生成文件 |
 | 面板能开，但**账号数一直是 0** / 日志刷 `state.json 落盘失败: permission denied` | `auths/`、`data/` 的宿主目录属主不是容器用户：`sudo chown -R 10001:10001 auths data`（Docker Desktop / rootless 无需）。详见「快速开始」的 Docker 一节 |
-| `/status` 回 401 | 正常：数据面要 `api_key`；管理面才用管理密码 |
+| `/status` 回 401 | 正常：数据面要接入 key（「接入映射」里启用的一把）；管理面才用管理密码 |
 | `/healthz` 回 503 | 活着但没有可用账号（0 个账号 / 全部冷却或禁用） |
 | `/admin/*` 回 404 | 管理面关闭（初始化之前属正常，初始化会自动打开）；若被手动关掉，改 `data/config.json` 的 `admin.enabled` 后重启 |
 | 启动日志出现「配置里有未知键」 | 该键名在 `config.default.json` 里不存在（多半拼错/多打字），当前会被忽略；对照默认配置改正即可 |

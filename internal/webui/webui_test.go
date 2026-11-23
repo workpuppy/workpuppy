@@ -562,6 +562,47 @@ func TestOverviewPollingAndVersionWiring(t *testing.T) {
 	}
 }
 
+// 接入映射页的前后端契约：导航、列表、编辑弹窗、勾选清单与接口调用。
+//
+// 这一页替代了 config.json 里的 api_key：漏一个 id 的表现是「页面能开、按钮没反应」，
+// 所以把 id / 函数名 / 接口路径这类接线全部钉住。
+func TestAccessMappingWiring(t *testing.T) {
+	idx := httptest.NewRecorder()
+	Handler().ServeHTTP(idx, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := idx.Body.String()
+	for _, want := range []string{
+		`data-view="access"`, `id="view-access"`, `id="accessKeysBody"`,
+		`id="btnAccessKeyNew"`, `id="accessKeyModal"`, `id="akAccountList"`, `id="akModelList"`,
+		`id="akAllAccounts"`, `id="akAllModels"`, `id="akSecret"`, `id="btnSaveAccessKey"`,
+		`id="btnRegenerateAccessKey"`, `id="akSelectionHint"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("入口页缺少 %s（接入映射页/编辑弹窗）", want)
+		}
+	}
+
+	js := httptest.NewRecorder()
+	Handler().ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	body := js.Body.String()
+	for _, want := range []string{
+		"/admin/access-keys", "loadAccessKeys", "renderAccessKeyRows", "openAccessKeyModal",
+		"saveAccessKey", "regenerateAccessKeyFromModal", "data-ak-kind", "accessKeyMask",
+		"copyText", "is-disabled", "showAccessKeyModal", "hideAccessKeyModal",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("app.js 缺少 %s（接入映射交互）", want)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	for _, want := range []string{".access-picker", ".access-pick", ".access-key-mono", "#view-access table th"} {
+		if !strings.Contains(css.Body.String(), want) {
+			t.Errorf("app.css 缺少 %s（接入映射样式）", want)
+		}
+	}
+}
+
 // 弹窗里的积分曲线必须"每次打开都能画"。
 //
 // 回归背景（实测）：openCreditChart 用 replaceChildren 显示"加载中…"，会把 ECharts 的

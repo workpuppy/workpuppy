@@ -189,6 +189,7 @@
         <ul class="navbar-nav me-auto">
           <li class="nav-item"><button class="nav-link" data-view="overview">概览</button></li>
           <li class="nav-item"><button class="nav-link" data-view="accounts">账号</button></li>
+          <li class="nav-item"><button class="nav-link" data-view="access">接入映射</button></li>
           <li class="nav-item"><button class="nav-link" data-view="models">模型</button></li>
           <li class="nav-item"><button class="nav-link" data-view="playground">测试台</button></li>
           <li class="nav-item"><button class="nav-link" data-view="add">扫码加号</button></li>
@@ -405,6 +406,40 @@
           </div>
         </section>
 
+        <!-- 接入映射：下游接入 key 的账号/模型白名单（key 不再写死在 config.json） -->
+        <section id="view-access" hidden>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <button class="btn btn-primary btn-sm" id="btnAccessKeyNew">
+              <svg class="wp-ico" aria-hidden="true"><use href="#ti-key"/></svg>新建接入 Key
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" id="btnRefreshAccessKeys">
+              <svg class="wp-ico" aria-hidden="true"><use href="#ti-refresh"/></svg>刷新
+            </button>
+            <span class="ms-auto small text-body-secondary align-self-center" id="accessKeysHint"></span>
+          </div>
+          <div class="card">
+            <div class="table-responsive">
+              <table class="table table-sm table-hover table-vcenter card-table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>名称</th><th>Key</th><th>可调用账号</th><th>可用模型</th>
+                    <th>状态</th><th>更新时间</th><th class="text-start">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="accessKeysBody">
+                  <tr><td colspan="7" class="text-center text-body-secondary py-4">加载中…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="small text-body-secondary mt-2">
+            每把 key 只能调用勾选的账号与模型：<strong>空列表 = 全部拒绝</strong>，保存时要求至少选一项
+            或勾选「全部」。key 明文保存在 <code>data/access-keys.json</code>（0600），可随时查看/复制；
+            停用或删除后下游立即 401。模型按 <code>/v1/models</code> 的完整 id 匹配（裸名等价 <code>cn:</code>，
+            跨域需分别勾选 <code>cn:</code> / <code>global:</code>）。
+          </div>
+        </section>
+
         <!-- 模型 -->
         <section id="view-models" hidden>
           <div class="d-flex gap-2 mb-3">
@@ -518,7 +553,7 @@
                   <p class="mb-2">国际版账号需要先完善注册地区、再领一次性 trial；这些在
                     <code>login.sh</code> 里由 <code>login save</code> 完成，本页只做「加号」这一步。</p>
                   <p class="mb-0">要求：<code>config.json</code> 里 <code>admin.enabled=true</code>。
-                    本页用的是**管理密码**，不是 <code>/v1</code> 的 <code>api_key</code>。</p>
+                    本页用的是**管理密码**，不是 <code>/v1</code> 的接入 key。</p>
                 </div>
               </div>
             </div>
@@ -620,6 +655,73 @@
           某日没有任何记录时三条线一律按 0 计；只有「今天」这一点用实时余额（账号当前积分 / 整池当前积分）。
           刻度与 tooltip 仍显示原始积分。
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 接入 key 编辑弹窗（新建 / 编辑）────────────────────────────── -->
+<div class="modal fade" id="accessKeyModal" tabindex="-1" aria-labelledby="accessKeyModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header align-items-start">
+        <div>
+          <h5 class="modal-title fs-6" id="accessKeyModalTitle">新建接入 Key</h5>
+          <div class="small text-body-secondary" id="accessKeyModalMeta"></div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-7">
+            <label class="form-label" for="akName">名称</label>
+            <input class="form-control form-control-sm" id="akName" maxlength="64" placeholder="如：团队 A / 个人工具">
+          </div>
+          <div class="col-md-5 d-flex align-items-end">
+            <div class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" id="akEnabled" checked>
+              <label class="form-check-label small" for="akEnabled">启用（关闭后下游立即 401）</label>
+            </div>
+          </div>
+          <div class="col-12" id="akSecretWrap" hidden>
+            <label class="form-label" for="akSecret">Key</label>
+            <div class="input-group input-group-sm">
+              <input class="form-control font-monospace" id="akSecret" readonly>
+              <button class="btn btn-outline-secondary" type="button" id="btnCopyAccessKey">复制</button>
+              <button class="btn btn-outline-warning" type="button" id="btnRegenerateAccessKey">重新生成</button>
+            </div>
+            <div class="form-text">重新生成后旧 key 立即失效；账号/模型授权保持不变。</div>
+          </div>
+
+          <div class="col-lg-6">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <label class="form-label mb-0">可调用账号</label>
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="akAllAccounts">
+                <label class="form-check-label small" for="akAllAccounts">全部账号</label>
+              </div>
+            </div>
+            <input class="form-control form-control-sm mb-2" id="akAccountFilter" placeholder="过滤昵称 / UID">
+            <div class="access-picker" id="akAccountList"></div>
+          </div>
+          <div class="col-lg-6">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <label class="form-label mb-0">可用模型</label>
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="akAllModels">
+                <label class="form-check-label small" for="akAllModels">全部模型</label>
+              </div>
+            </div>
+            <input class="form-control form-control-sm mb-2" id="akModelFilter" placeholder="过滤模型 ID / 描述">
+            <div class="access-picker" id="akModelList"></div>
+          </div>
+        </div>
+        <div class="alert alert-danger py-2 small mt-3 d-none" id="akError"></div>
+      </div>
+      <div class="modal-footer">
+        <span class="small text-body-secondary me-auto" id="akSelectionHint"></span>
+        <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-primary btn-sm" type="button" id="btnSaveAccessKey">保存</button>
       </div>
     </div>
   </div>
