@@ -179,6 +179,7 @@ func (r *Router) ResolveForModel(key, model string) (string, bool) {
 //     旧绑定会被判为"可用"而继续沿用；
 //  2. 事实上的重分配只能落在范围内；
 //  3. 首绑回调拿到的候选集已过滤，权重选号不会越界。
+//
 // scope=nil 与 ResolveForModel 逐位一致（开闭原则：新层不改旧层）。
 func (r *Router) ResolveForModelScoped(key, model string, scope Scope) (string, bool) {
 	return r.resolveForModel(key, model, scope)

@@ -17,7 +17,7 @@ func TestSuccessfulProbeClearsOnlyMissingModel(t *testing.T) {
 	p.SetDisabled("u1", true, "operator")
 	p.BlockModelBackoff("u1", "deepseek-v4.1-flash", "11102 model not available")
 	p.CooldownSoftForModel("u1", time.Minute, time.Now().Add(time.Hour), "glm-5.3", "6004 model rate limit")
-	h := NewHandler(Config{Pool: p, APIKey: "test", AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 	url := "/admin/accounts/u1/models/deepseek-v4.1-flash/available"
 	request := httptest.NewRequest("POST", url, nil)
 	rec := httptest.NewRecorder()
@@ -44,7 +44,7 @@ func TestProbeRecoveryDoesNotClearSameModelQuota(t *testing.T) {
 	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/admin/accounts/u1/models/deepseek-v4.1-flash/available", nil)
-	// 管理端点只认管理密码（"api_key 为空 = 不鉴权" 已不再适用于管理面）。
+	// 管理端点只认管理密码（下游接入 key 不能进管理面）。
 	req.Header.Set("Authorization", "Bearer "+testAdminPW)
 	h.ServeHTTP(rec, req)
 	st, _ := p.Status("u1")

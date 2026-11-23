@@ -64,7 +64,7 @@ func Resolve(path string) (raw []byte, source string, err error) {
 	} else {
 		log.Printf("WARNING: 找不到配置文件 %s，改用内置默认配置（%s）", path, EmbeddedSource)
 	}
-	log.Printf("WARNING: 下面所有配置项都取 %s 的值；正式运行请复制一份 %s 并按需修改（尤其 api_key）",
+	log.Printf("WARNING: 下面所有配置项都取 %s 的值；正式运行请复制一份 %s 并按需修改",
 		DefaultName, path)
 	return defaultConfig, EmbeddedSource, nil
 }

@@ -41,8 +41,8 @@ type cfgFile struct {
 
 // client 管理面客户端。
 //
-// 凭据是**管理密码**（首次打开后台时设置、只以哈希存于 data/config.json），不是 /v1 的 api_key：
-// 两者已彻底分离，拿 api_key 调 /admin/* 会被 401。密码来源：-password > WP_ADMIN_PASSWORD。
+// 凭据是**管理密码**（首次打开后台时设置、只以哈希存于 data/config.json），不是 /v1 的接入 key：
+// 两者已彻底分离，拿接入 key 调 /admin/* 会被 401。密码来源：-password > WP_ADMIN_PASSWORD。
 type client struct {
 	base     string
 	password string

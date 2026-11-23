@@ -134,24 +134,23 @@ func TestDefault(t *testing.T) {
 func TestLoadFile(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"listen":":9999","api_key":"k"}`), 0o600)
+	os.WriteFile(fp, []byte(`{"listen":":9999"}`), 0o600)
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != ":9999" || c.APIKey != "k" {
+	if c.Listen != ":9999" {
 		t.Errorf("c=%+v", c)
 	}
 }
 
 func TestEnvOverride(t *testing.T) {
 	t.Setenv("WP_LISTEN", ":7777")
-	t.Setenv("WP_API_KEY", "envkey")
 	c, err := Load("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != ":7777" || c.APIKey != "envkey" {
+	if c.Listen != ":7777" {
 		t.Errorf("c=%+v", c)
 	}
 }
@@ -792,7 +791,7 @@ func TestPromptEnvOverride(t *testing.T) {
 func TestPromptLegacyConfigNoImpact(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"listen":":9999","api_key":"k"}`), 0o600)
+	os.WriteFile(fp, []byte(`{"listen":":9999"}`), 0o600)
 	c, err := Load(fp)
 	if err != nil {
 		t.Fatal(err)

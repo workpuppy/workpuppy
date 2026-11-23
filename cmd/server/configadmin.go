@@ -88,9 +88,6 @@ func (s *configStore) effective(doc map[string]any) (*Config, []server.ConfigFie
 
 // fieldPathOf 从 normalize 的错误文案里猜字段路径（"pool.breaker_cooldown: ..."）。
 func fieldPathOf(msg string) string {
-	if strings.Contains(msg, "api_key 为空") {
-		return "admin.enabled"
-	}
 	if i := strings.Index(msg, ":"); i > 0 {
 		prefix := strings.TrimSpace(msg[:i])
 		if _, ok := configschema.Lookup(prefix); ok {
@@ -100,7 +97,7 @@ func fieldPathOf(msg string) string {
 	return ""
 }
 
-// writeCfg 整份原子落盘（0600：文件里有 api_key 与密码哈希）。
+// writeCfg 整份原子落盘（0600：文件里有管理密码哈希）。
 func (s *configStore) writeCfg(cfg *Config) error {
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

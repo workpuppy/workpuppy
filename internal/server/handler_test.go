@@ -1452,11 +1452,11 @@ func TestModelsDynamicPreservesBodies(t *testing.T) {
 
 }
 
-func TestAPIKeyAuth(t *testing.T) {
+func TestAccessKeyAuth(t *testing.T) {
 	h := NewHandler(Config{
-		Pool:     testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
-		Upstream: upstream.New(),
-		APIKey:   "secret",
+		Pool:       testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
+		Upstream:   upstream.New(),
+		AccessKeys: testAccessKeys("test-secret"),
 	})
 	// 无 key
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -1475,7 +1475,7 @@ func TestAPIKeyAuth(t *testing.T) {
 	}
 	// 对 key（请求会继续打到上游，但此处上游 client 会失败 —— 只要不是 401 就行）
 	req = httptest.NewRequest("GET", "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Authorization", "Bearer test-secret")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -1483,26 +1483,26 @@ func TestAPIKeyAuth(t *testing.T) {
 	}
 }
 
-// TestAPIKeyAuthConstantTime Bearer 比较的边界回归（P2-8，发现 7）：
+// TestAccessKeyAuthConstantTime Bearer 比较的边界回归（P2-8，发现 7）：
 // 正确 key 通过；错误/空/前缀相同但长度不同一律 401。
-// 常量时间属性（subtle.ConstantTimeCompare）本身无法用单元测试观测，
-// 此处锁的是行为等价——换实现前后四条断言必须同样成立。
-func TestAPIKeyAuthConstantTime(t *testing.T) {
+// 常量时间属性（accesskey.Store.Lookup 的 subtle.ConstantTimeCompare）本身无法用
+// 单元测试观测，此处锁的是行为等价——换实现前后四条断言必须同样成立。
+func TestAccessKeyAuthConstantTime(t *testing.T) {
 	h := NewHandler(Config{
-		Pool:     testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
-		Upstream: upstream.New(),
-		APIKey:   "secret",
+		Pool:       testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
+		Upstream:   upstream.New(),
+		AccessKeys: testAccessKeys("test-secret"),
 	})
 	cases := []struct {
 		name string
 		bear string // 完整 Authorization 头（不含 "Bearer " 前缀则按原样发）
 		want int
 	}{
-		{"correct key", "secret", 200},
+		{"correct key", "test-secret", 200},
 		{"wrong key", "wrong", 401},
 		{"empty key", "", 401},
-		{"same prefix longer", "secret-extra", 401},
-		{"same prefix shorter", "sec", 401},
+		{"same prefix longer", "test-secret-extra", 401},
+		{"same prefix shorter", "test-sec", 401},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1889,12 +1889,12 @@ func TestHealthzServiceIdentity(t *testing.T) {
 }
 
 // TestHealthzServiceIdentityWithoutAuth /healthz 保持无鉴权（负载均衡友好）：
-// 配了 api_key 也不要求 Bearer，身份字段照常返回。
+// 即便配置了接入 key 也不要求 Bearer，身份字段照常返回。
 func TestHealthzServiceIdentityWithoutAuth(t *testing.T) {
 	h := NewHandler(Config{
-		Pool:     testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
-		Upstream: upstream.New(),
-		APIKey:   "secret",
+		Pool:       testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
+		Upstream:   upstream.New(),
+		AccessKeys: testAccessKeys("test-secret"),
 	})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
@@ -1908,7 +1908,7 @@ func TestHealthzServiceIdentityWithoutAuth(t *testing.T) {
 
 func TestStatusRequiresAuth(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1", Nickname: "nick", AccessToken: "at", ExpiresAt: 9999999999})
-	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: "secret"})
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: testAccessKeys("test-secret")})
 
 	// 无 token → 401
 	rec := httptest.NewRecorder()
@@ -1920,7 +1920,7 @@ func TestStatusRequiresAuth(t *testing.T) {
 	// 带 token → 200
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/status", nil)
-	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Authorization", "Bearer test-secret")
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
 		t.Errorf("with token: code=%d", rec.Code)

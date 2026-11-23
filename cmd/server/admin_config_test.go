@@ -6,41 +6,40 @@ import (
 	"testing"
 )
 
-// 新模型：管理面鉴权独立于 api_key（改用管理员密码哈希），所以
-// admin.enabled=true 且 api_key 为空**不再**拒绝启动 —— 否则首次初始化
-// （用户还没填 api_key）会直接起不来。
-func TestAdminEnabledWithoutAPIKeyAllowed(t *testing.T) {
+// 管理面鉴权只认管理员密码哈希，与下游接入 key（data/access-keys.json）完全分离，
+// 所以 admin.enabled=true 时配置文件里**没有任何密钥字段**也必须能启动。
+func TestAdminEnabledWithoutAnyKeyOK(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	if err := os.WriteFile(fp, []byte(`{"api_key":"","admin":{"enabled":true}}`), 0o600); err != nil {
+	if err := os.WriteFile(fp, []byte(`{"admin":{"enabled":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c, err := Load(fp)
 	if err != nil {
-		t.Fatalf("admin.enabled=true + 空 api_key 应允许启动: %v", err)
+		t.Fatalf("admin.enabled=true 且无任何密钥字段应允许启动: %v", err)
 	}
 	if !c.Admin.Enabled {
 		t.Fatal("admin.enabled 应为 true")
 	}
 }
 
-// admin.enabled=true 且 api_key 非空：同样正常（对照组）。
-func TestAdminEnabledWithKeyOK(t *testing.T) {
+// admin 未开时同样没有密钥字段：合法。
+func TestAdminDisabledOK(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"api_key":"k","admin":{"enabled":true}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"admin":{"enabled":false}}`), 0o600)
 	if _, err := Load(fp); err != nil {
-		t.Fatalf("admin 开 + key 非空应通过: %v", err)
+		t.Fatalf("admin 关应通过: %v", err)
 	}
 }
 
-// admin 未开时空 api_key 仍合法。
-func TestAdminDisabledWithoutKeyOK(t *testing.T) {
+// 旧版的 api_key 键已退役：作为 JSON 未知键被忽略（启动日志会点名），不影响加载。
+func TestLegacyAPIKeyIgnored(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"api_key":"","admin":{"enabled":false}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"api_key":"legacy","admin":{"enabled":true}}`), 0o600)
 	if _, err := Load(fp); err != nil {
-		t.Fatalf("admin 关 + 空 key 应通过: %v", err)
+		t.Fatalf("退役的 api_key 应被忽略而不是报错: %v", err)
 	}
 }
 
@@ -48,7 +47,7 @@ func TestAdminDisabledWithoutKeyOK(t *testing.T) {
 func TestAdminEnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "c.json")
-	os.WriteFile(fp, []byte(`{"api_key":"k","admin":{"enabled":false}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"admin":{"enabled":false}}`), 0o600)
 
 	t.Setenv("WP_ADMIN_ENABLED", "true")
 	c, err := Load(fp)
@@ -59,7 +58,7 @@ func TestAdminEnvOverride(t *testing.T) {
 		t.Error("WP_ADMIN_ENABLED=true 应开启 admin")
 	}
 
-	os.WriteFile(fp, []byte(`{"api_key":"k","admin":{"enabled":true}}`), 0o600)
+	os.WriteFile(fp, []byte(`{"admin":{"enabled":true}}`), 0o600)
 	t.Setenv("WP_ADMIN_ENABLED", "false")
 	c, err = Load(fp)
 	if err != nil {

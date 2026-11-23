@@ -70,7 +70,6 @@ func newConfigTestHandler(t *testing.T, store ConfigStore) *Handler {
 		t.Fatal(err)
 	}
 	return NewHandler(Config{
-		APIKey:       "api-key",
 		AdminAuth:    store0,
 		AdminEnabled: false, // 首次安装：管理面还没打开
 		ConfigStore:  store,

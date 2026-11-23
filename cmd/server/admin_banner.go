@@ -22,7 +22,7 @@ func printAdminBanner(store *adminauth.Store, listen, configPath string) {
 			"  管理后台: %s\n"+
 			"  管理密码: 已初始化（哈希存于 %s 的 admin.password）\n"+
 			"  忘记密码: 删除该字段后重启 → 页面会重新引导初始化\n"+
-			"  提示: /v1 与 /status 仍用 config.json 的 api_key，与本密码相互独立。\n"+
+			"  提示: /v1 与 /status 用「接入映射」里创建的 key（Bearer），与本密码相互独立。\n"+
 			"============================================================",
 			url, configPath)
 		return
@@ -33,7 +33,7 @@ func printAdminBanner(store *adminauth.Store, listen, configPath string) {
 		"  管理密码: 尚未初始化\n"+
 		"  下一步:   用浏览器打开上面的地址，按页面提示设置管理员密码\n"+
 		"            （设置成功后写入 %s 的 admin.password，并自动开启管理面）\n"+
-		"  提示: /v1 与 /status 仍用 config.json 的 api_key，与本密码相互独立。\n"+
+		"  提示: /v1 与 /status 用「接入映射」里创建的 key（Bearer），与本密码相互独立。\n"+
 		"============================================================",
 		url, configPath)
 }

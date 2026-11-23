@@ -23,7 +23,7 @@ func TestUIMountedDoesNotShadowAPI(t *testing.T) {
 	h := NewHandler(Config{
 		Pool:         p,
 		Upstream:     upstream.New(),
-		APIKey:       testAPIKey,
+		AccessKeys:   testAccessKeys(testAPIKey),
 		AdminAuth:    adminauth.MustNew(testAdminPW),
 		AdminEnabled: true,
 		UI:           webui.Handler(),
@@ -48,11 +48,11 @@ func TestUIMountedDoesNotShadowAPI(t *testing.T) {
 		// 不被后台页面接管。
 		{name: "存活探测仍无鉴权", method: http.MethodGet, path: "/healthz", want: http.StatusServiceUnavailable, bodyHas: `"service"`},
 		{name: "状态接口仍要鉴权", method: http.MethodGet, path: "/status", want: http.StatusUnauthorized},
-		{name: "状态接口带 api_key 走 JSON", method: http.MethodGet, path: "/status", auth: "api", want: http.StatusOK, bodyHas: `"accounts"`},
+		{name: "状态接口带接入 key 走 JSON", method: http.MethodGet, path: "/status", auth: "api", want: http.StatusOK, bodyHas: `"accounts"`},
 		{name: "网关入口不被页面吞掉", method: http.MethodPost, path: "/v1/chat/completions", want: http.StatusUnauthorized},
 		{name: "模型列表走 API", method: http.MethodGet, path: "/v1/models", auth: "api", want: http.StatusOK, bodyHas: `"object"`},
 		{name: "管理面要管理密码", method: http.MethodGet, path: "/admin/accounts", want: http.StatusUnauthorized},
-		{name: "管理面不接受 api_key", method: http.MethodGet, path: "/admin/accounts", auth: "api", want: http.StatusUnauthorized},
+		{name: "管理面不接受接入 key", method: http.MethodGet, path: "/admin/accounts", auth: "api", want: http.StatusUnauthorized},
 		{name: "管理面接受管理密码", method: http.MethodGet, path: "/admin/accounts", auth: "admin", want: http.StatusOK, bodyHas: `"accounts"`},
 		{name: "管理状态只认管理密码", method: http.MethodGet, path: "/admin/status", auth: "api", want: http.StatusUnauthorized},
 		{name: "管理状态走管理密码", method: http.MethodGet, path: "/admin/status", auth: "admin", want: http.StatusOK, bodyHas: `"sticky_sessions"`},
@@ -87,7 +87,7 @@ func TestUIMountedDoesNotShadowAPI(t *testing.T) {
 func TestNoUIKeepsRoot404(t *testing.T) {
 	p := pool.New("")
 	t.Cleanup(p.Close)
-	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: "k"})
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New()})
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))

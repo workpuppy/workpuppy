@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"wp/internal/accesskey"
 	"wp/internal/adminauth"
 	"wp/internal/auth"
 	"wp/internal/creditledger"
@@ -47,8 +47,11 @@ type Config struct {
 	// CreditFloor 保底积分（issue #364）：低于该值的账号只作最后候选；0 = 关闭。
 	CreditFloor int64
 	Upstream    *upstream.Client
-	APIKey      string // 空 = 不鉴权
-	MaxRotate   int    // 单请求最多换号次数，默认 3
+	// AccessKeys 下游接入 key 存储（data/access-keys.json）。数据面 /v1、/status
+	// 只认它；nil = 未接线（测试/纯内部嵌入，不做数据面鉴权）。生产入口恒注入
+	// 非 nil 存储——空文件也是空存储 → 一律 401（不再有 config.api_key 的"空 = 不鉴权"）。
+	AccessKeys *accesskey.Store
+	MaxRotate  int // 单请求最多换号次数，默认 3
 	// Session 会话粘性路由器（可选；nil = 关闭粘性，纯 Pick 轮换）。
 	Session *session.Router
 	// StickyCount 返回当前粘性会话绑定数（供 /status）；nil 时报告 0。
@@ -90,8 +93,8 @@ type Config struct {
 	// Credits 积分日账本（nil = 未接线，/admin/credit-daily 回 501）。
 	Credits *creditledger.Ledger
 
-	// AdminAuth 管理面凭据（加盐 10 轮 SHA256 哈希，存于 data/config.json）。与 APIKey 完全分离：
-	// 管理端点只认它，且它未初始化时一律拒绝（绝不放行）。
+	// AdminAuth 管理面凭据（加盐 10 轮 SHA256 哈希，存于 data/config.json）。与数据面的
+	// 接入 key 完全分离：管理端点只认它，且它未初始化时一律拒绝（绝不放行）。
 	AdminAuth *adminauth.Store
 
 	// UI 管理后台静态界面（internal/webui）。挂在 `GET /`（catch-all）上：
@@ -269,11 +272,11 @@ func NewHandler(cfg Config) *Handler {
 	h := &Handler{cfg: cfg, mux: http.NewServeMux(), largeUsed: make(map[string][]time.Time)}
 	h.adminLoginLimit.fail = make(map[string][]time.Time)
 	h.adminEnabled.Store(cfg.AdminEnabled)
-	h.mux.HandleFunc("POST /v1/chat/completions", h.withAuth(h.chatCompletions))
-	h.mux.HandleFunc("GET /v1/models", h.withAuth(h.models))
-	h.mux.HandleFunc("GET /status", h.withAuth(h.status))
-	h.mux.HandleFunc("GET /v1/stats", h.withAuth(h.stats))
-	h.mux.HandleFunc("POST /v1/stats/reset", h.withAuth(h.statsReset))
+	h.mux.HandleFunc("POST /v1/chat/completions", h.withAccessKey(h.chatCompletions))
+	h.mux.HandleFunc("GET /v1/models", h.withAccessKey(h.models))
+	h.mux.HandleFunc("GET /status", h.withAccessKey(h.status))
+	h.mux.HandleFunc("GET /v1/stats", h.withAccessKey(h.stats))
+	h.mux.HandleFunc("POST /v1/stats/reset", h.withAccessKey(h.statsReset))
 	// 运维管理端点。**始终注册**，是否可见由 adminEnabled 在 ServeHTTP 里判定：
 	// 这样设置页把 admin.enabled 打开后立刻可用（不需要重启）；关闭时对 /admin/*
 	// 统一回"mux 同款"纯文本 404，探测面与未注册路由一致。
@@ -286,9 +289,17 @@ func NewHandler(cfg Config) *Handler {
 	h.mux.HandleFunc("GET /admin/config", h.withAdminAuth(h.adminConfigGet))
 	h.mux.HandleFunc("PUT /admin/config", h.withAdminAuth(h.adminConfigPut))
 	h.mux.HandleFunc("POST /admin/config/reset", h.withAdminAuth(h.adminConfigReset))
-	// 管理面**只认管理密码**（adminauth.Store），与 /v1 的 api_key 彻底分离：
+	// 管理面**只认管理密码**（adminauth.Store），与 /v1 的接入 key 彻底分离：
 	// 下游手里的 key 不再附带停号/加号/看全量账号的能力。
 	h.mux.HandleFunc("GET /admin/status", h.withAdminAuth(h.adminStatus))
+	// 接入映射：下游 key 的增删改查（每把 key 独立的账号/模型白名单）。
+	h.mux.HandleFunc("GET /admin/access-keys", h.withAdminAuth(h.adminAccessKeys))
+	h.mux.HandleFunc("POST /admin/access-keys", h.withAdminAuth(h.adminAccessKeyCreate))
+	h.mux.HandleFunc("PUT /admin/access-keys/{id}", h.withAdminAuth(h.adminAccessKeyUpdate))
+	h.mux.HandleFunc("DELETE /admin/access-keys/{id}", h.withAdminAuth(h.adminAccessKeyDelete))
+	h.mux.HandleFunc("POST /admin/access-keys/{id}/enable", h.withAdminAuth(h.adminAccessKeyEnable))
+	h.mux.HandleFunc("POST /admin/access-keys/{id}/disable", h.withAdminAuth(h.adminAccessKeyDisable))
+	h.mux.HandleFunc("POST /admin/access-keys/{id}/regenerate", h.withAdminAuth(h.adminAccessKeyRegenerate))
 	// 概览页轮询用的聚合快照（status + credits，只读内存/落盘缓存，不碰上游）。
 	h.mux.HandleFunc("GET /admin/overview", h.withAdminAuth(h.adminOverview))
 	h.mux.HandleFunc("POST /admin/accounts/{uid}/disable", h.withAdminAuth(h.adminAccountDisable))
@@ -334,23 +345,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
-func (h *Handler) withAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if h.cfg.APIKey != "" {
-			authz := r.Header.Get("Authorization")
-			// 常量时间比较（发现 7）：!= 短路时序随前缀长度变化，公网暴露下
-			// 理论上可逐字节探测 key 前缀；ConstantTimeCompare 消除该信号。
-			provided := strings.TrimPrefix(authz, "Bearer ")
-			if !strings.HasPrefix(authz, "Bearer ") ||
-				subtle.ConstantTimeCompare([]byte(provided), []byte(h.cfg.APIKey)) != 1 {
-				writeOpenAIError(w, http.StatusUnauthorized, "invalid_api_key", "missing or invalid API key")
-				return
-			}
-		}
-		next(w, r)
-	}
-}
-
 func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
 	total, healthy, _, _, _ := h.cfg.Pool.CountsDetailed()
 	// 用 ServableNow 判定：healthy>0 但全占满在途时 chat 会 503，探活必须同口径，
@@ -376,12 +370,17 @@ func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, h.statusPayload())
+	writeJSON(w, http.StatusOK, h.statusPayloadScoped(scopeOfKey(accessKeyOf(r))))
 }
 
-// statusPayload 组装 /status 响应体（数据面与 /admin/status 共用，避免两份口径）。
-func (h *Handler) statusPayload() map[string]any {
-	total, healthy, cooling, disabled, inFlightFull := h.cfg.Pool.CountsDetailed()
+// statusPayload 组装全量 /status 响应体（管理面 /admin/status 使用）。
+func (h *Handler) statusPayload() map[string]any { return h.statusPayloadScoped(nil) }
+
+// statusPayloadScoped 组装可选的账号范围视图：数据面按接入 key 的账号白名单收缩，
+// 管理面传 nil 看全池。账号列表与汇总数必须用**同一个 scope**——只缩列表不缩汇总，
+// 下游会看到「0 个账号却有 N 个 healthy」的自相矛盾快照。
+func (h *Handler) statusPayloadScoped(scope pool.Scope) map[string]any {
+	total, healthy, cooling, disabled, inFlightFull := h.cfg.Pool.CountsDetailedScoped(scope)
 	sticky := 0
 	if h.cfg.StickyCount != nil {
 		sticky = h.cfg.StickyCount()
@@ -397,15 +396,15 @@ func (h *Handler) statusPayload() map[string]any {
 	// realm_totals 按域分组的计数汇总（双 realm 并存时运维一眼看到各域可用性）：
 	// 只新增字段，既有 total/healthy/cooling/disabled/in_flight_full 汇总键不变（零回归）。
 	return map[string]any{
-		"accounts":       h.cfg.Pool.List(),
+		"accounts":       h.cfg.Pool.ListScoped(scope),
 		"total":          total,
 		"healthy":        healthy,
 		"cooling":        cooling,
 		"disabled":       disabled,
 		"in_flight_full": inFlightFull,
 		"realm_totals": map[string]map[string]int{
-			"cn":     countsMapFrom(h.cfg.Pool.CountsDetailedForRealm("cn")),
-			"global": countsMapFrom(h.cfg.Pool.CountsDetailedForRealm("global")),
+			"cn":     countsMapFrom(h.cfg.Pool.CountsDetailedForRealmScoped("cn", scope)),
+			"global": countsMapFrom(h.cfg.Pool.CountsDetailedForRealmScoped("global", scope)),
 		},
 		"sticky_sessions": sticky,
 		"redis_mode":      redisMode,
@@ -442,10 +441,11 @@ const (
 )
 
 // models 返回模型列表：纯动态（缓存 1h），失败/无号返回空列表（无静态兜底）。
+// 数据面按接入 key 的模型白名单过滤：只列该 key 真正可调用的模型。
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
-		"data":   h.modelList(),
+		"data":   h.modelListFor(accessKeyOf(r)),
 	})
 }
 
@@ -553,15 +553,28 @@ func applyModelInfoFields(entry map[string]any, mi upstream.ModelInfo) map[strin
 	return entry
 }
 
-// modelList 动态获取模型列表并包装成 OpenAI 格式（含 context_length）。
+// modelList 返回全量模型清单（管理面「模型」页与测试台使用，不受接入 key 限制）。
+func (h *Handler) modelList() []map[string]any { return h.modelListFor(nil) }
+
+// modelAllowed 判断某模型 id 是否对 key 可见：nil key（管理面）恒真。
+func modelAllowed(k *accesskey.Key, id string) bool {
+	return k == nil || k.AllowsModel(id)
+}
+
+// modelListFor 动态获取模型列表并包装成 OpenAI 格式（含 context_length）。
 // CN 模型输出统一加 "cn:" 前缀（gateway 路由协议，与 resolveModel 对称）。
 // 纯动态：动态拉取失败/无号 → 该域空列表，无静态兜底；
 // global.enabled=false（显式逃生门）时只列 CN（global 名单不出现）。
-func (h *Handler) modelList() []map[string]any {
+// key 非空时按它的模型白名单过滤（含 cn:/global: 完整 id；裸名等价 cn:）。
+func (h *Handler) modelListFor(k *accesskey.Key) []map[string]any {
 	out := make([]map[string]any, 0)
 	for _, mi := range h.fetchDynamicModels() {
+		id := "cn:" + mi.ID
+		if !modelAllowed(k, id) {
+			continue
+		}
 		entry := map[string]any{
-			"id":       "cn:" + mi.ID,
+			"id":       id,
 			"object":   "model",
 			"created":  1753600000,
 			"owned_by": "workbuddy",
@@ -605,8 +618,12 @@ func (h *Handler) modelList() []map[string]any {
 		}
 		globalEfforts, globalDefaults := h.cfg.Upstream.GlobalEffortSnapshot()
 		for _, id := range globalIDs {
+			fullID := "global:" + id
+			if !modelAllowed(k, fullID) {
+				continue
+			}
 			entry := map[string]any{
-				"id":       "global:" + id,
+				"id":       fullID,
 				"object":   "model",
 				"created":  1753600000,
 				"owned_by": "workbuddy",
@@ -746,6 +763,18 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 裸名 → ("cn", 原串)，CN 现状零回归。
 	realm, bareModel := resolveModel(peek.Model)
 
+	// 接入 key 的模型白名单：越权模型在**任何上游调用之前**拒绝（404，OpenAI 客户端
+	// 按"模型不存在"处理）；文案点明是 key 授权范围，避免误判为上游模型下线。
+	// scope 随后贯穿选号/粘性/兜底：nil=不限（管理面测试台），空集合=一把都不允许。
+	key := accessKeyOf(r)
+	if key != nil && !key.AllowsModel(peek.Model) {
+		writeOpenAIErrorHint(w, http.StatusNotFound, "model_not_found",
+			"model is not enabled for this access key: "+peek.Model,
+			"该模型未授权给当前接入 key：到管理后台「接入映射」勾选后重试，或改用已授权模型")
+		return
+	}
+	scope := scopeOfKey(key)
+
 	// 请求级统计：出口即打一行表格日志（任何路径都会走到）。
 	st := newChatStat(time.Now(), body, peek.Stream)
 	defer st.done()
@@ -768,15 +797,26 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if stickyKey == "" {
 		stickyKey = session.StickyFallbackKey(body)
 	}
+	// 接入 key 命名空间：不同 key 的同一段对话必须各自绑定。否则 key A 建立的绑定
+	// 会被 key B 命中，而 B 的账号范围可能不含该号（随后重分配又会污染 A 的绑定），
+	// 既破坏粘性也造成无谓换号。无 key 的内部调用（管理面测试台）保持原键。
+	bindKey := stickyKey
+	if stickyKey != "" && key != nil {
+		bindKey = "ak:" + key.ID + ":" + stickyKey
+	}
 	stickyUID := ""
-	if h.cfg.Session != nil && stickyKey != "" {
+	if h.cfg.Session != nil && bindKey != "" {
 		// 传给 ResolveForModel 的是**完整**模型名（peek.Model，含 realm 前缀）。
 		// 粘性命中校验走 injected AvailableForModel 闭包 → 闭包内部 resolveModel 剥前缀
 		// 得 realm+bare，再按 realm 过滤可用集合。若传已剥前缀的 bareModel，闭包对裸名
 		// 恒剥出 realm=cn，跨 realm 粘性会话会被错误钉回 CN 集合；完整前缀才能让
 		// 闭包正确过滤到 global 集合（见 cmd/server/wiring.go realmAwareAvailableForModel）。
 		// 模型名也参与成本账本与选号过滤，不能用 "-" 占位污染模型键。
-		if uid, ok := h.cfg.Session.ResolveForModel(stickyKey, peek.Model); ok {
+		if key != nil {
+			if uid, ok := h.cfg.Session.ResolveForModelScoped(bindKey, peek.Model, scope); ok {
+				stickyUID = uid
+			}
+		} else if uid, ok := h.cfg.Session.ResolveForModel(bindKey, peek.Model); ok {
 			stickyUID = uid
 		}
 	}
@@ -809,7 +849,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 幂等：stickyUID 已空则空操作；不会误解绑其他轮的绑定。仅当 Session != nil 时 stickyUID 才会非空。
 	unbindSticky := func() {
 		if stickyUID != "" {
-			h.cfg.Session.Unbind(stickyKey)
+			h.cfg.Session.Unbind(bindKey)
 			stickyUID = ""
 		}
 	}
@@ -919,14 +959,15 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < h.cfg.MaxRotate; i++ {
 		// 选号：粘性号优先（PickByUIDForModel 已校验该模型可用性 + 在途未满），否则普通轮换。
 		var acct *auth.Auth
-		if forcedUID != "" && !tried[forcedUID] {
+		if forcedUID != "" && !tried[forcedUID] &&
+			(scope == nil || scope.Allows(forcedUID)) {
 			if cand := h.cfg.Pool.PickByUIDForModel(forcedUID, bareModel); cand != nil &&
 				(realm == "" || cand.Realm() == realm) {
 				acct = cand
 			}
 		}
 		if acct == nil && stickyUID != "" && !(budgetMode && hotAccounts[stickyUID]) {
-			acct = h.cfg.Pool.PickByUIDForModel(stickyUID, bareModel)
+			acct = h.cfg.Pool.PickByUIDForModelScoped(stickyUID, bareModel, scope)
 			if acct == nil || (realm != "" && acct.Realm() != realm) {
 				// 粘性号在当前模型不可用（冷却/占满/该模型被 6004 限额）或 realm 不符 → 解绑。
 				unbindSticky()
@@ -947,10 +988,10 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			acct = h.cfg.Pool.PickExcludingForRealm(pickTried, bareModel, realm)
+			acct = h.cfg.Pool.PickExcludingForRealmScoped(pickTried, bareModel, realm, scope)
 			if acct == nil && (rotateMode || budgetMode) {
 				// 所有号都在大请求窗口内：退化普通轮换，避免直接 503。
-				acct = h.cfg.Pool.PickExcludingForRealm(tried, bareModel, realm)
+				acct = h.cfg.Pool.PickExcludingForRealmScoped(tried, bareModel, realm, scope)
 			}
 		}
 		// 记账在选号之后统一做：粘性路径同样要计数，否则「一直粘同一个号」永远不会
@@ -971,7 +1012,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			// 只要另一个 realm 还有账号，全池判据就永远非空，自愈永不触发；而本次请求
 			// 的 realm 池已被负缓存全挡，于是固定 503（换任何模型都一样，逐个被打成
 			// 负缓存）。realm 为空时该变体退化为全池语义，单 realm 部署行为不变。
-			if !modelBlocksCleared && bareModel != "" && len(h.cfg.Pool.AvailableUIDsForModelRealm(bareModel, realm)) == 0 {
+			if !modelBlocksCleared && bareModel != "" && len(h.cfg.Pool.AvailableUIDsForModelRealmScoped(bareModel, realm, scope)) == 0 {
 				if n := h.cfg.Pool.ClearModelBlocks(bareModel); n > 0 {
 					modelBlocksCleared = true
 					tried = map[string]bool{}
@@ -1218,7 +1259,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		// 若 sticky 号失败、轮换到别的号成功，这里把会话重绑到新号，多轮对话下一跳不再随机抽。
 		// 大请求同样绑定：轮换关闭时必须让它吃到前缀缓存，否则长上下文每轮都整段重算。
 		if stickyKey != "" && h.cfg.Session != nil && !rotateMode {
-			h.cfg.Session.Bind(stickyKey, acct.UID)
+			h.cfg.Session.Bind(bindKey, acct.UID)
 		}
 		if peek.Stream {
 			// 流式：透传结束后立即关闭上游 body，避免 defer 在轮转场景下堆积 fd。

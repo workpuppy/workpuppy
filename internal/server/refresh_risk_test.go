@@ -12,7 +12,7 @@ import (
 func TestRefreshRiskAdminAuthAndIndependentRecovery(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	for _, enabled := range []bool{false, true} {
-		h := NewHandler(Config{Pool: p, APIKey: "key", AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: enabled})
+		h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: enabled})
 		for _, action := range []string{"refresh-risk", "refresh-risk/clear"} {
 			path := "/admin/accounts/u1/" + action
 			req := httptest.NewRequest("POST", path, strings.NewReader(`{"retry_after_sec":900}`))
@@ -27,7 +27,7 @@ func TestRefreshRiskAdminAuthAndIndependentRecovery(t *testing.T) {
 			}
 		}
 	}
-	h := NewHandler(Config{Pool: p, APIKey: "key", AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 	for _, action := range []string{"refresh-risk", "disable", "enable", "refresh-risk/clear"} {
 		req := httptest.NewRequest("POST", "/admin/accounts/u1/"+action, strings.NewReader(`{"retry_after_sec":900}`))
 		req.Header.Set("Authorization", "Bearer "+testAdminPW)

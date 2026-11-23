@@ -1,6 +1,5 @@
 {
   "listen": ":7863",
-  "api_key": "test_key",
   "auth_dir": "./auths",
   "state_file": "./data/state.json",
   "qrcode_ttl": "15m",

@@ -8,7 +8,8 @@
 #
 # 只想「摘掉下游流量、继续养号」请用休养（面板「休养」/ wpctl rest），不要禁用。
 #
-# 需 config 里 admin.enabled = true（且 api_key 非空）。CLI 参数原样透传 cmd/acct，
+# 需 config 里 admin.enabled = true；管理动作要 WP_ADMIN_PASSWORD（管理密码，
+# 不是下游接入 key），list 用 WP_API_KEY 或 data/access-keys.json 的启用 key。
 # 如 -config / -server 也支持：./acct.sh -server http://127.0.0.1:7863 list
 #
 # 二进制升级: go build -o acct ./cmd/acct

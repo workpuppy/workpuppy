@@ -349,11 +349,11 @@ func main() {
 		runSave(realm, parseRegionFlag(rest[1:]))
 
 	case "accounts":
-		// 重启容器后的收尾检查：打印当前账号数（读 config.json 的 api_key 打 /status）。
+		// 重启容器后的收尾检查：打印当前账号数（用接入 key 打 /status）。
 		runAccounts()
 
 	case "key":
-		// 打印 config.json 里的 api_key（运维脚本取值用；原脚本调 python3 读 JSON）。
+		// 打印一把可用的接入 key（运维脚本取值用；原脚本调 python3 读 JSON）。
 		runKey()
 
 	case "realm":

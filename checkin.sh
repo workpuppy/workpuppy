@@ -4,8 +4,8 @@
 # 不调 HTTP 签到接口：cmd/signin 已自带表格输出（uid/nick/status/remain/detail
 # + total=N ok=N already=N fail=N 汇总行）与 token 预刷新（NeedsRefresh(2h)），
 # 比包一层 HTTP 更完善。本脚本：
-#   1. 读 config.json 的端口与 api_key，调 GET /status 判网关活不死活
-#      （活着只是提示"定时签到已在网关侧运行"）；
+#   1. 读 config.json 的端口与同目录 access-keys.json 的启用 key，调 GET /status
+#      判网关活不死活（活着只是提示"定时签到已在网关侧运行"）；
 #   2. 核心动作 = 构建并执行 ./signin_bin auths，透传其已表格化的输出；
 #   3. -v 模式从表格里过滤出 fail 明细（FAIL/LOAD_ERR/AUTH_INVALID，已签到不计）。
 #
@@ -17,7 +17,8 @@
 # 依赖: go（需要时构建/重编 signin_bin）、curl、jq（jq 缺失时 /status 头部降级为原始 JSON）
 #
 # 环境变量:
-#   WP_CONFIG  配置文件路径（默认 ./config.json，读取端口与 api_key）
+#   WP_CONFIG  配置文件路径（默认 ./config.json，读取端口；key 取 WP_API_KEY
+#              或同目录 access-keys.json 的第一把启用 key）
 #   WP_URL     直接指定服务地址（如 http://1.2.3.4:7863），设置后忽略配置文件
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -43,14 +44,18 @@ fi
 HAS_JQ=1
 command -v jq >/dev/null 2>&1 || HAS_JQ=0
 
-# ─── 解析服务地址与密钥：优先 WP_URL，其次 config.json ──────────────────────
+# ─── 解析服务地址与密钥：优先 WP_URL，其次 config.json + access-keys.json ────
 CFG=${WP_CONFIG:-config.json}
 PORT=7863
-KEY=""
+KEY=${WP_API_KEY:-}
 if [[ -f "$CFG" ]] && [[ "$HAS_JQ" == "1" ]]; then
     LISTEN=$(jq -r '.listen // ":7863"' "$CFG")
     PORT=${LISTEN##*:}
-    KEY=$(jq -r '.api_key // ""' "$CFG")
+    # 下游 key 已迁到「接入映射」（与 config 同目录）；取第一把启用的用于 /status。
+    KEYFILE="$(dirname "$CFG")/access-keys.json"
+    if [[ -z "$KEY" ]] && [[ -f "$KEYFILE" ]]; then
+        KEY=$(jq -r '(.keys // []) | map(select(.enabled)) | .[0].key // ""' "$KEYFILE")
+    fi
 fi
 PORT=${PORT:-7863}
 BASE=${WP_URL:-http://localhost:$PORT}
@@ -75,7 +80,7 @@ if [[ -n "$RESP" ]]; then
         [[ -z "$GATEWAY_INFO" ]] && GATEWAY_INFO="网关在线（/status 200）"
     else
         case "$CODE" in
-            401) GATEWAY_INFO="网关鉴权失败（401）：api_key 与 config.json 不一致" ;;
+            401) GATEWAY_INFO="网关鉴权失败（401）：检查 WP_API_KEY 或 access-keys.json 里的启用 key" ;;
             000) GATEWAY_INFO="连不上 $BASE：服务未启动或端口不对" ;;
             *)   GATEWAY_INFO="网关 /status 异常（HTTP $CODE）" ;;
         esac

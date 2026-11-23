@@ -35,6 +35,40 @@ import (
 // 避免各自拼字面量（改名时只改这里）。
 const FileName = "access-keys.json"
 
+// PathFor 返回与配置文件同目录的接入 key 文件路径。
+//
+// 本地运维 CLI（stats / acct / login）按这个约定找 key：config.json 与
+// access-keys.json 同为 data 目录下的运行期数据，运维只需指定 -config 一处。
+func PathFor(configPath string) string {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return FileName
+	}
+	dir := filepath.Dir(configPath)
+	if dir == "" {
+		dir = "."
+	}
+	return filepath.Join(dir, FileName)
+}
+
+// FirstEnabledSecret 读取 path 指向的密钥文件并返回第一把启用 key 的明文。
+//
+// 仅供本地运维 CLI（/status、/v1/stats 这类只读视图）使用：它们只需要一把能通过
+// 数据面鉴权的 key，没有"选哪把"的业务语义。文件不存在/没有启用 key → 空串。
+// 网关进程自己不用这个函数（启动时整份 Load 进 Store）。
+func FirstEnabledSecret(path string) (string, error) {
+	st := New(path)
+	if err := st.Load(); err != nil {
+		return "", err
+	}
+	for _, k := range st.List() {
+		if k.Enabled {
+			return k.Key, nil
+		}
+	}
+	return "", nil
+}
+
 const (
 	fileVersion = 1
 	maxNameLen  = 64

@@ -17,8 +17,8 @@ import (
 	"wp/internal/upstream"
 )
 
-// 测试用的两套凭据：数据面（/v1、/status）用 apiKey，管理面用 adminPW。
-// 刻意取不同值——「拿 api_key 打 /admin」必须是 401，这是本次改动的核心断言。
+// 测试用的两套凭据：数据面（/v1、/status）用接入 key，管理面用 adminPW。
+// 刻意取不同值——「拿接入 key 打 /admin」必须是 401，这是本次改动的核心断言。
 const (
 	testAPIKey  = "v1-test-key"
 	testAdminPW = "admin-test-pw"
@@ -35,7 +35,7 @@ func newAdminHandler(t *testing.T, poolAccs []*auth.Auth, authDir string) *Handl
 	return NewHandler(Config{
 		Pool:         p,
 		Upstream:     upstream.New(),
-		APIKey:       testAPIKey,
+		AccessKeys:   testAccessKeys(testAPIKey),
 		AdminAuth:    adminauth.MustNew(testAdminPW),
 		AdminEnabled: true,
 		AuthDir:      authDir,
@@ -59,7 +59,7 @@ func adminReq(h *Handler, method, target string, body io.Reader) *httptest.Respo
 	return w
 }
 
-// apiKeyReq 发一次带**数据面 api_key** 的请求（用于证明它打不进管理面）。
+// apiKeyReq 发一次带**数据面接入 key** 的请求（用于证明它打不进管理面）。
 func apiKeyReq(h *Handler, method, target string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, target, nil)
 	r.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -84,7 +84,7 @@ func writeAuthFile(t *testing.T, dir, uid, nickname, realm string) string {
 func TestAdminRoutesAbsentWhenDisabled(t *testing.T) {
 	p := pool.New("")
 	defer p.Close()
-	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: testAPIKey})
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: testAccessKeys(testAPIKey)})
 
 	for _, target := range []string{"/admin/accounts", "/admin/models"} {
 		w := adminReq(h, http.MethodGet, target, nil)
@@ -104,17 +104,17 @@ func TestAdminMissingPasswordGets401(t *testing.T) {
 	}
 }
 
-// 核心断言：/v1 的 api_key **不能**用来进管理面（本次改动的目的就在这）。
-func TestAPIKeyCannotReachAdmin(t *testing.T) {
+// 核心断言：/v1 的接入 key **不能**用来进管理面（本次改动的目的就在这）。
+func TestAccessKeyCannotReachAdmin(t *testing.T) {
 	h := newAdminHandler(t, nil, "")
 
 	w := apiKeyReq(h, http.MethodGet, "/admin/accounts")
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("用 api_key 打 /admin/accounts 应 401，实际 %d（body=%s）", w.Code, w.Body.String())
+		t.Fatalf("用接入 key 打 /admin/accounts 应 401，实际 %d（body=%s）", w.Code, w.Body.String())
 	}
 	// 同一把 key 打数据面接口仍然正常（不能把 /v1 一起改坏）。
 	if w := apiKeyReq(h, http.MethodGet, "/status"); w.Code != http.StatusOK {
-		t.Fatalf("/status 用 api_key 应 200，实际 %d", w.Code)
+		t.Fatalf("/status 用接入 key 应 200，实际 %d", w.Code)
 	}
 	// 管理凭据打管理面正常。
 	if w := adminReq(h, http.MethodGet, "/admin/accounts", nil); w.Code != http.StatusOK {
@@ -122,14 +122,13 @@ func TestAPIKeyCannotReachAdmin(t *testing.T) {
 	}
 }
 
-// 管理凭据未初始化时**一律拒绝**（428 setup_required），绝不沿用
-// 「api_key 为空 = 不鉴权」；前端据此切到初始化向导。
+// 管理凭据未初始化时**一律拒绝**（428 setup_required）；前端据此切到初始化向导。
 func TestAdminRejectsWhenPasswordUninitialized(t *testing.T) {
 	p := pool.New("")
 	t.Cleanup(p.Close)
 	// 不传 AdminAuth（nil）：等价于"还没初始化"。
 	h := NewHandler(Config{
-		Pool: p, Upstream: upstream.New(), APIKey: testAPIKey, AdminEnabled: true,
+		Pool: p, Upstream: upstream.New(), AccessKeys: testAccessKeys(testAPIKey), AdminEnabled: true,
 	})
 
 	for _, tc := range []struct{ method, path string }{
@@ -169,7 +168,7 @@ func TestAdminStatusPayload(t *testing.T) {
 		t.Fatalf("/admin/status 应 200 且含 accounts，实际 %d %s", w.Code, w.Body.String())
 	}
 	if w := apiKeyReq(h, http.MethodGet, "/admin/status"); w.Code != http.StatusUnauthorized {
-		t.Fatalf("/admin/status 用 api_key 应 401，实际 %d", w.Code)
+		t.Fatalf("/admin/status 用接入 key 应 401，实际 %d", w.Code)
 	}
 }
 
@@ -280,7 +279,7 @@ func TestAdminPlaygroundForcedAccount(t *testing.T) {
 		}, nil
 	})}
 
-	h := NewHandler(Config{Pool: p, Upstream: up, APIKey: testAPIKey, AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
+	h := NewHandler(Config{Pool: p, Upstream: up, AccessKeys: testAccessKeys(testAPIKey), AdminAuth: adminauth.MustNew(testAdminPW), AdminEnabled: true})
 
 	payload := `{"model":"glm-5.2","messages":[{"role":"user","content":"ping"}]}`
 	w := adminReq(h, http.MethodPost, "/admin/playground/chat?uid=444", strings.NewReader(payload))
@@ -331,7 +330,7 @@ func TestAdminAuthStartPollWritesFile(t *testing.T) {
 	p := pool.New("")
 	t.Cleanup(p.Close)
 	h := NewHandler(Config{
-		Pool: p, Upstream: upstream.New(), APIKey: testAPIKey, AdminAuth: adminauth.MustNew(testAdminPW),
+		Pool: p, Upstream: upstream.New(), AccessKeys: testAccessKeys(testAPIKey), AdminAuth: adminauth.MustNew(testAdminPW),
 		AdminEnabled: true, AuthDir: dir, Login: login,
 	})
 
@@ -399,7 +398,7 @@ func TestAdminAuthPollRejectsBadUID(t *testing.T) {
 	dir := t.TempDir()
 	p := pool.New("")
 	t.Cleanup(p.Close)
-	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), APIKey: testAPIKey, AdminAuth: adminauth.MustNew(testAdminPW),
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: testAccessKeys(testAPIKey), AdminAuth: adminauth.MustNew(testAdminPW),
 		AdminEnabled: true, AuthDir: dir, Login: login})
 
 	w := adminReq(h, http.MethodGet, "/admin/auth/poll?state=s&realm=cn", nil)

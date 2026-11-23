@@ -1,12 +1,12 @@
 // admin_login.go 管理后台的登录与凭据校验。
 //
-// 与 /v1 彻底分离：`/v1`、`/status` 继续用 config.json 的 `api_key`（发给下游客户端
+// 与 /v1 彻底分离：`/v1`、`/status` 用「接入映射」里创建的受管 key（发给下游客户端
 // 的那把），管理面用**另一套凭据**——首次打开页面时由用户设置，只保存哈希。
 // 这样「下游手里的 key」不再附带停号/加号/看全量账号的权限。
 //
 // 三条硬约束（都有测试钉住）：
-//  1. 凭据未初始化时，管理面**一律拒绝**（428 setup_required），绝不沿用「api_key 为空 = 不鉴权」；
-//  2. 管理端点**只认** adminauth.Store，拿 api_key 打 /admin/* 必须 401；
+//  1. 凭据未初始化时，管理面**一律拒绝**（428 setup_required）；
+//  2. 管理端点**只认** adminauth.Store，拿下游接入 key 打 /admin/* 必须 401；
 //  3. 登录失败要有限速（内存窗口），避免把密码跑成在线爆破靶子。
 package server
 
@@ -136,9 +136,9 @@ func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 
 // withAdminAuth 管理端点的鉴权：只认 adminauth.Store 里的密码。
 //
-// 注意与 withAuth（数据面）的区别：那个在 api_key 为空时**放行**（上游既有语义：
-// 不设 key 就是不鉴权）；这里恰恰相反 —— 未配置凭据一律拒绝。管理面能停号、
-// 能加号、能看全量账号，任何"漏配即裸奔"的默认值都不可接受。
+// 注意与 withAccessKey（数据面）的区别：那个要求请求携带「接入映射」里启用的 key；
+// 本包装器只认 adminauth.Store，两套凭据不互相降级。未配置管理密码时一律拒绝——
+// 管理面能停号、能加号、能看全量账号，任何"漏配即裸奔"的默认值都不可接受。
 func (h *Handler) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !h.cfg.AdminAuth.Configured() {
@@ -159,7 +159,7 @@ func (h *Handler) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // adminStatus GET /admin/status —— 与 /status 同形，但走管理凭据。
 //
-// 为什么单独开一个：/status 是**数据面**接口（下游用 api_key 调，做自己的监控），
+// 为什么单独开一个：/status 是**数据面**接口（下游用接入 key 调，做自己的监控），
 // 管理后台不该为了看池子而去拿下游密钥。两者共用同一份 payload 构造，口径不会漂。
 func (h *Handler) adminStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.statusPayload())

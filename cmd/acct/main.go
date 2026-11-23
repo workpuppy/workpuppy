@@ -8,8 +8,12 @@
 //
 // 配置:
 //
-//	-config 配置路径（默认 config.json），从中读 listen 与 api_key
+//	-config 配置路径（默认 config.json），从中读 listen；接入 key 取 WP_API_KEY
+//	        或同目录 access-keys.json 的第一把启用 key
 //	-server 直接指定网关地址（覆盖 config 的 listen），如 http://127.0.0.1:7863
+//
+// 管理动作（disable/enable）用**管理密码**（WP_ADMIN_PASSWORD），不是下游接入 key：
+// 两套凭据自 /admin 分离后就不相通，拿接入 key 打管理面必然 401。
 //
 // 为什么走 HTTP 而不是直接改 state.json：禁用状态是**运行中进程的内存状态**，
 // 由池的定时 flush 落盘（5s 周期）。外部直接改文件会在下一次 flush 被覆盖——
@@ -32,6 +36,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"wp/internal/accesskey"
 )
 
 type accountStatus struct {
@@ -56,7 +62,6 @@ type adminState struct {
 // configWire 只声明本工具需要的字段（避免耦合完整配置结构）。
 type configWire struct {
 	Listen string `json:"listen"`
-	APIKey string `json:"api_key"`
 }
 
 func main() {
@@ -78,6 +83,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "acct: %v\n", err)
 		os.Exit(1)
 	}
+	adminPW := strings.TrimSpace(os.Getenv("WP_ADMIN_PASSWORD"))
 
 	op := args[0]
 	switch op {
@@ -95,7 +101,7 @@ func main() {
 		if op == "disable" && len(args) > 2 {
 			reason = strings.TrimSpace(strings.Join(args[2:], " "))
 		}
-		if err := doAdmin(base, apiKey, op, uid, reason); err != nil {
+		if err := doAdmin(base, adminPW, op, uid, reason); err != nil {
 			fatalf("%v", err)
 		}
 	default:
@@ -114,8 +120,13 @@ func usage() {
   acct enable  <uid>           启用：解除禁用（手动/系统禁用一并解除）
 
 选项:
-  -config <path>  配置路径（默认 config.json，读 listen 与 api_key）
+  -config <path>  配置路径（默认 config.json，读 listen）
   -server <url>   直接指定网关地址，如 http://127.0.0.1:7863
+
+凭据:
+  WP_API_KEY      数据面接入 key（或同目录 access-keys.json 的第一把启用 key），
+                  list 读 /status 用
+  WP_ADMIN_PASSWORD  管理密码，disable/enable 打管理面用（不是接入 key）
 
 注意：只想「摘掉下游流量、继续养号」请用休养（面板「休养」/ wpctl rest），
 不要去禁用——禁用会连签到与 token 保活一起停掉，长期可能真的失活。
@@ -123,8 +134,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, usage)
 }
 
-// resolveTarget 定出网关地址与 api_key：-server 优先，否则读 config 的 listen。
-// api_key 始终来自 config（-server 只换地址，共享同一把 key）。
+// resolveTarget 定出网关地址与数据面接入 key：-server 优先，否则读 config 的 listen。
+// key 来源：WP_API_KEY > 与 config 同目录 access-keys.json 的第一把启用 key。
 func resolveTarget(cfgPath, serverOverride string) (string, string, error) {
 	var cfg configWire
 	if raw, err := os.ReadFile(cfgPath); err == nil {
@@ -139,7 +150,13 @@ func resolveTarget(cfgPath, serverOverride string) (string, string, error) {
 	if base == "" {
 		base = normalizeListen(cfg.Listen)
 	}
-	return strings.TrimRight(base, "/"), cfg.APIKey, nil
+	key := strings.TrimSpace(os.Getenv("WP_API_KEY"))
+	if key == "" {
+		if k, err := accesskey.FirstEnabledSecret(accesskey.PathFor(cfgPath)); err == nil {
+			key = k
+		}
+	}
+	return strings.TrimRight(base, "/"), key, nil
 }
 
 // normalizeListen 把配置里的 listen（":7863" / "0.0.0.0:7863" / "127.0.0.1:7863"）
@@ -259,14 +276,17 @@ func stateLabel(a accountStatus) string {
 }
 
 // doAdmin 调管理端点并把结果打成一行。
-func doAdmin(base, apiKey, op, uid, reason string) error {
+func doAdmin(base, adminPW, op, uid, reason string) error {
+	if adminPW == "" {
+		return fmt.Errorf("缺少管理密码：export WP_ADMIN_PASSWORD='管理密码'（不是下游接入 key）")
+	}
 	action := op
 	path := "/admin/accounts/" + uid + "/" + action
 	var payload []byte
 	if op == "disable" && reason != "" {
 		payload, _ = json.Marshal(map[string]string{"reason": reason})
 	}
-	code, raw, err := httpDo(base, apiKey, http.MethodPost, path, payload)
+	code, raw, err := httpDo(base, adminPW, http.MethodPost, path, payload)
 	if err != nil {
 		return err
 	}
@@ -275,7 +295,7 @@ func doAdmin(base, apiKey, op, uid, reason string) error {
 		// 两种 404：admin 开关没开 / uid 不存在。都不该靠猜，把原文给出来。
 		return fmt.Errorf("404：%s（可能是 admin.enabled 未开启，或该 uid 不在池里）", firstLine(raw))
 	case http.StatusUnauthorized:
-		return fmt.Errorf("401：api_key 不对（检查 config.json 的 api_key）")
+		return fmt.Errorf("401：管理密码不对（检查 WP_ADMIN_PASSWORD；注意不是下游接入 key）")
 	case http.StatusOK:
 	default:
 		return fmt.Errorf("%d: %s", code, firstLine(raw))

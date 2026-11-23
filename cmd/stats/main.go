@@ -9,7 +9,9 @@
 // 为什么是这个形态：网关（server）才是所有流量的必经点，统计在网关侧采集；
 // 本工具只做渲染 —— 无状态、无依赖、用完即退，不像常驻面板那样占内存。
 //
-// 配置解析与网关侧其它工具一致：读 config.json 的 listen（取端口）与 api_key；
+// 配置解析与网关侧其它工具一致：读 config.json 的 listen（取端口）；
+// 接入 key 取 WP_API_KEY，缺省时读同目录 access-keys.json 的第一把启用 key
+// （下游 key 已不再写死在 config.json，见管理后台「接入映射」）。
 // 可用 WP_URL 直接指定地址、WP_CONFIG 指定配置文件路径。
 package main
 
@@ -28,6 +30,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"wp/internal/accesskey"
 )
 
 // modelStat 对应网关 /v1/stats 的单行统计（total 行与 models 元素同构）。
@@ -154,31 +158,32 @@ func validateFlags(watch time.Duration, jsonOut bool, sortKey string) error {
 	return nil
 }
 
-// resolveGateway 决定网关地址与 api_key。
+// resolveGateway 决定网关地址与接入 key。
 //
 // 优先级（地址）：-server flag > WP_URL > config.json 的 listen。
-// key 来源：WP_API_KEY > config.json 的 api_key。
+// key 来源：WP_API_KEY > config.json 同目录 access-keys.json 的第一把启用 key。
 //
-// 与 cmd/acct 的 resolveTarget 同口径：-server 只覆盖**地址**，key 仍从配置文件读
-// ——否则「只想指定地址」的用户会意外丢掉鉴权（实测 401）。
+// 与 cmd/acct 的 resolveTarget 同口径：-server 只覆盖**地址**，key 仍按上述规则
+// 解析——否则「只想指定地址」的用户会意外丢掉鉴权（实测 401）。
 func resolveGateway(serverOverride string) (baseURL, apiKey string, err error) {
 	cfgPath := os.Getenv("WP_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "config.json"
 	}
+	// 数据面鉴权：环境变量优先；否则从与配置同目录的接入 key 文件取第一把启用的。
+	apiKey = os.Getenv("WP_API_KEY")
+	if apiKey == "" {
+		if k, kerr := accesskey.FirstEnabledSecret(accesskey.PathFor(cfgPath)); kerr == nil {
+			apiKey = k
+		}
+	}
 	raw, rerr := os.ReadFile(cfgPath)
 	if rerr == nil {
 		var cfg struct {
 			Listen string `json:"listen"`
-			APIKey string `json:"api_key"`
 		}
 		if uerr := json.Unmarshal(raw, &cfg); uerr != nil {
 			return "", "", fmt.Errorf("解析 %s 失败: %w", cfgPath, uerr)
-		}
-		// 环境变量优先于文件（与 cmd/acct 一致）。
-		apiKey = cfg.APIKey
-		if k := os.Getenv("WP_API_KEY"); k != "" {
-			apiKey = k
 		}
 		if s := strings.TrimSpace(serverOverride); s != "" {
 			return strings.TrimRight(s, "/"), apiKey, nil
@@ -190,7 +195,6 @@ func resolveGateway(serverOverride string) (baseURL, apiKey string, err error) {
 	}
 
 	// 无配置文件：仅当地址可由 flag/env 提供时才继续（否则无从连接）。
-	apiKey = os.Getenv("WP_API_KEY")
 	if s := strings.TrimSpace(serverOverride); s != "" {
 		return strings.TrimRight(s, "/"), apiKey, nil
 	}
@@ -259,7 +263,7 @@ func fetch(baseURL, apiKey string, timeout time.Duration) (*statsResponse, error
 	case http.StatusOK:
 		// 继续解析
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("网关拒绝鉴权（401）：检查 config.json 的 api_key 是否正确")
+		return nil, fmt.Errorf("网关拒绝鉴权（401）：检查 WP_API_KEY 或 %s 里的启用 key", accesskey.FileName)
 	case http.StatusNotFound:
 		// 该端点是较新版本才有的能力，旧版网关没有这条路由。给出可操作的提示
 		// 而不是干巴巴的 404。

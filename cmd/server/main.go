@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"wp/internal/accesskey"
 	"wp/internal/adminauth"
 	"wp/internal/auth"
 	"wp/internal/config"
@@ -127,10 +128,14 @@ func main() {
 			// realm 感知闭包：带前缀模型名按 realm 过滤可用账号（跨 realm 不泄漏，
 			// 见 wiring.go）；裸名走 cn（现状零回归）。
 			AvailableForModel: realmAwareAvailableForModel(p),
+			// 接入 key 的账号白名单：粘性可用集合与首绑都只能落在 key 授权范围内。
+			AvailableForModelScoped: realmAwareAvailableForModelScoped(p),
 			// 首绑按三因子权重分配（issue #265）：粘性命中即定，若首绑仍按哈希取模，
 			// 「快过期积分优先消耗」这条池权重在默认配置下就永远轮不到——带会话标识的
 			// 请求首轮绑定后滚动续期，压根走不到 Pool.pick。
 			PickForModel: realmAwareWeightedPick(p),
+			// scoped 首绑：候选集已按 key 范围过滤，权重逻辑与上面完全一致。
+			PickForModelScoped: realmAwareWeightedPickScoped(p),
 		})
 		sessRouter.LoadFromStore() // 启动时从 Redis 恢复粘性（读操作仅此处）
 		sessRouter.StartGC()
@@ -186,9 +191,11 @@ func main() {
 
 	// The private deployment identity makes the daily random offsets stable
 	// across restarts, and independent of other deployments. Never log the seed.
-	scheduleSeed := cfg.APIKey
+	// 旧 config.api_key 已退役（下游改由「接入映射」的受管 key 鉴权），这里改取
+	// auth_dir：同一部署重启后不变，不同部署至少路径不同。
+	scheduleSeed := cfg.AuthDir
 	if scheduleSeed == "" {
-		scheduleSeed = cfg.AuthDir
+		scheduleSeed = cfg.StateFile
 	}
 	// 遍历节奏：默认值来自 config.default.json，用户 config.json 有则覆盖。
 	scheduler.Configure(scheduler.Options{
@@ -303,6 +310,13 @@ func main() {
 	if err := credits.Load(); err != nil {
 		log.Printf("WARN: 积分日账本读取失败（将从空账本开始）: %v", err)
 	}
+	// 接入映射：下游 key 的账号/模型白名单，落盘 data/access-keys.json。
+	// 文件损坏时**阻断启动**（不静默当空）：否则所有下游会突然 401，且排障没有线索。
+	// 首次启动没有该文件是正常形态（空存储，/v1 一律 401，直到在后台创建 key）。
+	accessKeys := accesskey.New(filepath.Join(ledgerDir, accesskey.FileName))
+	if err := accessKeys.Load(); err != nil {
+		log.Fatalf("读取接入 key 文件失败（修好或移走该文件后重启）: %v", err)
+	}
 	pool.Configure(pool.Options{CreditSink: func(uid, realm string, delta, spent, balance int64) {
 		if delta > 0 {
 			credits.RecordEarned(uid, realm, delta)
@@ -320,7 +334,7 @@ func main() {
 	h := server.NewHandler(server.Config{
 		Pool:                     p,
 		Upstream:                 up,
-		APIKey:                   cfg.APIKey,
+		AccessKeys:               accessKeys,
 		AdminAuth:                adminStore,
 		Session:                  sessRouter,
 		StickyCount:              sessCount,
@@ -405,7 +419,10 @@ func main() {
 		log.Printf("WARN: %s", w)
 	}
 	log.Printf("扫码二维码有效期：%v（qrcode_ttl）", cfg.QRCodeTTLDur)
-	log.Printf("wp listening on %s (api_key=%v)", ln.Addr(), cfg.APIKey != "")
+	log.Printf("wp listening on %s（接入 key %d 把，账号/模型按 key 分流）", ln.Addr(), accessKeys.Count())
+	if accessKeys.Count() == 0 {
+		log.Printf("WARN: 尚无接入 key：/v1 与 /status 会一律 401；打开管理后台「接入映射」创建第一把 key")
+	}
 	printAdminBanner(adminStore, ln.Addr().String(), cfg.SourcePath)
 	if !cfg.Admin.Enabled {
 		log.Printf("管理面当前关闭（config admin.enabled=false）：初始化密码后会自动打开；" +

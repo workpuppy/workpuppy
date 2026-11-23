@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"wp/internal/accesskey"
 	"wp/internal/auth"
 )
 
@@ -562,20 +563,33 @@ func TestGlobalE2EErrorCodeSemantics(t *testing.T) {
 // 8/9/10. 网关侧验证（调本地 :7863）
 // ============================================================================
 
-// gatewayConfig 从 config.json 读 listen/api_key（读失败回落默认 :7863 / test-key）。
+// gatewayConfig 网关地址与一把可用接入 key（config.json 只提供 listen；
+// key 取自 WP_API_KEY 或与 config 同目录 access-keys.json 的第一把启用 key）。
 type gatewayConfig struct {
-	Listen string `json:"listen"`
-	APIKey string `json:"api_key"`
+	Listen string
+	APIKey string
 }
 
 func loadGatewayConfig() gatewayConfig {
-	gc := gatewayConfig{Listen: ":7863", APIKey: "test-key"}
-	for _, cand := range []string{"config.json", "../config.json", "../../config.json", "/root/wp/config.json"} {
-		if raw, err := os.ReadFile(cand); err == nil {
-			if err := json.Unmarshal(raw, &gc); err == nil {
-				break
+	gc := gatewayConfig{Listen: ":7863", APIKey: strings.TrimSpace(os.Getenv("WP_API_KEY"))}
+	for _, cand := range []string{"config.json", "data/config.json", "../config.json", "../../config.json", "/root/wp/config.json"} {
+		raw, err := os.ReadFile(cand)
+		if err != nil {
+			continue
+		}
+		var cf struct {
+			Listen string `json:"listen"`
+		}
+		if err := json.Unmarshal(raw, &cf); err != nil {
+			continue
+		}
+		gc.Listen = cf.Listen
+		if gc.APIKey == "" {
+			if k, kerr := accesskey.FirstEnabledSecret(accesskey.PathFor(cand)); kerr == nil {
+				gc.APIKey = k
 			}
 		}
+		break
 	}
 	return gc
 }

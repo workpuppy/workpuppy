@@ -3,6 +3,7 @@ package main
 import (
 	"wp/internal/pool"
 	"wp/internal/server"
+	"wp/internal/session"
 )
 
 // realmAwareAvailableForModel 构造会话粘性路由按模型可用口径的 realm 感知闭包。
@@ -20,6 +21,18 @@ func realmAwareAvailableForModel(p *pool.Pool) func(model string) []string {
 	}
 }
 
+// realmAwareAvailableForModelScoped 是上面的「带账号范围」版本（接入 key 白名单）。
+//
+// scope 同时包含 realm 与接入 key 两个维度：先由 pool 按 (realm, 模型) 取可用集合，
+// 再按 key 的账号白名单过滤。两层的顺序不能反——反过来只会多遍历一遍，结果相同，
+// 但先做 realm/模型过滤能少查白名单（46 个账号时差异可忽略，语义上更清楚）。
+func realmAwareAvailableForModelScoped(p *pool.Pool) func(model string, scope session.Scope) []string {
+	return func(model string, scope session.Scope) []string {
+		realm, bare := server.ResolveModel(model)
+		return p.AvailableUIDsForModelRealmScoped(bare, realm, scope)
+	}
+}
+
 // realmAwareWeightedPick 构造会话粘性**首绑**的加权选号闭包（issue #265）。
 //
 // 背景：粘性未命中时旧实现用 FNV-1a 取模在可用 UID 里选，与积分余额、快过期积分、
@@ -31,6 +44,19 @@ func realmAwareAvailableForModel(p *pool.Pool) func(model string) []string {
 // realm 前缀拿裸模型名：成本台账与 6004 模型级冷却都以裸名记账。
 func realmAwareWeightedPick(p *pool.Pool) func(model string, candidates []string) string {
 	return func(model string, candidates []string) string {
+		_, bare := server.ResolveModel(model)
+		return p.WeightedPickAmong(candidates, bare)
+	}
+}
+
+// realmAwareWeightedPickScoped 是首绑加权选号的带范围版本。
+//
+// scope 在这里不必再次过滤：candidates 由 AvailableForModelScoped 生成，已限定在
+// key 的账号白名单内；WeightedPickAmong 也只会从候选集里抽签（不会回落到全池）。
+// 保留这个签名是为了给 session 一个显式的 scoped 扩展点，后续若加权策略需要按
+// key 区分（如不同 key 的成本偏好）可以在这里演进，不必再改 session。
+func realmAwareWeightedPickScoped(p *pool.Pool) func(model string, candidates []string, scope session.Scope) string {
+	return func(model string, candidates []string, _ session.Scope) string {
 		_, bare := server.ResolveModel(model)
 		return p.WeightedPickAmong(candidates, bare)
 	}

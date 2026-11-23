@@ -11,19 +11,34 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"wp/internal/accesskey"
 )
 
 // ─── resolveGateway：地址与密钥解析 ──────────────────────────────────────
 
-// TestResolveGatewayFromConfig 从 config.json 取端口与 api_key（主路径）。
+// writeAccessKey 在 dir 下写一份 access-keys.json（下游 key 不再写进 config.json）。
+func writeAccessKey(t *testing.T, dir, secret string) {
+	t.Helper()
+	st := accesskey.New(filepath.Join(dir, accesskey.FileName))
+	if _, err := st.Create(accesskey.Input{
+		Name: "cli-test", Secret: secret, AllAccounts: true, AllModels: true,
+	}); err != nil {
+		t.Fatalf("write access key: %v", err)
+	}
+}
+
+// TestResolveGatewayFromConfig 从 config.json 取端口，从同目录 access-keys.json 取 key。
 func TestResolveGatewayFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:7999","api_key":"sk-abc"}`), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:7999"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	writeAccessKey(t, dir, "sk-abc-123")
 	t.Setenv("WP_CONFIG", cfg)
 	t.Setenv("WP_URL", "")
+	t.Setenv("WP_API_KEY", "")
 
 	base, key, err := resolveGateway("")
 	if err != nil {
@@ -32,8 +47,8 @@ func TestResolveGatewayFromConfig(t *testing.T) {
 	if base != "http://127.0.0.1:7999" {
 		t.Errorf("baseURL = %q, want http://127.0.0.1:7999", base)
 	}
-	if key != "sk-abc" {
-		t.Errorf("apiKey = %q, want sk-abc", key)
+	if key != "sk-abc-123" {
+		t.Errorf("apiKey = %q, want sk-abc-123", key)
 	}
 }
 
@@ -158,7 +173,7 @@ func TestFetchNotFound(t *testing.T) {
 	}
 }
 
-// TestFetchUnauthorized 401 提示检查 api_key。
+// TestFetchUnauthorized 401 提示检查接入 key。
 func TestFetchUnauthorized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -169,8 +184,8 @@ func TestFetchUnauthorized(t *testing.T) {
 	if err == nil {
 		t.Fatal("401 应报错")
 	}
-	if !strings.Contains(err.Error(), "api_key") {
-		t.Errorf("错误应提示 api_key，得到: %v", err)
+	if !strings.Contains(err.Error(), "WP_API_KEY") {
+		t.Errorf("错误应提示 WP_API_KEY/access-keys.json，得到: %v", err)
 	}
 }
 
@@ -659,16 +674,17 @@ func TestNormalizeListen(t *testing.T) {
 	}
 }
 
-// TestResolveGatewayServerOverride -server flag 只覆盖地址，key 仍从配置读。
+// TestResolveGatewayServerOverride -server flag 只覆盖地址，key 仍从同目录 key 文件读。
 func TestResolveGatewayServerOverride(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	_ = os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:1111","api_key":"from-config"}`), 0o600)
+	_ = os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:1111"}`), 0o600)
+	writeAccessKey(t, dir, "from-config")
 	t.Setenv("WP_CONFIG", cfg)
 	t.Setenv("WP_URL", "http://127.0.0.1:2222")
 	t.Setenv("WP_API_KEY", "")
 
-	// -server 覆盖地址；key 来自配置文件（否则「只想换地址」会意外 401）。
+	// -server 覆盖地址；key 来自 key 文件（否则「只想换地址」会意外 401）。
 	base, key, err := resolveGateway("http://127.0.0.1:3333/")
 	if err != nil {
 		t.Fatalf("resolveGateway: %v", err)
@@ -677,13 +693,13 @@ func TestResolveGatewayServerOverride(t *testing.T) {
 		t.Errorf("-server 应覆盖地址且去掉尾斜杠，得到 %q", base)
 	}
 	if key != "from-config" {
-		t.Errorf("-server 下 key 应来自 config.json，得到 %q", key)
+		t.Errorf("-server 下 key 应来自 access-keys.json，得到 %q", key)
 	}
 
 	// 显式 WP_API_KEY 优先于文件。
 	t.Setenv("WP_API_KEY", "from-env")
 	if _, key, _ := resolveGateway("http://127.0.0.1:3333"); key != "from-env" {
-		t.Errorf("WP_API_KEY 应优先于 config.json，得到 %q", key)
+		t.Errorf("WP_API_KEY 应优先于 access-keys.json，得到 %q", key)
 	}
 }
 

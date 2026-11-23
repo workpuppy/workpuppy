@@ -35,7 +35,7 @@ func doAdmin(t *testing.T, h *Handler, method, path string, body string) (*httpt
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, path, rdr)
-	// 管理面现在只认管理密码（与 /v1 的 api_key 分离），helper 统一带上。
+	// 管理面现在只认管理密码（与 /v1 的接入 key 分离），helper 统一带上。
 	req.Header.Set("Authorization", "Bearer "+testAdminPW)
 	h.ServeHTTP(rec, req)
 	var out adminResp
@@ -52,14 +52,14 @@ func doAdmin(t *testing.T, h *Handler, method, path string, body string) (*httpt
 // 暴露"这里存在管理面"（设计 supplement §2.3：路由条件注册，而非 handler 内 404）。
 func TestAdminDisabledByDefault(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
-	h := NewHandler(Config{Pool: p, APIKey: "k"}) // AdminEnabled 零值 false
+	h := NewHandler(Config{Pool: p}) // AdminEnabled 零值 false
 
 	for _, path := range []string{
 		"/admin/accounts/u1/disable",
 		"/admin/accounts/u1/enable",
 		"/admin/accounts/u1/rest",
 	} {
-		// 即使带 key 也得 404：路由未注册，withAuth 根本不进场
+		// 即使带 key 也得 404：路由未注册，鉴权包装器根本不进场
 		// （若路由注册了，正确 key 会命中 handler——这条同时锁住"关闭态不注册"本身）。
 		rec, _ := doAdmin(t, h, "POST", path, "")
 		if rec.Code != http.StatusNotFound {
@@ -84,12 +84,12 @@ func TestAdminDisabledByDefault(t *testing.T) {
 	}
 }
 
-// TestAdminRequiresAdminPassword 管理端点只认管理密码（与 /v1 的 api_key 分离）。
+// TestAdminRequiresAdminPassword 管理端点只认管理密码（与 /v1 的接入 key 分离）。
 func TestAdminRequiresAdminPassword(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	h := NewHandler(Config{
 		Pool:         p,
-		APIKey:       "secret",
+		AccessKeys:   testAccessKeys("test-secret"),
 		AdminAuth:    adminauth.MustNew("admin-secret"),
 		AdminEnabled: true,
 	})
@@ -100,13 +100,13 @@ func TestAdminRequiresAdminPassword(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("code=%d want 401 without credential", rec.Code)
 	}
-	// 用 /v1 的 api_key → 401（这正是本次改动的目的：下游 key 不再能管后台）
+	// 用 /v1 的接入 key → 401（这正是本次改动的目的：下游 key 不再能管后台）
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/admin/accounts/u1/disable", nil)
-	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Authorization", "Bearer test-secret")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("code=%d want 401 with api_key（管理面不应接受 /v1 的 key）", rec.Code)
+		t.Fatalf("code=%d want 401 with access key（管理面不应接受 /v1 的 key）", rec.Code)
 	}
 	// 错的管理密码 → 401
 	rec = httptest.NewRecorder()

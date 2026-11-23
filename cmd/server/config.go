@@ -31,7 +31,6 @@ var (
 // Config 顶层配置。
 type Config struct {
 	Listen    string `json:"listen"`     // ":7863"
-	APIKey    string `json:"api_key"`    // 空 = 不鉴权
 	AuthDir   string `json:"auth_dir"`   // ./auths
 	StateFile string `json:"state_file"` // ./data/state.json
 
@@ -72,9 +71,8 @@ type Config struct {
 	Schedule config.Schedule `json:"schedule"`
 
 	// Admin 运维管理端点开关（issue #138/#118）。默认**关闭**：管理能力默认不暴露，
-	// 避免「开了网关就等于开了账号管理面」。开启后
-	// /admin/accounts/{uid}/{disable,enable,revive} 可用；鉴权与 /status 同源
-	// （withAuth + 同一个 api_key，不另立管理密钥）。
+	// 避免「开了网关就等于开了账号管理面」。开启后 /admin/* 只认**管理密码**
+	// （见 internal/adminauth），与下游接入 key 完全分离。
 	Admin struct {
 		Enabled bool `json:"enabled"` // 默认 false
 		// BodyLimitBytes 管理面请求体上限（默认 8192）。
@@ -572,9 +570,6 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("WP_LISTEN"); v != "" {
 		c.Listen = v
 	}
-	if v := os.Getenv("WP_API_KEY"); v != "" {
-		c.APIKey = v
-	}
 	if v := os.Getenv("WP_AUTH_DIR"); v != "" {
 		c.AuthDir = v
 	}
@@ -852,9 +847,8 @@ func (c *Config) normalize() error {
 	if !strings.HasPrefix(c.Listen, ":") && !strings.Contains(c.Listen, ":") {
 		c.Listen = ":" + c.Listen
 	}
-	// 管理面鉴权已改为"独立密码 + 哈希"（见 internal/adminauth），不再依赖 api_key：
-	// 以前"admin.enabled=true 且 api_key 为空就拒绝启动"的规则会让首次初始化（此时
-	// 用户还没填 api_key）直接起不来，故移除。api_key 为空只影响 /v1 的鉴权语义。
+	// 管理面鉴权已改为"独立密码 + 哈希"（见 internal/adminauth）；下游接入 key 也已
+	// 从 config.json 迁到「接入映射」（data/access-keys.json），此处不再有任何密钥字段。
 	// 排程段归一（空数组回落默认、ActivityReportCount 归一、小时范围校验）
 	// 由 internal/config 统一实现，cmd/server 与 cmd/activity 共用同一份语义。
 	if c.Models.DefaultContextWindow == 0 {

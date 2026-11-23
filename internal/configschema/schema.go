@@ -90,7 +90,7 @@ type Spec struct {
 func f64(v float64) *float64 { return &v }
 
 var groups = []Group{
-	{Key: "basic", Title: "基础与网络", Desc: "监听地址、下游密钥、目录与出口线路。改监听/目录/线路需要重启。"},
+	{Key: "basic", Title: "基础与网络", Desc: "监听地址、目录与出口线路。改监听/目录/线路需要重启。"},
 	{Key: "admin", Title: "管理后台", Desc: "管理面开关与密码强度。开关与密码即时生效，其余需重启。"},
 	{Key: "upstream", Title: "上游请求", Desc: "超时、UA/版本指纹、压缩与设备 token。"},
 	{Key: "pool", Title: "账号池与选号", Desc: "并发上限、权重、熔断、降权与大请求轮换。"},
@@ -111,8 +111,6 @@ var fields = []Field{
 	{Path: "listen", Group: "basic", Label: "监听地址", Kind: KindString,
 		Pattern: `^(:[0-9]{1,5}|\[[0-9A-Fa-f:.]+\]:[0-9]{1,5}|[A-Za-z0-9.\-]+:[0-9]{1,5})$`, Placeholder: ":7863",
 		Hint: "形如 :7863、127.0.0.1:7863 或 [::]:7863；改完需重启容器才会换端口。", Restart: true},
-	{Path: "api_key", Group: "basic", Label: "下游 API Key", Kind: KindString, Secret: true,
-		Hint: "/v1 与 /status 用这把 key（与管理密码无关）。空 = 不鉴权。", Restart: true},
 	{Path: "auth_dir", Group: "basic", Label: "账号目录", Kind: KindString, Placeholder: "./auths",
 		Hint: "存放 auths/*.json；容器内默认 /app/auths。", Restart: true},
 	{Path: "state_file", Group: "basic", Label: "状态文件", Kind: KindString, Placeholder: "./data/state.json",

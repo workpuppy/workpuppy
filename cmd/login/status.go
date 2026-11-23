@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-// runKey 打印 config.json 的 api_key（空值时打印空行，调用方自行判定）。
+// runKey 打印一把可用的接入 key（WP_API_KEY 或 access-keys.json 第一把启用的；
+// 都没有时打印空行，调用方自行判定）。
 func runKey() {
 	key, _ := readConfigKeyAndAddr()
 	fmt.Println(key)

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"wp/internal/accesskey"
 	"wp/internal/auth"
 	"wp/internal/region"
 	"wp/internal/upstream"
@@ -201,7 +202,7 @@ func finishRegion(a *auth.Auth, token, regionCode string) {
 }
 
 // runAccounts 打印当前账号数（login.sh 重启容器后的收尾检查）。
-// 读 config.json 的 api_key 打 /status，与网关自身口径一致。
+// 用接入 key 打 /status（config.json 只提供 listen）。
 func runAccounts() {
 	key, addr := readConfigKeyAndAddr()
 	url := strings.TrimRight(addr, "/") + "/status"
@@ -252,28 +253,37 @@ func prefix(s string, n int) string {
 	return s[:n]
 }
 
-// readConfigKeyAndAddr 读 config.json 的 api_key 与 listen（BOM 容忍）。
+// readConfigKeyAndAddr 读网关地址与一把可用于 /status 的接入 key。
+//
+// config.json 只提供 listen；下游 key 已迁到「接入映射」（access-keys.json）。
+// key 来源：WP_API_KEY > 与 config 同目录 access-keys.json 的第一把启用 key。
+// 都取不到时返回空串（调用方 /status 会 401，收尾检查会提示"账号数 ?"）。
 func readConfigKeyAndAddr() (key, addr string) {
 	path := strings.TrimSpace(os.Getenv("WP_CONFIG"))
 	if path == "" {
 		path = "config.json"
 	}
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", "http://127.0.0.1:7863"
+	listen := ""
+	if err == nil {
+		raw = trimBOM(raw)
+		var cf struct {
+			Listen string `json:"listen"`
+		}
+		_ = json.Unmarshal(raw, &cf)
+		listen = strings.TrimSpace(cf.Listen)
 	}
-	raw = trimBOM(raw)
-	var cf struct {
-		Listen string `json:"listen"`
-		APIKey string `json:"api_key"`
-	}
-	_ = json.Unmarshal(raw, &cf)
-	listen := strings.TrimSpace(cf.Listen)
 	if listen == "" {
 		listen = ":7863"
 	}
 	if strings.HasPrefix(listen, ":") {
 		listen = "127.0.0.1" + listen
 	}
-	return cf.APIKey, "http://" + listen
+	key = os.Getenv("WP_API_KEY")
+	if key == "" {
+		if k, kerr := accesskey.FirstEnabledSecret(accesskey.PathFor(path)); kerr == nil {
+			key = k
+		}
+	}
+	return key, "http://" + listen
 }
