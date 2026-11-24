@@ -1211,19 +1211,41 @@ function openAccessKeyModal(k) {
   state.accessDraft = draft;
   $('#accessKeyModalTitle').textContent = k ? '编辑接入 Key' : '新建接入 Key';
   $('#accessKeyModalMeta').textContent = k
-    ? 'ID ' + k.id + ' · 创建于 ' + new Date(k.created_at).toLocaleString('zh-CN', { hour12: false })
+    ? 'ID ' + k.id + ' · 创建于 ' + new Date(k.created_at).toLocaleString('zh-CN', { hour12: false }) +
+      ' · Key 可直接编辑'
     : '保存后自动生成 key；账号/模型留空不会放行，必须显式勾选（或勾「全部」）。';
   $('#akName').value = k ? (k.name || '') : '';
   $('#akEnabled').checked = draft.enabled;
   $('#akAllAccounts').checked = draft.all_accounts;
   $('#akAllModels').checked = draft.all_models;
   $('#akSecretWrap').hidden = !k;
+  $('#akSecret').readOnly = !k;
   $('#akSecret').value = k ? k.key : '';
+  $('#akSecret').placeholder = k ? '留空 = 保持原 key 不变' : '保存后自动生成';
   $('#akAccountFilter').value = '';
   $('#akModelFilter').value = '';
   hideAccessKeyError();
   renderAccessPickers();
+  // 账号/模型备选可能在页面加载后才新增（例如刚扫码加号/刷新模型目录）：
+  // 弹窗打开时若本地缓存为空，补拉一次，保证“默认就能看到全部备选项”。
+  if (state.accessAccounts.length === 0 || state.accessModels.length === 0) {
+    refreshAccessOptions();
+  }
   showAccessKeyModal();
+}
+
+// refreshAccessOptions 重新拉取账号与模型备选；成功后按当前弹窗草稿重绘。
+// 失败保持现有缓存（列表里已有内容不应因为一次网络抖动被清空）。
+async function refreshAccessOptions() {
+  try {
+    const [accounts, models] = await Promise.all([
+      api('/admin/accounts'),
+      api('/admin/models'),
+    ]);
+    state.accessAccounts = accounts.accounts || [];
+    state.accessModels = models.data || [];
+    if (state.accessDraft) renderAccessPickers();
+  } catch (_) { /* 保持缓存；页面级 loadAccessKeys 会显示错误 */ }
 }
 
 function accessPickRow(kind, value, label, sub, checked, muted) {
@@ -1244,6 +1266,11 @@ function accessPickRow(kind, value, label, sub, checked, muted) {
 function renderAccessPickers() {
   const d = state.accessDraft;
   if (!d) return;
+  // 过滤框留空 = 展示全部备选项；placeholder 里带总数，避免"只显示了一部分"的误解。
+  $('#akAccountFilter').placeholder =
+    '过滤昵称 / UID（共 ' + state.accessAccounts.length + ' 个）';
+  $('#akModelFilter').placeholder =
+    '过滤模型 ID / 描述（共 ' + state.accessModels.length + ' 个）';
   const accKw = ($('#akAccountFilter').value || '').trim().toLowerCase();
   const accRows = state.accessAccounts
     .filter((a) => !accKw ||
@@ -1271,25 +1298,21 @@ function renderAccessPickers() {
     class: 'small text-body-secondary py-2', text: '没有匹配的模型（先到「模型」页刷新清单）',
   })]));
 
-  syncAccessPickerDisabled();
   updateAccessSelectionHint();
 }
 
-function syncAccessPickerDisabled() {
-  const d = state.accessDraft;
-  if (!d) return;
-  [[$('#akAccountList'), $('#akAllAccounts').checked],
-    [$('#akModelList'), $('#akAllModels').checked]].forEach(([host, all]) => {
-    host.classList.toggle('is-disabled', !!all);
-    host.querySelectorAll('input[data-ak-kind]').forEach((cb) => { cb.disabled = !!all; });
-  });
-}
-
+// 注意：勾了「全部账号/全部模型」只改变保存语义，不再 disable 勾选清单。
+// 之前用 pointer-events/disabled 把清单锁死，导致用户看到的每一项都点不动；
+// 现在逐项勾选始终可操作（先勾好子集，再关闭「全部」即可按子集生效）。
 function updateAccessSelectionHint() {
   const d = state.accessDraft;
   if (!d) return;
-  const acc = $('#akAllAccounts').checked ? '全部账号' : '已选 ' + d.accounts.size + ' 个账号';
-  const mod = $('#akAllModels').checked ? '全部模型' : '已选 ' + d.models.size + ' 个模型';
+  const acc = $('#akAllAccounts').checked
+    ? '全部账号（逐项勾选暂不生效）'
+    : '已选 ' + d.accounts.size + ' 个账号';
+  const mod = $('#akAllModels').checked
+    ? '全部模型（逐项勾选暂不生效）'
+    : '已选 ' + d.models.size + ' 个模型';
   $('#akSelectionHint').textContent = acc + ' · ' + mod;
 }
 
@@ -1365,6 +1388,16 @@ async function regenerateAccessKeyFromModal() {
 async function saveAccessKey() {
   const d = state.accessDraft;
   if (!d) return;
+  // 编辑语义：Key 输入框填了非空值（trim 后）就视为要改 key；留空 = 保持原 key。
+  // 新增仍走自动生成（输入框在新建时是隐藏的），不受这条影响。
+  const secret = ($('#akSecret').value || '').trim();
+  if (d.id && secret) {
+    if (!/^[A-Za-z0-9._-]{8,128}$/.test(secret)) {
+      showAccessKeyError('Key 只能包含字母、数字、点、下划线与连字符，长度 8–128。');
+      return;
+    }
+    if (secret !== d.key && !confirm('修改 Key 后旧 key 立即失效，下游必须换成新 key。继续？')) return;
+  }
   const body = {
     name: ($('#akName').value || '').trim(),
     enabled: $('#akEnabled').checked,
@@ -1373,6 +1406,7 @@ async function saveAccessKey() {
     accounts: Array.from(d.accounts),
     models: Array.from(d.models),
   };
+  if (d.id && secret) body.secret = secret;
   // 前端先拦一次：空白名单是「全部拒绝」，直接提交只会拿到 400；这里给出更具体的指引。
   if (!body.all_accounts && body.accounts.length === 0) {
     showAccessKeyError('至少选择一个账号（或勾选「全部账号」）——空列表等于全部拒绝。');
@@ -1389,7 +1423,9 @@ async function saveAccessKey() {
   try {
     if (d.id) {
       await api('/admin/access-keys/' + encodeURIComponent(d.id), { method: 'PUT', body });
-      toast('已保存：账号/模型授权立即生效', 'success');
+      toast(secret && secret !== d.key
+        ? '已保存：新 Key 已生效，旧 key 已失效'
+        : '已保存：账号/模型授权立即生效', 'success');
     } else {
       const r = await api('/admin/access-keys', { method: 'POST', body });
       toast('已创建接入 key：' + r.key.key, 'success');
@@ -2465,14 +2501,12 @@ function bind() {
   if ($('#akAllAccounts')) {
     $('#akAllAccounts').addEventListener('change', () => {
       if (state.accessDraft) state.accessDraft.all_accounts = $('#akAllAccounts').checked;
-      syncAccessPickerDisabled();
       updateAccessSelectionHint();
     });
   }
   if ($('#akAllModels')) {
     $('#akAllModels').addEventListener('change', () => {
       if (state.accessDraft) state.accessDraft.all_models = $('#akAllModels').checked;
-      syncAccessPickerDisabled();
       updateAccessSelectionHint();
     });
   }

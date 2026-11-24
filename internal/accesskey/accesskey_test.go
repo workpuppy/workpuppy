@@ -193,6 +193,52 @@ func TestDuplicateSecretRejected(t *testing.T) {
 	}
 }
 
+// 编辑时「填了非空 key 就视为编辑」：旧 key 立即失效、新 key 生效；
+// 留空/纯空白保持原 key；与其他 key 冲突回 ErrConflict。
+func TestUpdateSecret(t *testing.T) {
+	st, _ := newTempStore(t)
+	k, err := st.Create(Input{Name: "a", Secret: "old-secret-1", AllAccounts: true, AllModels: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Create(Input{Name: "b", Secret: "taken-secret-2", AllAccounts: true, AllModels: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 纯空白 = 不改 key。
+	upd, err := st.Update(k.ID, Input{Name: "a", Secret: "   ", AllAccounts: true, AllModels: true})
+	if err != nil {
+		t.Fatalf("blank secret should keep: %v", err)
+	}
+	if upd.Key != "old-secret-1" {
+		t.Fatalf("空白密钥不应改 key，得到 %q", upd.Key)
+	}
+
+	// 非空 = 改 key；旧 key 立即失效。
+	upd, err = st.Update(k.ID, Input{Name: "a", Secret: "new-secret-3", AllAccounts: true, AllModels: true})
+	if err != nil {
+		t.Fatalf("update secret: %v", err)
+	}
+	if upd.Key != "new-secret-3" {
+		t.Fatalf("key=%q want new-secret-3", upd.Key)
+	}
+	if _, ok := st.Lookup("old-secret-1"); ok {
+		t.Error("旧 key 应立即失效")
+	}
+	if got, ok := st.Lookup("new-secret-3"); !ok || got.ID != k.ID {
+		t.Error("新 key 应可命中同一把 key")
+	}
+
+	// 与其他 key 冲突。
+	if _, err := st.Update(k.ID, Input{Name: "a", Secret: "taken-secret-2", AllAccounts: true, AllModels: true}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("冲突密钥 err=%v want ErrConflict", err)
+	}
+	// 非法形态。
+	if _, err := st.Update(k.ID, Input{Name: "a", Secret: "bad secret", AllAccounts: true, AllModels: true}); err == nil {
+		t.Fatal("含空格的 key 应被拒")
+	}
+}
+
 // 停用的 key 仍然能被 Lookup 找到，由调用方按 Enabled 拒绝（便于管理面回显）。
 func TestDisabledKeyStillLookupable(t *testing.T) {
 	st, _ := newTempStore(t)

@@ -505,23 +505,33 @@ button[data-chart-uid]:focus-visible {
   background: var(--tblr-bg-surface, #fff);
 }
 
-/* 勾了「全部账号 / 全部模型」时清单只读：半透明提示"这里不再需要逐项选"。 */
-.access-picker.is-disabled {
-  opacity: 0.55;
-  background: var(--tblr-bg-surface-secondary, #f6f8fb);
-}
-
+/* 勾了「全部账号 / 全部模型」时只影响保存语义，不再把清单锁死；
+ * 逐项勾选始终可操作（先勾子集，再关「全部」即可生效）。 */
 .access-pick {
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
+  width: 100%; /* 整行可点：label 不能被内容宽度收缩成 72px（行右侧点不中） */
   margin: 0;
   padding: 0.18rem 0;
   cursor: pointer;
 }
 
+/* Tabler 的 label.form-check 带 width:fit-content（specificity 0-1-1），
+ * 会盖掉上面的 .access-pick（0-1-0）——表现为行宽只有文字那么宽、点行右侧没反应。
+ * 用同 specificity 且更靠后的规则把整行拉满。 */
+.access-picker label.access-pick {
+  width: 100%;
+}
+
+/* Bootstrap 的 .form-check-input 在 .form-check 里带 float:left + margin-left:-1.5em，
+ * 这里改成 flex 布局后必须清掉，否则复选框会被拉到容器外（真实鼠标点不到，
+ * elementFromPoint 落在 modal-body 上）。这是“任何账号/模型都选不中”的根因。 */
 .access-pick .form-check-input {
-  margin-top: 0.2rem;
+  float: none;
+  margin: 0.2rem 0 0 0;
+  flex: 0 0 auto;
+  position: static;
 }
 
 .access-pick-text {

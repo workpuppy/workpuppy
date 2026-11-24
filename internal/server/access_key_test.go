@@ -333,12 +333,37 @@ func TestAdminAccessKeysCRUD(t *testing.T) {
 		t.Fatalf("disabled key /status code=%d want 401", rec.Code)
 	}
 
-	// 更新为全部账号/模型并重新启用
+	// 更新为全部账号/模型、重新启用，并直接编辑 key（非空 = 改密钥）
 	rec = call(http.MethodPut, "/admin/access-keys/"+created.Key.ID,
-		`{"name":"team-a2","enabled":true,"all_accounts":true,"all_models":true}`)
+		`{"name":"team-a2","enabled":true,"all_accounts":true,"all_models":true,"secret":"edited-key-123"}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "team-a2") {
 		t.Fatalf("update code=%d body=%s", rec.Code, rec.Body)
 	}
+	var edited struct {
+		Key accesskey.Key `json:"key"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &edited); err != nil {
+		t.Fatal(err)
+	}
+	if edited.Key.Key != "edited-key-123" {
+		t.Fatalf("编辑后的 key=%q want edited-key-123", edited.Key.Key)
+	}
+	// 旧 key 立即失效，新 key 可访问数据面。
+	req = httptest.NewRequest(http.MethodGet, "/status", nil)
+	req.Header.Set("Authorization", "Bearer "+created.Key.Key)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("旧密钥 code=%d want 401", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/status", nil)
+	req.Header.Set("Authorization", "Bearer edited-key-123")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("新密钥 code=%d want 200", rec.Code)
+	}
+	created.Key.Key = edited.Key.Key // 后续 regenerate 断言用新 key 作基线
 
 	// 换密钥：旧 key 失效、新 key 可查
 	var re struct {

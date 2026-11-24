@@ -292,8 +292,8 @@ func (s *Store) Lookup(secret string) (Key, bool) {
 
 // Input 创建/更新 key 的入参（管理面请求体同构）。
 //
-// Secret 仅创建时使用：空 = 自动生成；非空 = 运维自定义（测试与迁移用）。
-// 更新时忽略 Secret（换密钥请走 Regenerate，避免误改）。
+// Secret：创建时为空 = 自动生成；非空 = 用指定值。更新时非空（trim 后）= 改 key，
+// 空/纯空白 = 保持原 key。换密钥也可以走 Regenerate（随机生成）。
 type Input struct {
 	Name        string   `json:"name"`
 	Secret      string   `json:"secret,omitempty"`
@@ -353,11 +353,19 @@ func (s *Store) Create(in Input) (Key, error) {
 	return k, nil
 }
 
-// Update 更新名称/启用态/授权范围（ID、密钥、创建时间不变）。
+// Update 更新名称/启用态/授权范围；Secret 非空（trim 后）时同时改密钥。
+//
+// 密钥编辑的语义与产品约定一致：新增走自动生成，编辑时**只要填了非空值就视为
+// 要改 key**；留空/纯空白 = 保持原 key 不变。改完旧 key 立即失效（下游必须换）。
+// 密钥冲突回 ErrConflict，由管理面映射成 409。
 func (s *Store) Update(id string, in Input) (Key, error) {
 	name, accounts, models, err := validateInput(in)
 	if err != nil {
 		return Key{}, err
+	}
+	secret := strings.TrimSpace(in.Secret)
+	if secret != "" && !secretPattern.MatchString(secret) {
+		return Key{}, invalid("key 只能包含字母、数字、点、下划线与连字符，长度 8–128")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -365,12 +373,20 @@ func (s *Store) Update(id string, in Input) (Key, error) {
 	if !ok {
 		return Key{}, ErrNotFound
 	}
+	if secret != "" && secret != cur.Key {
+		if s.secretTakenLocked(secret) {
+			return Key{}, ErrConflict
+		}
+	}
 	prev := cur
 	cur.Name = name
 	cur.AllAccounts = in.AllAccounts
 	cur.AllModels = in.AllModels
 	cur.Accounts = accounts
 	cur.Models = models
+	if secret != "" {
+		cur.Key = secret
+	}
 	if in.Enabled != nil {
 		cur.Enabled = *in.Enabled
 	}

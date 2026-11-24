@@ -686,11 +686,14 @@
           <div class="col-12" id="akSecretWrap" hidden>
             <label class="form-label" for="akSecret">Key</label>
             <div class="input-group input-group-sm">
-              <input class="form-control font-monospace" id="akSecret" readonly>
+              <input class="form-control font-monospace" id="akSecret" autocomplete="off" spellcheck="false">
               <button class="btn btn-outline-secondary" type="button" id="btnCopyAccessKey">复制</button>
-              <button class="btn btn-outline-warning" type="button" id="btnRegenerateAccessKey">重新生成</button>
+              <button class="btn btn-outline-warning" type="button" id="btnRegenerateAccessKey">随机生成</button>
             </div>
-            <div class="form-text">重新生成后旧 key 立即失效；账号/模型授权保持不变。</div>
+            <div class="form-text">
+              编辑时可直接改：填了非空值（trim 后）就按新 key 保存，旧 key 立即失效；
+              留空表示保持原 key。点「随机生成」也可以换一把随机 key。
+            </div>
           </div>
 
           <div class="col-lg-6">
