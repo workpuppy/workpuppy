@@ -601,7 +601,10 @@ func TestAccessMappingWiring(t *testing.T) {
 		".access-picker", ".access-pick", ".access-key-mono", ".access-key-copy", "#view-access table th",
 		// flex 布局必须清掉 Bootstrap 的 float + 负 margin-left，否则复选框被拉到容器外、
 		// 真实鼠标点不中（回归：elementFromPoint 落在 modal-body）。width:100% 让整行可点。
+		// position:relative 必须保留：Tabler 的勾选 ::before 以它为定位基准，
+		// 改成 static 会让勾选图标铺满弹窗（巨大的勾，F12 选不到）。
 		"float: none", "margin: 0.2rem 0 0 0", "width: 100%", "label.access-pick",
+		"position: relative",
 	} {
 		if !strings.Contains(css.Body.String(), want) {
 			t.Errorf("app.css 缺少 %s（接入映射样式）", want)
