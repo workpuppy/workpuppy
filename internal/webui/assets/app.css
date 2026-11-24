@@ -547,10 +547,28 @@ button[data-chart-uid]:focus-visible {
   word-break: break-all;
 }
 
-/* key 明文列：等宽 + 可换行（wp-<48 hex> 很长，不能把表格撑爆）。 */
+/* key 明文列：等宽 + 可换行（wp-<48 hex> 很长，不能把表格撑爆）。
+ * 列表里只显示省略值，整块可点 = 复制完整 key；hover 给出可交互提示。 */
 .access-key-mono {
   font-size: 0.78rem;
   word-break: break-all;
+}
+
+.access-key-copy {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.access-key-copy:hover,
+.access-key-copy:focus-visible {
+  color: var(--wp-primary);
+  text-decoration: underline;
 }
 
 #view-access table th {

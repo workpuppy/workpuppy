@@ -588,6 +588,7 @@ func TestAccessMappingWiring(t *testing.T) {
 		"/admin/access-keys", "loadAccessKeys", "renderAccessKeyRows", "openAccessKeyModal",
 		"saveAccessKey", "regenerateAccessKeyFromModal", "data-ak-kind", "accessKeyMask",
 		"copyText", "showAccessKeyModal", "hideAccessKeyModal", "refreshAccessOptions",
+		"点击复制完整 Key", "已复制完整 Key",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("app.js 缺少 %s（接入映射交互）", want)
@@ -597,7 +598,7 @@ func TestAccessMappingWiring(t *testing.T) {
 	css := httptest.NewRecorder()
 	Handler().ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
 	for _, want := range []string{
-		".access-picker", ".access-pick", ".access-key-mono", "#view-access table th",
+		".access-picker", ".access-pick", ".access-key-mono", ".access-key-copy", "#view-access table th",
 		// flex 布局必须清掉 Bootstrap 的 float + 负 margin-left，否则复选框被拉到容器外、
 		// 真实鼠标点不中（回归：elementFromPoint 落在 modal-body）。width:100% 让整行可点。
 		"float: none", "margin: 0.2rem 0 0 0", "width: 100%", "label.access-pick",

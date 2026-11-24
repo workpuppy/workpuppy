@@ -53,7 +53,6 @@ const state = {
   accessKeys: [],        // /admin/access-keys 的 keys[]
   accessAccounts: [],    // 账号选择器数据（/admin/accounts）
   accessModels: [],      // 模型选择器数据（/admin/models）
-  accessRevealed: new Set(), // 已点眼睛的 key id（只在前端内存，刷新即回到掩码）
   accessDraft: null,     // {id,name,key,enabled,all_accounts,all_models,accounts:Set,models:Set}
 };
 
@@ -1046,10 +1045,11 @@ function accessNickname(uid) {
   return (a && a.nickname) || uid;
 }
 
-// accessKeyMask 掩码规则：未点眼睛时只露头尾，避免截图/投屏泄露完整 key。
+// accessKeyMask 列表页只显示省略后的 key：完整 key 不直接铺在表格里，
+// 需要时点它复制（或进编辑弹窗看）。短自定义 key 不强行截断。
 function accessKeyMask(k) {
-  if (state.accessRevealed.has(k.id)) return k.key;
-  if (!k.key || k.key.length <= 12) return k.key || '';
+  if (!k.key) return '';
+  if (k.key.length <= 12) return k.key;
   return k.key.slice(0, 6) + '…' + k.key.slice(-4);
 }
 
@@ -1086,20 +1086,14 @@ function renderAccessKeyRows() {
     return;
   }
   const rows = state.accessKeys.map((k) => {
-    const revealed = state.accessRevealed.has(k.id);
-    const keyCell = el('td', {}, [
-      el('div', { class: 'access-key-mono', text: accessKeyMask(k) }),
-      el('div', { class: 'd-flex gap-1 mt-1' }, [
-        el('button', {
-          class: 'btn btn-sm btn-ghost-secondary py-0 px-1', text: revealed ? '隐藏' : '查看',
-          attrs: { type: 'button', 'data-ak-id': k.id, 'data-ak-action': 'reveal' },
-        }),
-        el('button', {
-          class: 'btn btn-sm btn-ghost-secondary py-0 px-1', text: '复制',
-          attrs: { type: 'button', 'data-ak-id': k.id, 'data-ak-action': 'copy' },
-        }),
-      ]),
-    ]);
+    // Key 单元格：省略显示 + 点击即复制完整 key（不再有「查看/复制」两个按钮）。
+    // 用 button 承载是为了键盘可达（Tab/Enter），外观由 .access-key-copy 压成纯文本。
+    const keyCell = el('td', {}, [el('button', {
+      class: 'access-key-copy access-key-mono',
+      text: accessKeyMask(k),
+      title: '点击复制完整 Key',
+      attrs: { type: 'button', 'data-ak-id': k.id, 'data-ak-action': 'copy' },
+    })]);
     return el('tr', {}, [
       el('td', { text: k.name || '–', title: k.id }),
       keyCell,
@@ -1131,12 +1125,6 @@ async function doAccessKeyAction(id, action) {
   const k = state.accessKeys.find((x) => x.id === id);
   if (!k) return;
   try {
-    if (action === 'reveal') {
-      if (state.accessRevealed.has(id)) state.accessRevealed.delete(id);
-      else state.accessRevealed.add(id);
-      renderAccessKeyRows();
-      return;
-    }
     if (action === 'copy') {
       await copyText(k.key);
       return;
@@ -1177,7 +1165,7 @@ async function copyText(text) {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
-      toast('已复制到剪贴板', 'success');
+      toast('已复制完整 Key', 'success');
       return;
     }
   } catch (_) { /* 回退到 execCommand */ }
@@ -1190,7 +1178,7 @@ async function copyText(text) {
   let ok = false;
   try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
   ta.remove();
-  toast(ok ? '已复制到剪贴板' : '复制失败：请手动选中复制', ok ? 'success' : 'warning');
+  toast(ok ? '已复制完整 Key' : '复制失败：请手动选中复制', ok ? 'success' : 'warning');
 }
 
 function openAccessKeyModal(k) {
