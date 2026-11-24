@@ -1,11 +1,14 @@
 package accesskey
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +22,12 @@ func newTempStore(t *testing.T) (*Store, string) {
 	return st, path
 }
 
+// testSecret 派生一个符合生产规则（sk- + 32 位字母/数字）的确定性测试密钥。
+func testSecret(label string) string {
+	sum := sha256.Sum256([]byte(label))
+	return "sk-" + hex.EncodeToString(sum[:16])
+}
+
 // 新建 → 落盘 → 重新 Load → 按密钥查回；落盘权限必须是 0600（文件里是明文 key）。
 func TestCreateLookupPersist(t *testing.T) {
 	st, path := newTempStore(t)
@@ -29,8 +38,8 @@ func TestCreateLookupPersist(t *testing.T) {
 	if k.ID == "" || k.Key == "" || !k.Enabled || !k.AllAccounts || !k.AllModels {
 		t.Fatalf("unexpected key: %+v", k)
 	}
-	if len(k.Key) < 16 || k.Key[:3] != "wp-" {
-		t.Errorf("生成的 key 形态异常: %q", k.Key)
+	if len(k.Key) != len(secretPrefix)+secretBodyLen || !secretPattern.MatchString(k.Key) {
+		t.Errorf("生成的 key 形态异常（want sk- + 32 位字母数字）: %q", k.Key)
 	}
 
 	st2 := New(path)
@@ -181,15 +190,19 @@ func TestUpdateRegenerateDelete(t *testing.T) {
 
 func TestDuplicateSecretRejected(t *testing.T) {
 	st, _ := newTempStore(t)
-	if _, err := st.Create(Input{Name: "a", Secret: "same-secret", AllAccounts: true, AllModels: true}); err != nil {
+	same := testSecret("same")
+	if _, err := st.Create(Input{Name: "a", Secret: same, AllAccounts: true, AllModels: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Create(Input{Name: "b", Secret: "same-secret", AllAccounts: true, AllModels: true}); !errors.Is(err, ErrConflict) {
+	if _, err := st.Create(Input{Name: "b", Secret: same, AllAccounts: true, AllModels: true}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("重复密钥 err=%v，want ErrConflict", err)
 	}
-	// 自定义密钥同样要过形态校验。
+	// 自定义密钥同样要过格式校验。
 	if _, err := st.Create(Input{Name: "c", Secret: "bad secret", AllAccounts: true, AllModels: true}); err == nil {
 		t.Fatal("含空格的密钥应被拒")
+	}
+	if _, err := st.Create(Input{Name: "d", Secret: "sk-tooShort", AllAccounts: true, AllModels: true}); err == nil {
+		t.Fatal("sk- 后不足 32 位的密钥应被拒")
 	}
 }
 
@@ -197,11 +210,14 @@ func TestDuplicateSecretRejected(t *testing.T) {
 // 留空/纯空白保持原 key；与其他 key 冲突回 ErrConflict。
 func TestUpdateSecret(t *testing.T) {
 	st, _ := newTempStore(t)
-	k, err := st.Create(Input{Name: "a", Secret: "old-secret-1", AllAccounts: true, AllModels: true})
+	oldSecret := testSecret("old")
+	takenSecret := testSecret("taken")
+	newSecret := testSecret("new")
+	k, err := st.Create(Input{Name: "a", Secret: oldSecret, AllAccounts: true, AllModels: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Create(Input{Name: "b", Secret: "taken-secret-2", AllAccounts: true, AllModels: true}); err != nil {
+	if _, err := st.Create(Input{Name: "b", Secret: takenSecret, AllAccounts: true, AllModels: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,32 +226,87 @@ func TestUpdateSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("blank secret should keep: %v", err)
 	}
-	if upd.Key != "old-secret-1" {
+	if upd.Key != oldSecret {
 		t.Fatalf("空白密钥不应改 key，得到 %q", upd.Key)
 	}
 
 	// 非空 = 改 key；旧 key 立即失效。
-	upd, err = st.Update(k.ID, Input{Name: "a", Secret: "new-secret-3", AllAccounts: true, AllModels: true})
+	upd, err = st.Update(k.ID, Input{Name: "a", Secret: newSecret, AllAccounts: true, AllModels: true})
 	if err != nil {
 		t.Fatalf("update secret: %v", err)
 	}
-	if upd.Key != "new-secret-3" {
-		t.Fatalf("key=%q want new-secret-3", upd.Key)
+	if upd.Key != newSecret {
+		t.Fatalf("key=%q want %q", upd.Key, newSecret)
 	}
-	if _, ok := st.Lookup("old-secret-1"); ok {
+	if _, ok := st.Lookup(oldSecret); ok {
 		t.Error("旧 key 应立即失效")
 	}
-	if got, ok := st.Lookup("new-secret-3"); !ok || got.ID != k.ID {
+	if got, ok := st.Lookup(newSecret); !ok || got.ID != k.ID {
 		t.Error("新 key 应可命中同一把 key")
 	}
 
 	// 与其他 key 冲突。
-	if _, err := st.Update(k.ID, Input{Name: "a", Secret: "taken-secret-2", AllAccounts: true, AllModels: true}); !errors.Is(err, ErrConflict) {
+	if _, err := st.Update(k.ID, Input{Name: "a", Secret: takenSecret, AllAccounts: true, AllModels: true}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("冲突密钥 err=%v want ErrConflict", err)
 	}
-	// 非法形态。
+	// 非法形态、超长、非字母数字。
 	if _, err := st.Update(k.ID, Input{Name: "a", Secret: "bad secret", AllAccounts: true, AllModels: true}); err == nil {
 		t.Fatal("含空格的 key 应被拒")
+	}
+	tooLong := "sk-" + strings.Repeat("a", 62) // 65 > 64
+	if _, err := st.Update(k.ID, Input{Name: "a", Secret: tooLong, AllAccounts: true, AllModels: true}); err == nil {
+		t.Fatal("超过 64 字符的 key 应被拒")
+	}
+	if _, err := st.Update(k.ID, Input{Name: "a", Secret: "sk-" + strings.Repeat("a", 32) + "-", AllAccounts: true, AllModels: true}); err == nil {
+		t.Fatal("含连字符的 key 应被拒")
+	}
+	// 边界：64 字符恰好允许。
+	maxSecret := "sk-" + strings.Repeat("a", 61)
+	if _, err := st.Update(k.ID, Input{Name: "a", Secret: maxSecret, AllAccounts: true, AllModels: true}); err != nil {
+		t.Fatalf("64 字符 key 应允许: %v", err)
+	}
+	// 后端必须 trim：前后空格不应进入落盘值。
+	trimmed := testSecret("trim")
+	upd, err = st.Update(k.ID, Input{Name: "a", Secret: "  " + trimmed + "  ", AllAccounts: true, AllModels: true})
+	if err != nil {
+		t.Fatalf("trim update: %v", err)
+	}
+	if upd.Key != trimmed {
+		t.Fatalf("后端未 trim：key=%q want %q", upd.Key, trimmed)
+	}
+}
+
+// 旧版本生成的 wp-xxx key 必须仍可编辑：只改名称/授权范围时不校验旧格式，
+// 只有真正改成新值时才按 sk- 规则校验。避免升级后所有存量 key 都改不了。
+func TestUpdateLegacyKeyWithoutChangingSecret(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	raw := `{"version":1,"keys":[{"id":"ak_legacy","name":"legacy","key":"wp-legacy-key-0123456789","enabled":true,"all_accounts":true,"all_models":true,"accounts":[],"models":[]}]}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := New(path)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := st.Lookup("wp-legacy-key-0123456789"); !ok || got.ID != "ak_legacy" {
+		t.Fatalf("legacy key 未加载: %+v %v", got, ok)
+	}
+	// 不传 secret（前端未改动时就是这条路径）→ 保留 wp- 旧值。
+	upd, err := st.Update("ak_legacy", Input{Name: "renamed", AllAccounts: true, AllModels: true})
+	if err != nil {
+		t.Fatalf("给旧 key 改名不应被新规则拦住: %v", err)
+	}
+	if upd.Key != "wp-legacy-key-0123456789" {
+		t.Fatalf("旧 key 被意外改写: %q", upd.Key)
+	}
+	// 原样回传旧 secret（某些客户端会全量提交）也视为未改动。
+	if _, err := st.Update("ak_legacy", Input{Name: "renamed", Secret: "wp-legacy-key-0123456789", AllAccounts: true, AllModels: true}); err != nil {
+		t.Fatalf("原样回传旧 secret 应视为未改: %v", err)
+	}
+	// 真要换新值时才严格校验。
+	if _, err := st.Update("ak_legacy", Input{Name: "renamed", Secret: "sk-short", AllAccounts: true, AllModels: true}); err == nil {
+		t.Fatal("旧 key 改成非法新值仍应被拒")
 	}
 }
 

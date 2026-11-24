@@ -1379,12 +1379,13 @@ async function saveAccessKey() {
   // 编辑语义：Key 输入框填了非空值（trim 后）就视为要改 key；留空 = 保持原 key。
   // 新增仍走自动生成（输入框在新建时是隐藏的），不受这条影响。
   const secret = ($('#akSecret').value || '').trim();
-  if (d.id && secret) {
-    if (!/^[A-Za-z0-9._-]{8,128}$/.test(secret)) {
-      showAccessKeyError('Key 只能包含字母、数字、点、下划线与连字符，长度 8–128。');
+  if (d.id && secret && secret !== d.key) {
+    // 与后端同口径：sk- 前缀 + 32–61 位字母/数字，总长 ≤64。
+    if (secret.length > 64 || !/^sk-[A-Za-z0-9]{32,61}$/.test(secret)) {
+      showAccessKeyError('Key 必须是 sk- 开头，后接 32–61 位大小写字母或数字，总长度不超过 64。');
       return;
     }
-    if (secret !== d.key && !confirm('修改 Key 后旧 key 立即失效，下游必须换成新 key。继续？')) return;
+    if (!confirm('修改 Key 后旧 key 立即失效，下游必须换成新 key。继续？')) return;
   }
   const body = {
     name: ($('#akName').value || '').trim(),
@@ -1394,7 +1395,7 @@ async function saveAccessKey() {
     accounts: Array.from(d.accounts),
     models: Array.from(d.models),
   };
-  if (d.id && secret) body.secret = secret;
+  if (d.id && secret && secret !== d.key) body.secret = secret;
   // 前端先拦一次：空白名单是「全部拒绝」，直接提交只会拿到 400；这里给出更具体的指引。
   if (!body.all_accounts && body.accounts.length === 0) {
     showAccessKeyError('至少选择一个账号（或勾选「全部账号」）——空列表等于全部拒绝。');

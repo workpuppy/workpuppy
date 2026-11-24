@@ -58,14 +58,15 @@ func TestAccessKeyEmptyStoreRejects(t *testing.T) {
 // 停用的 key 立即失效（与删除的区别只是保留配置便于再启用）。
 func TestAccessKeyDisabledRejected(t *testing.T) {
 	off := false
+	secret := testSecret("disabled")
 	st := newAccessKeyStore(t, accesskey.Input{
-		Name: "off", Secret: "disabled-secret", Enabled: &off, AllAccounts: true, AllModels: true,
+		Name: "off", Secret: secret, Enabled: &off, AllAccounts: true, AllModels: true,
 	})
 	p := testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999})
 	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: st})
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
-	req.Header.Set("Authorization", "Bearer disabled-secret")
+	req.Header.Set("Authorization", "Bearer "+secret)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -81,13 +82,14 @@ func TestAccessKeyModelNotAllowed(t *testing.T) {
 		return 200, sseOK, true
 	})
 	p := testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999})
+	secret := testSecret("model")
 	st := newAccessKeyStore(t, accesskey.Input{
-		Name: "a", Secret: "model-secret",
+		Name: "a", Secret: secret,
 		Accounts: []string{"u1"}, Models: []string{"cn:glm-5.2"},
 	})
 	h := NewHandler(Config{Pool: p, Upstream: up, AccessKeys: st})
 
-	rec := chatReq(h, "model-secret", `{"model":"cn:other","messages":[{"role":"user","content":"hi"}]}`)
+	rec := chatReq(h, secret, `{"model":"cn:other","messages":[{"role":"user","content":"hi"}]}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("越权模型 code=%d want 404（body=%s）", rec.Code, rec.Body)
 	}
@@ -99,7 +101,7 @@ func TestAccessKeyModelNotAllowed(t *testing.T) {
 	}
 
 	// 裸名等价 cn: —— 老客户端不带前缀不能被拒。
-	rec = chatReq(h, "model-secret", `{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	rec = chatReq(h, secret, `{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("裸名（cn 等价）code=%d want 200（body=%s）", rec.Code, rec.Body)
 	}
@@ -120,14 +122,15 @@ func TestAccessKeyAccountScopeRouting(t *testing.T) {
 		&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999},
 		&auth.Auth{UID: "u2", AccessToken: "at2", ExpiresAt: 9999999999},
 	)
+	secret := testSecret("scope")
 	st := newAccessKeyStore(t, accesskey.Input{
-		Name: "b", Secret: "scope-secret",
+		Name: "b", Secret: secret,
 		Accounts: []string{"u2"}, AllModels: true,
 	})
 	h := NewHandler(Config{Pool: p, Upstream: up, AccessKeys: st})
 
 	for i := 0; i < 5; i++ {
-		rec := chatReq(h, "scope-secret", `{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+		rec := chatReq(h, secret, `{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("request %d code=%d body=%s", i, rec.Code, rec.Body)
 		}
@@ -145,8 +148,9 @@ func TestAccessKeyStatusScoped(t *testing.T) {
 		&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999},
 		&auth.Auth{UID: "u2", AccessToken: "at2", ExpiresAt: 9999999999},
 	)
+	secret := testSecret("status")
 	st := newAccessKeyStore(t, accesskey.Input{
-		Name: "a", Secret: "status-secret",
+		Name: "a", Secret: secret,
 		Accounts: []string{"u1"}, AllModels: true,
 	})
 	h := NewHandler(Config{
@@ -155,7 +159,7 @@ func TestAccessKeyStatusScoped(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
-	req.Header.Set("Authorization", "Bearer status-secret")
+	req.Header.Set("Authorization", "Bearer "+secret)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -198,14 +202,15 @@ func TestAccessKeyModelsListingFiltered(t *testing.T) {
 	dynamicModelsCache.Unlock()
 
 	p := testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999})
+	secret := testSecret("models")
 	st := newAccessKeyStore(t, accesskey.Input{
-		Name: "a", Secret: "models-secret",
+		Name: "a", Secret: secret,
 		Accounts: []string{"u1"}, Models: []string{"cn:alpha"},
 	})
 	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: st, GlobalEnabled: false})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer models-secret")
+	req.Header.Set("Authorization", "Bearer "+secret)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -235,9 +240,11 @@ func TestAccessKeyStickyIsolation(t *testing.T) {
 		&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999},
 		&auth.Auth{UID: "u2", AccessToken: "at2", ExpiresAt: 9999999999},
 	)
+	secretA := testSecret("sticky-a")
+	secretB := testSecret("sticky-b")
 	st := newAccessKeyStore(t,
-		accesskey.Input{Name: "a", Secret: "sticky-a-secret", Accounts: []string{"u1"}, AllModels: true},
-		accesskey.Input{Name: "b", Secret: "sticky-b-secret", Accounts: []string{"u2"}, AllModels: true},
+		accesskey.Input{Name: "a", Secret: secretA, Accounts: []string{"u1"}, AllModels: true},
+		accesskey.Input{Name: "b", Secret: secretB, Accounts: []string{"u2"}, AllModels: true},
 	)
 	binds := newBindStore()
 	sess := session.New(session.Config{
@@ -250,7 +257,7 @@ func TestAccessKeyStickyIsolation(t *testing.T) {
 	h := NewHandler(Config{Pool: p, Upstream: up, AccessKeys: st, Session: sess})
 
 	body := `{"model":"glm-5.2","messages":[{"role":"user","content":"同一个会话"}],"metadata":{"conversation_id":"c1"},"stream":true}`
-	for _, pair := range [][2]string{{"sticky-a-secret", "Bearer at1"}, {"sticky-b-secret", "Bearer at2"}} {
+	for _, pair := range [][2]string{{secretA, "Bearer at1"}, {secretB, "Bearer at2"}} {
 		for i := 0; i < 2; i++ {
 			rec := chatReq(h, pair[0], body)
 			if rec.Code != http.StatusOK {
@@ -334,8 +341,9 @@ func TestAdminAccessKeysCRUD(t *testing.T) {
 	}
 
 	// 更新为全部账号/模型、重新启用，并直接编辑 key（非空 = 改密钥）
+	editedSecret := testSecret("edited")
 	rec = call(http.MethodPut, "/admin/access-keys/"+created.Key.ID,
-		`{"name":"team-a2","enabled":true,"all_accounts":true,"all_models":true,"secret":"edited-key-123"}`)
+		`{"name":"team-a2","enabled":true,"all_accounts":true,"all_models":true,"secret":"`+editedSecret+`"}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "team-a2") {
 		t.Fatalf("update code=%d body=%s", rec.Code, rec.Body)
 	}
@@ -345,8 +353,8 @@ func TestAdminAccessKeysCRUD(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &edited); err != nil {
 		t.Fatal(err)
 	}
-	if edited.Key.Key != "edited-key-123" {
-		t.Fatalf("编辑后的 key=%q want edited-key-123", edited.Key.Key)
+	if edited.Key.Key != editedSecret {
+		t.Fatalf("编辑后的 key=%q want %q", edited.Key.Key, editedSecret)
 	}
 	// 旧 key 立即失效，新 key 可访问数据面。
 	req = httptest.NewRequest(http.MethodGet, "/status", nil)
@@ -357,7 +365,7 @@ func TestAdminAccessKeysCRUD(t *testing.T) {
 		t.Errorf("旧密钥 code=%d want 401", rec.Code)
 	}
 	req = httptest.NewRequest(http.MethodGet, "/status", nil)
-	req.Header.Set("Authorization", "Bearer edited-key-123")
+	req.Header.Set("Authorization", "Bearer "+editedSecret)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

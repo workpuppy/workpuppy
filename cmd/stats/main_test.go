@@ -17,6 +17,9 @@ import (
 
 // ─── resolveGateway：地址与密钥解析 ──────────────────────────────────────
 
+// testCLIKey 符合生产规则（sk- + 32 位字母数字），供 resolveGateway 用例复用。
+const testCLIKey = "sk-0123456789abcdef0123456789abcdef"
+
 // writeAccessKey 在 dir 下写一份 access-keys.json（下游 key 不再写进 config.json）。
 func writeAccessKey(t *testing.T, dir, secret string) {
 	t.Helper()
@@ -35,7 +38,7 @@ func TestResolveGatewayFromConfig(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:7999"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writeAccessKey(t, dir, "sk-abc-123")
+	writeAccessKey(t, dir, testCLIKey)
 	t.Setenv("WP_CONFIG", cfg)
 	t.Setenv("WP_URL", "")
 	t.Setenv("WP_API_KEY", "")
@@ -47,8 +50,8 @@ func TestResolveGatewayFromConfig(t *testing.T) {
 	if base != "http://127.0.0.1:7999" {
 		t.Errorf("baseURL = %q, want http://127.0.0.1:7999", base)
 	}
-	if key != "sk-abc-123" {
-		t.Errorf("apiKey = %q, want sk-abc-123", key)
+	if key != testCLIKey {
+		t.Errorf("apiKey = %q, want %q", key, testCLIKey)
 	}
 }
 
@@ -679,7 +682,7 @@ func TestResolveGatewayServerOverride(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
 	_ = os.WriteFile(cfg, []byte(`{"listen":"127.0.0.1:1111"}`), 0o600)
-	writeAccessKey(t, dir, "from-config")
+	writeAccessKey(t, dir, testCLIKey)
 	t.Setenv("WP_CONFIG", cfg)
 	t.Setenv("WP_URL", "http://127.0.0.1:2222")
 	t.Setenv("WP_API_KEY", "")
@@ -692,7 +695,7 @@ func TestResolveGatewayServerOverride(t *testing.T) {
 	if base != "http://127.0.0.1:3333" {
 		t.Errorf("-server 应覆盖地址且去掉尾斜杠，得到 %q", base)
 	}
-	if key != "from-config" {
+	if key != testCLIKey {
 		t.Errorf("-server 下 key 应来自 access-keys.json，得到 %q", key)
 	}
 

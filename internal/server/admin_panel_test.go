@@ -19,10 +19,9 @@ import (
 
 // 测试用的两套凭据：数据面（/v1、/status）用接入 key，管理面用 adminPW。
 // 刻意取不同值——「拿接入 key 打 /admin」必须是 401，这是本次改动的核心断言。
-const (
-	testAPIKey  = "v1-test-key"
-	testAdminPW = "admin-test-pw"
-)
+const testAdminPW = "admin-test-pw"
+
+var testAPIKey = testSecret("v1-test-key")
 
 // newAdminHandler 构造一个开启管理面的 handler（无状态文件、纯内存池）。
 func newAdminHandler(t *testing.T, poolAccs []*auth.Auth, authDir string) *Handler {

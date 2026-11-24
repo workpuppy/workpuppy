@@ -686,13 +686,14 @@
           <div class="col-12" id="akSecretWrap" hidden>
             <label class="form-label" for="akSecret">Key</label>
             <div class="input-group input-group-sm">
-              <input class="form-control font-monospace" id="akSecret" autocomplete="off" spellcheck="false">
+              <input class="form-control font-monospace" id="akSecret" maxlength="64" autocomplete="off" spellcheck="false">
               <button class="btn btn-outline-secondary" type="button" id="btnCopyAccessKey">复制</button>
               <button class="btn btn-outline-warning" type="button" id="btnRegenerateAccessKey">随机生成</button>
             </div>
             <div class="form-text">
-              编辑时可直接改：填了非空值（trim 后）就按新 key 保存，旧 key 立即失效；
-              留空表示保持原 key。点「随机生成」也可以换一把随机 key。
+              格式：<code>sk-</code> + 32–61 位大小写字母/数字（总长不超过 64）。
+              编辑时填了非空值（trim 后）就按新 key 保存，旧 key 立即失效；留空表示保持原 key。
+              点「随机生成」会生成 <code>sk-</code> + 32 位随机 key。
             </div>
           </div>
 

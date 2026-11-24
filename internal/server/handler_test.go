@@ -1456,7 +1456,7 @@ func TestAccessKeyAuth(t *testing.T) {
 	h := NewHandler(Config{
 		Pool:       testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
 		Upstream:   upstream.New(),
-		AccessKeys: testAccessKeys("test-secret"),
+		AccessKeys: testAccessKeys(testHandlerKey),
 	})
 	// 无 key
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -1475,7 +1475,7 @@ func TestAccessKeyAuth(t *testing.T) {
 	}
 	// 对 key（请求会继续打到上游，但此处上游 client 会失败 —— 只要不是 401 就行）
 	req = httptest.NewRequest("GET", "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer test-secret")
+	req.Header.Set("Authorization", "Bearer "+testHandlerKey)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -1491,18 +1491,18 @@ func TestAccessKeyAuthConstantTime(t *testing.T) {
 	h := NewHandler(Config{
 		Pool:       testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
 		Upstream:   upstream.New(),
-		AccessKeys: testAccessKeys("test-secret"),
+		AccessKeys: testAccessKeys(testHandlerKey),
 	})
 	cases := []struct {
 		name string
 		bear string // 完整 Authorization 头（不含 "Bearer " 前缀则按原样发）
 		want int
 	}{
-		{"correct key", "test-secret", 200},
+		{"correct key", testHandlerKey, 200},
 		{"wrong key", "wrong", 401},
 		{"empty key", "", 401},
-		{"same prefix longer", "test-secret-extra", 401},
-		{"same prefix shorter", "test-sec", 401},
+		{"same prefix longer", testHandlerKey + "x", 401},
+		{"same prefix shorter", testHandlerKey[:len(testHandlerKey)-5], 401},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1894,7 +1894,7 @@ func TestHealthzServiceIdentityWithoutAuth(t *testing.T) {
 	h := NewHandler(Config{
 		Pool:       testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at", ExpiresAt: 9999999999}),
 		Upstream:   upstream.New(),
-		AccessKeys: testAccessKeys("test-secret"),
+		AccessKeys: testAccessKeys(testHandlerKey),
 	})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
@@ -1908,7 +1908,7 @@ func TestHealthzServiceIdentityWithoutAuth(t *testing.T) {
 
 func TestStatusRequiresAuth(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1", Nickname: "nick", AccessToken: "at", ExpiresAt: 9999999999})
-	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: testAccessKeys("test-secret")})
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: testAccessKeys(testHandlerKey)})
 
 	// 无 token → 401
 	rec := httptest.NewRecorder()
@@ -1920,7 +1920,7 @@ func TestStatusRequiresAuth(t *testing.T) {
 	// 带 token → 200
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/status", nil)
-	req.Header.Set("Authorization", "Bearer test-secret")
+	req.Header.Set("Authorization", "Bearer "+testHandlerKey)
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
 		t.Errorf("with token: code=%d", rec.Code)

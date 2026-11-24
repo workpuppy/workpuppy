@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -79,9 +80,33 @@ const (
 	maxModelLen = 200
 )
 
-// secretPattern 允许的 key 文本形态（自动生成的 wp-xxxx 与运维自定义值都满足）。
-// 只允许 URL/HTTP 头安全的字符，避免复制粘贴时被空格、换行或引号破坏。
-var secretPattern = regexp.MustCompile(`^[A-Za-z0-9._\-]{8,128}$`)
+// secretPattern 客户端 API Key 的格式：sk- 前缀 + 32–61 位字母/数字。
+//
+// 生成规则固定为 sk- + 32 位；编辑允许用户改长一点（总长最多 64，即 body 最多 61），
+// 但不允许更短/其它字符。旧版本生成的 wp-xxx key 不再自动生成，但已落盘的旧 key
+// 仍然可以正常鉴权与编辑（编辑时只有“真正改动”才会按新规则校验）。
+const (
+	secretPrefix   = "sk-"
+	secretBodyLen  = 32
+	secretMaxTotal = 64
+	secretAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
+
+var secretPattern = regexp.MustCompile(`^sk-[A-Za-z0-9]{32,61}$`)
+
+// validateSecret 校验编辑/自定义的客户端 key。调用方负责先 TrimSpace。
+//
+// 单独拆出来是为了让 Create（自定义值）与 Update（编辑改动）共用同一口径；
+// 长度错误先报，文案里明确“含 sk- 前缀”，避免用户只数后半段。
+func validateSecret(secret string) error {
+	if len(secret) > secretMaxTotal {
+		return invalid("Key 总长度不能超过 %d 个字符（含 sk- 前缀）", secretMaxTotal)
+	}
+	if !secretPattern.MatchString(secret) {
+		return invalid("Key 必须是 sk- 开头，后接 32–61 位大小写字母或数字")
+	}
+	return nil
+}
 
 // ErrNotFound 目标 key 不存在（管理面映射为 404）。
 var ErrNotFound = errors.New("access key not found")
@@ -292,8 +317,9 @@ func (s *Store) Lookup(secret string) (Key, bool) {
 
 // Input 创建/更新 key 的入参（管理面请求体同构）。
 //
-// Secret：创建时为空 = 自动生成；非空 = 用指定值。更新时非空（trim 后）= 改 key，
-// 空/纯空白 = 保持原 key。换密钥也可以走 Regenerate（随机生成）。
+// Secret：创建时为空 = 自动生成 sk- + 32 位字母/数字；非空 = 用指定值（须符合
+// sk- + 32–61 位字母/数字、总长≤64）。更新时非空（trim 后）且与原值不同 = 改 key，
+// 空/纯空白/与原值相同 = 保持原 key。换密钥也可以走 Regenerate（随机生成）。
 type Input struct {
 	Name        string   `json:"name"`
 	Secret      string   `json:"secret,omitempty"`
@@ -315,8 +341,8 @@ func (s *Store) Create(in Input) (Key, error) {
 		if secret, err = generateSecret(); err != nil {
 			return Key{}, err
 		}
-	} else if !secretPattern.MatchString(secret) {
-		return Key{}, invalid("key 只能包含字母、数字、点、下划线与连字符，长度 8–128")
+	} else if err := validateSecret(secret); err != nil {
+		return Key{}, err
 	}
 
 	s.mu.Lock()
@@ -364,9 +390,6 @@ func (s *Store) Update(id string, in Input) (Key, error) {
 		return Key{}, err
 	}
 	secret := strings.TrimSpace(in.Secret)
-	if secret != "" && !secretPattern.MatchString(secret) {
-		return Key{}, invalid("key 只能包含字母、数字、点、下划线与连字符，长度 8–128")
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, ok := s.keys[id]
@@ -374,6 +397,9 @@ func (s *Store) Update(id string, in Input) (Key, error) {
 		return Key{}, ErrNotFound
 	}
 	if secret != "" && secret != cur.Key {
+		if err := validateSecret(secret); err != nil {
+			return Key{}, err
+		}
 		if s.secretTakenLocked(secret) {
 			return Key{}, ErrConflict
 		}
@@ -519,13 +545,23 @@ func (s *Store) newIDLocked() (string, error) {
 	return "", fmt.Errorf("生成唯一 key id 失败（重试 5 次）")
 }
 
-// generateSecret 生成 wp-<48 hex> 形态的密钥（24 字节熵，约 192 bit）。
+// generateSecret 生成 sk- + 32 位字母/数字（约 190 bit 熵）。
+//
+// 用 crypto/rand.Int 逐字符取值而不是 byte%62：后者 256 % 62 != 0，会让前 8 个
+// 字符出现频率略高；认证密钥不做这种“微小偏差”的假设。
 func generateSecret() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
+	var sb strings.Builder
+	sb.Grow(len(secretPrefix) + secretBodyLen)
+	sb.WriteString(secretPrefix)
+	max := big.NewInt(int64(len(secretAlphabet)))
+	for i := 0; i < secretBodyLen; i++ {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteByte(secretAlphabet[n.Int64()])
 	}
-	return "wp-" + hex.EncodeToString(buf), nil
+	return sb.String(), nil
 }
 
 // validateInput 归一化并校验授权范围。空列表 + 未勾「全部」= 显式拒绝，

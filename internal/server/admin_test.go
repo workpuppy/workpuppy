@@ -89,7 +89,7 @@ func TestAdminRequiresAdminPassword(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1"})
 	h := NewHandler(Config{
 		Pool:         p,
-		AccessKeys:   testAccessKeys("test-secret"),
+		AccessKeys:   testAccessKeys(testHandlerKey),
 		AdminAuth:    adminauth.MustNew("admin-secret"),
 		AdminEnabled: true,
 	})
@@ -103,7 +103,7 @@ func TestAdminRequiresAdminPassword(t *testing.T) {
 	// 用 /v1 的接入 key → 401（这正是本次改动的目的：下游 key 不再能管后台）
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/admin/accounts/u1/disable", nil)
-	req.Header.Set("Authorization", "Bearer test-secret")
+	req.Header.Set("Authorization", "Bearer "+testHandlerKey)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("code=%d want 401 with access key（管理面不应接受 /v1 的 key）", rec.Code)
