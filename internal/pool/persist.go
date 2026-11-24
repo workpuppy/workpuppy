@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"wp/internal/atomicfile"
 	"wp/internal/auth"
 )
 
@@ -314,8 +315,12 @@ func (p *Pool) applySnapshotLocked(s snapshot) {
 	p.applyAccountsLocked(s.Accounts)
 }
 
-// saveLocked 把内存状态原子落盘（tmp + rename），并 fire-and-forget 镜像一份快照
-// 到 Redis（择新恢复备份）。失败走 notePersistFail 节流日志。调用方必须已持 p.mu。
+// saveLocked 把内存状态原子落盘（tmp + fsync + rename），并 fire-and-forget 镜像
+// 一份快照到 Redis（择新恢复备份）。失败走 notePersistFail 节流日志。调用方必须已持 p.mu。
+//
+// 用 atomicfile 而不是 os.WriteFile+rename：后者在掉电时可能留下 0 字节/半截
+// state.json，而 load() 对坏文件是静默跳过——一次断电就把积分/冷却/签到状态
+// 全部清零。fsync 之后最坏只丢最近一个 flushInterval（默认 5s）。
 func (p *Pool) saveLocked() {
 	if p.stateFp == "" {
 		return
@@ -327,15 +332,7 @@ func (p *Pool) saveLocked() {
 		p.notePersistFail(err)
 		return
 	}
-	if dir := filepath.Dir(p.stateFp); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
-	}
-	tmp := p.stateFp + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		p.notePersistFail(err)
-		return
-	}
-	if err := os.Rename(tmp, p.stateFp); err != nil {
+	if err := atomicfile.Write(p.stateFp, raw, 0o600); err != nil {
 		p.notePersistFail(err)
 		return
 	}

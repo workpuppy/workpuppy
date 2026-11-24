@@ -29,6 +29,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"wp/internal/atomicfile"
 )
 
 // FileName 接入 key 的落盘文件名。cmd/server 与本地运维 CLI 共用这一处，
@@ -445,8 +447,11 @@ func (s *Store) Delete(id string) error {
 	return nil
 }
 
-// saveLocked 整份原子落盘（同目录 tmp + fsync + rename），调用方必须已持写锁。
+// saveLocked 整份原子落盘（tmp + fsync + rename），调用方必须已持写锁。
 // 0600：文件里是明文密钥；目录不存在时补建（首次在空 data 目录里创建 key）。
+//
+// 走 atomicfile：密钥文件同样不能"rename 了但内容没落盘"——断电后一份 0 字节的
+// access-keys.json 会让所有下游突然 401，而文件本身看起来还在。
 func (s *Store) saveLocked() error {
 	if s.path == "" {
 		return nil
@@ -457,35 +462,7 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	raw = append(raw, '\n')
-	dir := filepath.Dir(s.path)
-	if dir == "" {
-		dir = "."
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".wp-access-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, s.path)
+	return atomicfile.Write(s.path, raw, 0o600)
 }
 
 // sortedLocked 与 List 同序，供落盘输出稳定（diff 友好）。调用方必须已持锁。

@@ -202,7 +202,7 @@ key 明文保存在 `data/access-keys.json`（0600），升级/重启都不会�
 |---|---|---|---|
 | `listen` | string | `":7863"` | 监听地址。容器内用 `:7863`，宿主机用 `-p 7863:7863` 暴露端口 |
 | `auth_dir` | string | `"./auths"` | 账号凭据目录（`workbuddy-<uid>.json`），新增文件几秒内自动热加载 |
-| `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复。同目录另有 `credit-daily.json`（积分日账本，保留 30 天） |
+| `state_file` | string | `"./data/state.json"` | 池状态快照（积分/冷却/禁用等），重启后恢复。同目录另有 `credit-daily.json`（积分日账本，保留 30 天）及其 `.bak` 备份 |
 | `qrcode_ttl` | string | `"15m"` | **扫码加号二维码的有效期**（不是管理后台的会话超时——管理密码是持久化的，没有会话）。到点后台把二维码标「已失效」、链接加删除线并停止轮询 |
 | `proxies` | object\|null | `null` | 出口线路映射，如 `{"hk": "http://127.0.0.1:7890"}`；账号文件里按线路名绑定 |
 | `reasoning_as_content` | bool | `true` | 思考兜底：整轮既无正文也无工具调用时，把 `reasoning_content` 同时作为 `content` 下发（避免空回复）。同时渲染两字段的客户端会看到重复，遇到就设 `false` |
@@ -367,7 +367,7 @@ key 明文保存在 `data/access-keys.json`（0600），升级/重启都不会�
 | `auths.watch_interval` | `"5s"` | `auth_dir` 热加载轮询间隔（新增账号文件几秒内生效） |
 | `state.flush_interval` | `"5s"` | **关键状态**（禁用/休养/签到日/冷却/熔断/刷新风控）落盘间隔，即"变化到落盘"的上界 |
 | `state.soft_flush_interval` | `"30s"` | **软计数**（余额的请求内插估算、成功/失败计数、模型成本台账）的合并落盘间隔；这些数据丢一段不影响判定，与关键状态一起写会白增写放大 |
-| `state.credit_flush_interval` | `"30s"` | 积分日账 `credit-daily.json` 的落盘间隔（日粒度数据，日末余额可由上游重查） |
+| `state.credit_flush_interval` | `"30s"` | 积分日账 `credit-daily.json` 的落盘间隔（日粒度数据，日末余额可由上游重查）。每次写盘都会 fsync 并滚动上一份到 `.bak`，断电最多丢最近一个周期 |
 | `risk.waf_window` | `"60s"` | 单 IP 的 WAF 命中统计窗口 |
 | `risk.waf_threshold` | `2` | 窗口内命中多少次进入"风险暂停"（暂停期间不刷新 token、不跑任务） |
 | `metrics.capacity` | `512` | 请求指标环形缓冲容量 |
@@ -376,6 +376,11 @@ key 明文保存在 `data/access-keys.json`（0600），升级/重启都不会�
 | `models.catalog_timeout` | `"5s"` | 上游模型目录抓取超时 |
 | `models.catalog_refresh_cooldown` | `"5m"` | 模型目录抓取冷却 |
 | `models.catalog_negative_ttl` | `"24h"` | 抓取失败的负缓存 TTL |
+
+> **断电安全**：`state.json`、`credit-daily.json`、`access-keys.json` 都走
+> 「同目录临时文件 → fsync → 原子 rename」，不会出现“文件名还在、内容却是 0 字节/半截”。
+> 积分日账额外把上一份滚动到 `credit-daily.json.bak`；启动时主文件损坏或丢失会自动从
+> `.bak` 恢复并修好主文件。
 
 ### `session_sticky` —— 会话粘性
 
@@ -697,6 +702,7 @@ docker pull ghcr.io/workpuppy/workpuppy:latest
 | 客户端显示空回复（思考模型） | 保持 `reasoning_as_content: true`；若出现重复显示则设 `false` |
 | 模型上下文被截断 | 调 `models.default_context_window`，或确认上游模型声明 |
 | 账号被连续禁用 | 看 `pool.session_dead_threshold`；`12153` 连续多次才会禁用 |
+| 断电后积分日账本 / 账号图表历史变空 | 旧版整份重写未 fsync，掉电可能留下 0 字节或半截文件；当前版本改为 fsync + 原子替换，并保留 `data/credit-daily.json.bak`，启动时主文件无效会自动从备份恢复。若主文件与 `.bak` 都已损坏，历史不可恢复（会打 WARN），请检查磁盘/挂载与备份 |
 | 想快速定位某次请求 | 调 `debug.dump_min_bytes`（改大/改小）配合日志中的请求落盘 |
 
 ---

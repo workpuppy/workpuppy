@@ -1,9 +1,13 @@
 package creditledger
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"wp/internal/atomicfile"
 )
 
 func cst(y int, m time.Month, d, h int) time.Time {
@@ -154,5 +158,158 @@ func TestHistoryWindow(t *testing.T) {
 		if h[i-1].Date >= h[i].Date {
 			t.Fatalf("日期未升序：%v", h)
 		}
+	}
+}
+
+// 掉电回归：主文件被写成 0 字节/坏 JSON 时，Load 必须从 .bak 恢复，而不是从空账本开始。
+// 旧实现只读主文件、失败后由 main 打 WARN 继续跑，30 秒后一落盘就把历史彻底覆盖。
+func TestLoadFallsBackToBackup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bad  []byte
+	}{
+		{"empty", []byte{}},
+		{"truncated", []byte(`{"updated_at":"2026-11-10T12:00:00+08:00","days":[`)},
+		{"zero-length-json", []byte(`{"updated_at":"2026-11-10T12:00:00+08:00","days":[]}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "credit-daily.json")
+			now := cst(2026, 11, 10, 12)
+
+			l := New(path, 30)
+			l.SetClock(func() time.Time { return now })
+			l.RecordEarned("u1", "cn", 100)
+			if err := l.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			// 第二次落盘：主文件=150，备份=100（上一份）。
+			l.RecordEarned("u1", "cn", 50)
+			if err := l.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, tc.bad, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			l2 := New(path, 30)
+			l2.SetClock(func() time.Time { return now })
+			if err := l2.Load(); err != nil {
+				t.Fatalf("Load 应从备份恢复，实际报错: %v", err)
+			}
+			// 备份是上一份快照（100），关键是"历史没有归零"。
+			if got := l2.Snap().Totals.Earned; got != 100 {
+				t.Fatalf("从备份恢复后 earned=%d want 100（历史未被抹掉）", got)
+			}
+			// 主文件应已被修复为合法 JSON，避免下一次 Flush 把唯一备份挪走后再掉电。
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !json.Valid(raw) {
+				t.Fatalf("主文件未被修复为合法 JSON: %q", raw)
+			}
+		})
+	}
+}
+
+// 主文件整个丢失（rename 窗口）时也必须能从 .bak 恢复。
+func TestLoadFromBackupWhenMainMissing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credit-daily.json")
+	now := cst(2026, 11, 10, 12)
+	l := New(path, 30)
+	l.SetClock(func() time.Time { return now })
+	l.RecordEarned("u1", "cn", 42)
+	if err := l.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	l.RecordEarned("u1", "cn", 8)
+	if err := l.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
+	l2 := New(path, 30)
+	l2.SetClock(func() time.Time { return now })
+	if err := l2.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := l2.Snap().Totals.Earned; got != 42 {
+		t.Fatalf("earned=%d want 42（来自 .bak）", got)
+	}
+}
+
+// 主文件"合法但被写成空历史"（掉电最隐蔽的形态）时，应选择天数更多的备份。
+func TestLoadPrefersRicherBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credit-daily.json")
+	bak := atomicfile.BackupPath(path)
+	main := fileData{
+		UpdatedAt: "2026-11-10T12:00:00+08:00",
+		Days:      []Day{},
+	}
+	backup := fileData{
+		UpdatedAt: "2026-11-09T23:00:00+08:00",
+		Days: []Day{{
+			Date: "2026-11-09",
+			Accounts: map[string]*AccountDay{
+				"u1": {Earned: 88, Spent: 12},
+			},
+		}},
+	}
+	writeJSON(t, path, main)
+	writeJSON(t, bak, backup)
+
+	now := cst(2026, 11, 10, 12)
+	l := New(path, 30)
+	l.SetClock(func() time.Time { return now })
+	if err := l.Load(); err != nil {
+		t.Fatal(err)
+	}
+	snap := l.Snap()
+	if len(snap.Histories) != 1 || snap.Histories[0].Totals.Earned != 88 {
+		t.Fatalf("没有采用更完整的备份：%+v", snap.Histories)
+	}
+}
+
+// 主文件与备份都坏掉时明确报错（而不是静默当成空账本），便于运维保留现场。
+func TestLoadBothCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credit-daily.json")
+	if err := os.WriteFile(path, []byte("{bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(atomicfile.BackupPath(path), []byte("also bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := New(path, 30)
+	if err := l.Load(); err == nil {
+		t.Fatal("主文件与备份均损坏时应报错")
+	}
+}
+
+func TestLoadFirstRunNoFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credit-daily.json")
+	l := New(path, 30)
+	l.SetClock(func() time.Time { return cst(2026, 11, 10, 12) })
+	if err := l.Load(); err != nil {
+		t.Fatalf("首次启动无文件应正常: %v", err)
+	}
+	if snap := l.Snap(); snap.Today != "2026-11-10" || len(snap.Histories) != 0 {
+		t.Fatalf("first snap=%+v", snap)
+	}
+}
+
+func writeJSON(t *testing.T, path string, v any) {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

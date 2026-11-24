@@ -13,15 +13,17 @@
 package creditledger
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
+
+	"wp/internal/atomicfile"
 )
 
 // cstZone 上游自然日按 CST（+8，无夏令时）。
@@ -115,26 +117,54 @@ func (l *Ledger) SetClock(f func() time.Time) {
 func dayOf(t time.Time) string { return t.In(cstZone).Format("2006-01-02") }
 
 // Load 从盘上恢复历史；当日记录直接作为热态继续累加（重启不丢当日已统计部分）。
+//
+// 断电恢复：主文件优先，但主文件不可解析/为空时回退到 credit-daily.json.bak。
+// 旧实现只读主文件、解析失败就向上返回错误，main 打一条 WARN 后从空账本启动——
+// 一次掉电留下 0 字节或半截 JSON，就会把 30 天历史全部抹掉，且现场只剩实时数据。
 func (l *Ledger) Load() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.path == "" {
 		return nil
 	}
-	raw, err := os.ReadFile(l.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			l.day = dayOf(l.now())
-			return nil
-		}
-		return err
-	}
-	var fd fileData
-	if err := json.Unmarshal(raw, &fd); err != nil {
-		return fmt.Errorf("credit-daily 解析失败: %w", err)
-	}
 	today := dayOf(l.now())
+	main := readLedgerCandidate(l.path)
+	bakPath := atomicfile.BackupPath(l.path)
+	bak := readLedgerCandidate(bakPath)
+
+	chosen := main
+	switch {
+	case !main.ok && !bak.ok:
+		if fileExists(l.path) || fileExists(bakPath) {
+			return fmt.Errorf("credit-daily 主文件与备份均无法解析（%s / %s）", l.path, bakPath)
+		}
+		// 两个文件都不存在 = 首次启动的正常形态。
+		l.day = today
+		l.today = map[string]*AccountDay{}
+		l.days = l.days[:0]
+		return nil
+	case !main.ok:
+		chosen = bak
+		log.Printf("WARN: [creditledger] 主文件 %s 不可用，已从备份 %s 恢复历史", l.path, bakPath)
+	case bak.ok && richerLedger(bak, main):
+		chosen = bak
+		log.Printf("WARN: [creditledger] 备份比主文件更完整（主 %d 天 / 备份 %d 天），已采用备份 %s",
+			len(main.data.Days), len(bak.data.Days), bakPath)
+	}
+
+	// 从备份恢复后立刻修好主文件：否则下一次 Flush 的「旧文件 → .bak」会把这份
+	// 唯一可用的备份挪走/覆盖，再掉一次电就又没得救了。
+	if chosen.source != l.path {
+		if err := atomicfile.Write(l.path, chosen.raw, 0o600); err != nil {
+			log.Printf("WARN: [creditledger] 修复主文件 %s 失败（内存已恢复，稍后会再试）: %v", l.path, err)
+		} else {
+			log.Printf("[creditledger] 已从备份恢复并修复主文件 %s", l.path)
+		}
+	}
+
+	fd := chosen.data
 	l.days = l.days[:0]
+	l.today = map[string]*AccountDay{}
 	for _, d := range fd.Days {
 		if d.Accounts == nil {
 			d.Accounts = map[string]*AccountDay{}
@@ -152,6 +182,46 @@ func (l *Ledger) Load() error {
 	l.trimLocked()
 	sort.Slice(l.days, func(i, j int) bool { return l.days[i].Date < l.days[j].Date })
 	return nil
+}
+
+// ledgerCandidate 一个可解析的落盘快照（主文件或备份）。
+type ledgerCandidate struct {
+	raw    []byte
+	source string
+	data   fileData
+	ok     bool
+}
+
+// readLedgerCandidate 读取并解析一个候选文件；不存在/空文件/坏 JSON 一律 ok=false。
+// 空文件比对"不存在"更危险：掉电后 rename 可能留下 0 字节文件，读侧必须把它
+// 当成"这份不可用"，而不是当成合法的空账本。
+func readLedgerCandidate(path string) ledgerCandidate {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ledgerCandidate{}
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ledgerCandidate{}
+	}
+	var fd fileData
+	if err := json.Unmarshal(raw, &fd); err != nil {
+		return ledgerCandidate{}
+	}
+	return ledgerCandidate{raw: raw, source: path, data: fd, ok: true}
+}
+
+// richerLedger 报告 a 是否比 b 更完整：天数更多优先；天数相同看 updated_at。
+// 用于挡住"主文件被掉电写成合法的空/少天数据"这一类损坏（空 JSON 也能解析通过）。
+func richerLedger(a, b ledgerCandidate) bool {
+	if len(a.data.Days) != len(b.data.Days) {
+		return len(a.data.Days) > len(b.data.Days)
+	}
+	return a.data.UpdatedAt > b.data.UpdatedAt
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // rollLocked 跨天滚动：把昨天的热态冻结进历史，开一个新的一天。
@@ -327,14 +397,9 @@ func (l *Ledger) Flush() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
-		return err
-	}
-	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, l.path)
+	// 整份重写 + fsync + 上一份 .bak：掉电最多丢最近一个落盘周期（默认 30s），
+	// 不会因为写到一半而把 30 天历史变成 0 字节。
+	return atomicfile.WriteWithBackup(l.path, raw, 0o600)
 }
 
 // Run 周期性落盘，直到 ctx 结束。

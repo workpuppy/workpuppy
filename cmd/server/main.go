@@ -308,7 +308,7 @@ func main() {
 	}
 	credits := creditledger.New(filepath.Join(ledgerDir, "credit-daily.json"), creditledger.DefaultRetain)
 	if err := credits.Load(); err != nil {
-		log.Printf("WARN: 积分日账本读取失败（将从空账本开始）: %v", err)
+		log.Printf("WARN: 积分日账本主文件与备份均无法读取（将从空账本开始；请检查 data/credit-daily.json 与 .bak）: %v", err)
 	}
 	// 接入映射：下游 key 的账号/模型白名单，落盘 data/access-keys.json。
 	// 文件损坏时**阻断启动**（不静默当空）：否则所有下游会突然 401，且排障没有线索。
