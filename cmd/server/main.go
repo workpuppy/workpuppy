@@ -372,6 +372,13 @@ func main() {
 	log.Printf("接入 key 文件回读：每 %v 对齐 :00/:30 检查 %s（手工改文件最多 30s 生效；接口写入即时生效）",
 		accesskey.DefaultReloadInterval, accessKeys.Path())
 	go sch.Run(ctx)
+	// 启动补跑：升级 / 删了重建 / 崩溃重启会整段吞掉当天的定时时点（Run 的补跑只管
+	// 运行期跨过的槽位），这里在启动时按本地状态把"今天已过点但没做完"的签到 / 旅行补上。
+	if cfg.Schedule.StartupCatchup {
+		go sch.StartupCatchUp(ctx)
+	} else {
+		log.Printf("启动补跑已禁用（schedule.startup_catchup=false）")
+	}
 	// 积分日账落盘节奏：默认 30s（日粒度数据丢一段不损语义，日末余额可上游重查）。
 	// 5s 跟随 state.json 会把 8 成写入量花在这份"当天就能从上游重算"的文件上。
 	creditFlush := cfg.StateCreditFlushIntervalDur

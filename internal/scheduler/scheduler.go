@@ -113,6 +113,10 @@ type Scheduler struct {
 
 	// checkinMu 串行化签到：定时入口与手动触发互斥，避免同一时刻重复打上游签到接口。
 	checkinMu sync.Mutex
+
+	// travelMu 串行化旅行巡检：定时时点 / 手动「一键猫猫旅行」/ 启动补跑三条入口
+	// 可能在启动瞬间撞车（见 runTravelSubset）。撞车的后来者直接放弃，不重复 depart。
+	travelMu sync.Mutex
 }
 
 // New 构建。
@@ -472,7 +476,7 @@ func (s *Scheduler) runBatch(ctx context.Context, kinds []taskKind) {
 // 不影响其余任务继续执行（与现有各任务"单账号失败不阻断遍历"同口径）。
 // ctx 传导给带账号间限速的遍历（取消时立即放弃剩余账号），纯脚本类任务不感知。
 func (s *Scheduler) dispatch(ctx context.Context, k taskKind) {
-	ctx = context.WithValue(ctx, scheduledAccountKey{}, true)
+	ctx = scheduledCtx(ctx)
 	switch k {
 	case taskCheckin:
 		s.runCheckinNow(ctx)

@@ -73,7 +73,11 @@ func (s *Scheduler) RunTravelNow() {
 // 定时触发时整批摊在 15 分钟窗口内（spread.go），手动/关闭时退回固定间隔
 // travelAccountDelay。
 func (s *Scheduler) runTravel(ctx context.Context) {
-	// 先筛出真正要跑的账号，再做节奏规划（跳过的账号不该稀释摊开窗口）。
+	s.runTravelSubset(ctx, s.travelTargets())
+}
+
+// travelTargets 筛出本次巡检真正要跑的账号（禁用 / 风控暂停 / 无凭证 / global 跳过）。
+func (s *Scheduler) travelTargets() []*auth.Auth {
 	targets := make([]*auth.Auth, 0, 8)
 	for _, st := range s.cfg.Pool.List() {
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
@@ -88,6 +92,22 @@ func (s *Scheduler) runTravel(ctx context.Context) {
 		}
 		targets = append(targets, a)
 	}
+	return targets
+}
+
+// runTravelSubset 对**给定账号集合**做一趟巡检（启动补跑按本地快照挑出子集后复用）。
+//
+// travelMu 串行化：同一时刻只允许一趟巡检在跑。定时时点、手动「一键猫猫旅行」、
+// 启动补跑三条入口可能在启动瞬间撞在一起（例如恰好在 09:00 重启），两趟并发
+// 会对同一账号各查一次状态、然后各自 depart 一次（重复写操作）。撞车时后来的
+// 那趟直接放弃——前一趟做的是同样的事，不会漏。
+func (s *Scheduler) runTravelSubset(ctx context.Context, targets []*auth.Auth) {
+	if !s.travelMu.TryLock() {
+		log.Printf("travel: 已有一趟巡检在跑，本轮跳过（%d 个账号交给那一趟）", len(targets))
+		return
+	}
+	defer s.travelMu.Unlock()
+
 	pacer := s.newAccountPacer(ctx, taskTravel, len(targets), travelAccountDelay)
 	if pacer.Active() {
 		log.Printf("travel spread: %d account(s) within %s", len(targets), pacer.Window().Round(time.Second))

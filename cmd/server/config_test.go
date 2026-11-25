@@ -534,6 +534,31 @@ func TestScheduleTimezoneConfig(t *testing.T) {
 	}
 }
 
+// TestScheduleStartupCatchupConfig 启动补跑默认开启（默认配置里有该键）；
+// 显式 false 可关掉（不想在启动瞬间产生上游流量的部署）。
+func TestScheduleStartupCatchupConfig(t *testing.T) {
+	c := Default()
+	if err := c.normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if !c.Schedule.StartupCatchup {
+		t.Fatal("默认 schedule.startup_catchup 应为 true（升级/重建后的补跑兜底）")
+	}
+
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "sc.json")
+	if err := os.WriteFile(fp, []byte(`{"schedule":{"startup_catchup":false}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(fp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c2.Schedule.StartupCatchup {
+		t.Error("显式 startup_catchup=false 应生效")
+	}
+}
+
 // TestScheduleExplicitDisable 显式 checkin_enabled=false 即可真正关掉签到
 // （issue #27 边界：此前无论怎么配小时都关不掉）。
 func TestScheduleExplicitDisable(t *testing.T) {

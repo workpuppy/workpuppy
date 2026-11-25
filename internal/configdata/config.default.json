@@ -15,6 +15,7 @@
   },
   "schedule": {
     "timezone": "Asia/Shanghai",
+    "startup_catchup": true,
     "checkin_time": [
       "09:00",
       "21:00"
