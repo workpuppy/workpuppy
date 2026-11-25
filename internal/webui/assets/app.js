@@ -770,7 +770,7 @@ async function openCreditChart(uid) {
   const acc = (state.accounts || []).find((a) => a.uid === uid);
   $('#creditModalTitle').textContent = '积分曲线 · ' + uid;
   $('#creditModalMeta').textContent = acc
-    ? [acc.nickname || '', acc.realm || '', '当前积分 ' + fmtNum(acc.credits)].filter(Boolean).join(' · ')
+    ? [acc.nickname || '', realmFlag(acc.realm), '当前积分 ' + fmtNum(acc.credits)].filter(Boolean).join(' · ')
     : '';
   const host = $('#creditModalChart');
   // 先丢弃旧实例再清空宿主：留着实例会指向被摘掉的 canvas（见 chartFor 的注释）。
@@ -925,7 +925,7 @@ async function loadAccounts() {
           attrs: { type: 'button', 'data-chart-uid': a.uid },
         })]),
         el('td', { class: 'font-monospace small', text: a.uid }),
-        el('td', { text: a.realm || '–' }),
+        el('td', { text: realmFlag(a.realm), title: realmLabel(a.realm) }),
         // 顺序固定：在线状态 → 签到状态 → 领养（猫）状态。
         el('td', {}, [el('div', { class: 'badge-row' }, [
           statusBadge(a),
@@ -1046,6 +1046,11 @@ function realmLabel(realm) {
   return realm === 'global' ? '全球 (global)' : '中国 (cn)';
 }
 
+// 版本在界面上一律只显示 emoji：中国国旗 / 全球地球（不再带 cn/global 文字）。
+function realmFlag(realm) {
+  return realm === 'global' ? '🌐' : '🇨🇳';
+}
+
 function modelRealm(id) {
   const s = String(id || '');
   const i = s.indexOf(':');
@@ -1128,7 +1133,7 @@ function renderAccessKeyRows() {
     })]);
     return el('tr', {}, [
       el('td', { text: k.name || '–', title: k.id }),
-      el('td', { class: 'small text-nowrap', text: realmLabel(k.realm) }),
+      el('td', { class: 'small text-nowrap', text: realmFlag(k.realm), title: realmLabel(k.realm) }),
       keyCell,
       el('td', { class: 'small', text: accessAccountSummary(k) }),
       el('td', { class: 'small', text: accessModelSummary(k) }),
@@ -1291,9 +1296,9 @@ function renderAccessPickers() {
   const modAll = state.accessModels.filter((m) => modelRealm(m.id) === realm);
   // 过滤框留空 = 展示该版本全部备选项；placeholder 带总数。
   $('#akAccountFilter').placeholder =
-    '过滤昵称 / UID（' + realmLabel(realm) + ' 共 ' + accAll.length + ' 个）';
+    '过滤昵称 / UID（' + realmFlag(realm) + ' 共 ' + accAll.length + ' 个）';
   $('#akModelFilter').placeholder =
-    '过滤模型 ID / 描述（' + realmLabel(realm) + ' 共 ' + modAll.length + ' 个）';
+    '过滤模型 ID / 描述（' + realmFlag(realm) + ' 共 ' + modAll.length + ' 个）';
   const accKw = ($('#akAccountFilter').value || '').trim().toLowerCase();
   const accRows = accAll
     .filter((a) => !accKw ||
@@ -1301,7 +1306,7 @@ function renderAccessPickers() {
       (a.uid || '').toLowerCase().includes(accKw))
     .map((a) => accessPickRow(
       'account', a.uid, a.nickname || a.uid,
-      a.uid + (a.realm ? ' · ' + a.realm : '') + (a.disabled ? ' · 已禁用' : ''),
+      a.uid + ' · ' + realmFlag(a.realm) + (a.disabled ? ' · 已禁用' : ''),
       d.accounts.has(a.uid), a.disabled,
     ));
   $('#akAccountList').replaceChildren(...(accRows.length ? accRows : [el('div', {
@@ -1766,7 +1771,7 @@ async function startAuth() {
     $('#addUrl').href = r.auth_url || '#';
     resetAuthView();
     $('#addBox').classList.remove('d-none');
-    $('#addMeta').textContent = '等待授权…（' + (r.realm || realm) + '）';
+    $('#addMeta').textContent = '等待授权…（' + realmFlag(r.realm || realm) + '）';
     renderQR(r.auth_url || '');
     startAuthCountdown(r.expires_in || 0);
     pollAuth(r.state, r.realm || realm);

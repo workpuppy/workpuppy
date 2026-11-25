@@ -576,7 +576,7 @@ func TestAccessMappingWiring(t *testing.T) {
 		`id="akAllAccounts"`, `id="akAllModels"`, `id="akSecret"`, `id="btnSaveAccessKey"`,
 		`id="btnRegenerateAccessKey"`, `id="akSelectionHint"`,
 		`id="btnClearAccessAccounts"`, `id="btnClearAccessModels"`,
-		`id="akRealm"`, `<option value="cn">中国 (cn)</option>`, `<option value="global">全球 (global)</option>`,
+		`id="akRealm"`, `<option value="cn">🇨🇳</option>`, `<option value="global">🌐</option>`,
 		`<th>版本</th>`,
 		// Key 规则：sk- + 32–61 位字母数字，编辑总长 ≤64。
 		`maxlength="64"`, `sk-`,
@@ -602,7 +602,7 @@ func TestAccessMappingWiring(t *testing.T) {
 		"/admin/access-keys", "loadAccessKeys", "renderAccessKeyRows", "openAccessKeyModal",
 		"saveAccessKey", "randomizeAccessKeySecret", "generateClientSecret",
 		"clearAccessAccounts", "clearAccessModels",
-		"realmLabel", "modelRealm", "pruneAccessDraftForRealm", "syncAccessPickerDisabled",
+		"realmLabel", "realmFlag", "modelRealm", "pruneAccessDraftForRealm", "syncAccessPickerDisabled",
 		"data-ak-kind", "accessKeyMask",
 		"copyText", "showAccessKeyModal", "hideAccessKeyModal", "refreshAccessOptions",
 		"点击复制完整 Key", "已复制完整 Key", `sk-[A-Za-z0-9]{32,61}`, "总长度不超过 64",

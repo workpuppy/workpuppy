@@ -14,6 +14,8 @@
 package accesskey
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -211,6 +213,10 @@ func SplitModel(model string) (realm, bare string) {
 	return prefix, model[idx+1:]
 }
 
+// DefaultReloadInterval 接入 key 文件的外部变更回读周期。与「整点整分第 0/30 秒」
+// 对齐（Unix 时间按 30s 截断），兼顾性能与准实时：手工改文件最多 30s 生效。
+const DefaultReloadInterval = 30 * time.Second
+
 // Store 接入 key 的并发安全存储（内存 + 原子落盘）。
 //
 // path 为空 = 仅内存（测试与纯 API 部署）；非空时每次写操作都整份原子重写文件，
@@ -219,6 +225,9 @@ type Store struct {
 	mu   sync.RWMutex
 	path string
 	keys map[string]Key // id → Key
+	// lastRaw 最近一次成功读/写的原始文件内容。RunReload 每 30s 读文件，
+	// 与它相同则直接返回（避免无变更时反复解析与日志）。
+	lastRaw []byte
 }
 
 // New 构造存储；path 为空表示不落盘。构造后需调用 Load 读取已有文件。
@@ -238,6 +247,8 @@ func (s *Store) Load() error {
 	}
 	raw, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		s.keys = map[string]Key{}
+		s.lastRaw = nil
 		return nil
 	}
 	if err != nil {
@@ -258,8 +269,96 @@ func (s *Store) Load() error {
 	}
 	s.mu.Lock()
 	s.keys = next
+	s.lastRaw = append(s.lastRaw[:0], raw...)
 	s.mu.Unlock()
 	return nil
+}
+
+// Reload 从本地文件回读并覆盖内存配置（供每 30s 的对齐巡检使用）。
+//
+// 语义：
+//   - 文件内容与上次读/写一致 → 直接返回（零解析、零日志）；
+//   - 文件是合法 JSON → 整份替换内存，外部改文件即生效；
+//   - 文件坏/不可读 → 返回错误并**保留内存配置**（不能因为一次半截写入让全站 401）；
+//   - 文件被删除 → 清空内存（文件是配置真相；日志给出明确 WARN）。
+//
+// API 写入走 saveLocked，会同时更新 keys 与 lastRaw，因此巡检不会用旧文件
+// 覆盖刚通过接口做的修改。整个读+解析在写锁内完成，避免与 API 写并发交错。
+func (s *Store) Reload() error {
+	if s.path == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if len(s.keys) == 0 {
+				s.lastRaw = nil
+				return nil
+			}
+			s.keys = map[string]Key{}
+			s.lastRaw = nil
+			log.Printf("WARN: [accesskey] %s 已被删除，内存中的接入 key 已清空（下游将 401）", s.path)
+			return nil
+		}
+		return err
+	}
+	if bytes.Equal(raw, s.lastRaw) {
+		return nil
+	}
+	var doc fileDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		// 记下坏内容：同一份坏文件不每 30s 重复解析/刷日志；文件再变才重试。
+		s.lastRaw = append(s.lastRaw[:0], raw...)
+		return fmt.Errorf("解析 %s: %w", s.path, err)
+	}
+	next := make(map[string]Key, len(doc.Keys))
+	for _, k := range doc.Keys {
+		k = normalizeStored(k)
+		if k.ID == "" || k.Key == "" {
+			continue
+		}
+		next[k.ID] = k
+	}
+	s.keys = next
+	s.lastRaw = append(s.lastRaw[:0], raw...)
+	log.Printf("[accesskey] 已从 %s 重新加载 %d 把接入 key（每 30s 对齐回读）", s.path, len(next))
+	return nil
+}
+
+// RunReload 每 interval 从文件回读一次，直到 ctx 结束。第一次检查对齐到下一个
+// 「整 30 秒」边界（:00/:30），启动时已有一次 Load，不必立刻重复。
+// interval<=0 用 DefaultReloadInterval；path 为空（纯内存）直接返回。
+func (s *Store) RunReload(ctx context.Context, interval time.Duration) {
+	if s.path == "" {
+		return
+	}
+	if interval <= 0 {
+		interval = DefaultReloadInterval
+	}
+	for {
+		t := time.NewTimer(time.Until(nextAligned(time.Now(), interval)))
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+			if err := s.Reload(); err != nil {
+				log.Printf("WARN: [accesskey] 回读 %s 失败（保留内存配置）: %v", s.path, err)
+			}
+		}
+	}
+}
+
+// nextAligned 返回 now 之后最近的一个 interval 整数倍时刻（Unix 时间轴）。
+// 30s 的整数倍在所有固定偏移时区里都落在 :00/:30（偏移是 30s 的整数倍）。
+func nextAligned(now time.Time, interval time.Duration) time.Time {
+	next := now.Truncate(interval).Add(interval)
+	if !next.After(now) {
+		next = next.Add(interval)
+	}
+	return next
 }
 
 // fileDoc 落盘结构。带 version 是为了将来扩展（迁移时能识别旧格式）；
@@ -515,7 +614,13 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	raw = append(raw, '\n')
-	return atomicfile.Write(s.path, raw, 0o600)
+	if err := atomicfile.Write(s.path, raw, 0o600); err != nil {
+		return err
+	}
+	// 与 RunReload 的“内容未变则跳过”共用同一份快照：接口写入后巡检不会
+	// 再把它当成外部变更重复解析/打日志。
+	s.lastRaw = append(s.lastRaw[:0], raw...)
+	return nil
 }
 
 // sortedLocked 与 List 同序，供落盘输出稳定（diff 友好）。调用方必须已持锁。

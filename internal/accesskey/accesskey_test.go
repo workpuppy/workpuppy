@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTempStore(t *testing.T) (*Store, string) {
@@ -354,6 +355,115 @@ func TestRealmValidationAndModelFilter(t *testing.T) {
 	legacy := Key{Models: []string{"cn:m", "global:g"}}
 	if !legacy.AllowsModel("global:g") {
 		t.Error("零值 realm 不应额外约束（测试/旧结构兼容）")
+	}
+}
+
+// 外部改文件 → Reload 覆盖内存；接口写入后 Reload 不会回退。
+func TestReloadFromFile(t *testing.T) {
+	st, path := newTempStore(t)
+	a, err := st.Create(Input{Name: "a", Secret: testSecret("reload-a"), AllAccounts: true, AllModels: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 外部编辑：整份替换为另一把 key。
+	b := a
+	b.ID = "ak_external"
+	b.Name = "external"
+	b.Key = testSecret("reload-b")
+	writeKeyFile(t, path, b)
+	if err := st.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if _, ok := st.Lookup(a.Key); ok {
+		t.Error("旧 key 应被文件内容覆盖")
+	}
+	if got, ok := st.Lookup(b.Key); !ok || got.Name != "external" {
+		t.Fatalf("文件里的 key 未生效: %+v %v", got, ok)
+	}
+
+	// 接口写入（改名）后立刻 Reload：不能回退成文件旧内容。
+	if _, err := st.Update("ak_external", Input{Name: "renamed", Secret: b.Key, AllAccounts: true, AllModels: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Get("ak_external"); got.Name != "renamed" {
+		t.Fatalf("Reload 把接口修改回退了: %q", got.Name)
+	}
+}
+
+// 坏文件保留内存配置（不因一次半截写入让全站 401）；文件修好后下次能恢复。
+func TestReloadInvalidKeepsCache(t *testing.T) {
+	st, path := newTempStore(t)
+	a, err := st.Create(Input{Name: "a", Secret: testSecret("keep"), AllAccounts: true, AllModels: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Reload(); err == nil {
+		t.Fatal("坏文件应返回错误")
+	}
+	if got, ok := st.Lookup(a.Key); !ok || got.Name != "a" {
+		t.Fatalf("坏文件不应清空内存配置: %+v %v", got, ok)
+	}
+
+	// 同一份坏文件不重复解析；改回合法内容后能恢复。
+	b := a
+	b.Name = "fixed"
+	writeKeyFile(t, path, b)
+	if err := st.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Get(a.ID); got.Name != "fixed" {
+		t.Fatalf("修复后未重新加载: %+v", got)
+	}
+}
+
+// 文件被删除 = 配置真相为空：内存清空（下游 401），而不是继续用缓存。
+func TestReloadMissingClears(t *testing.T) {
+	st, path := newTempStore(t)
+	if _, err := st.Create(Input{Name: "a", Secret: testSecret("gone"), AllAccounts: true, AllModels: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if st.Count() != 0 {
+		t.Fatalf("文件删除后 count=%d want 0", st.Count())
+	}
+}
+
+func TestNextAligned(t *testing.T) {
+	base := time.Date(2026, 11, 25, 10, 0, 7, 0, time.UTC)
+	cases := []struct {
+		now  time.Time
+		want time.Time
+	}{
+		{base, time.Date(2026, 11, 25, 10, 0, 30, 0, time.UTC)},
+		{time.Date(2026, 11, 25, 10, 0, 30, 0, time.UTC), time.Date(2026, 11, 25, 10, 1, 0, 0, time.UTC)},
+		{time.Date(2026, 11, 25, 10, 0, 29, 999_000_000, time.UTC), time.Date(2026, 11, 25, 10, 0, 30, 0, time.UTC)},
+	}
+	for _, c := range cases {
+		if got := nextAligned(c.now, DefaultReloadInterval); !got.Equal(c.want) {
+			t.Errorf("nextAligned(%s)=%s want %s", c.now, got, c.want)
+		}
+	}
+}
+
+func writeKeyFile(t *testing.T, path string, keys ...Key) {
+	t.Helper()
+	raw, err := json.Marshal(fileDoc{Version: fileVersion, Keys: keys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
