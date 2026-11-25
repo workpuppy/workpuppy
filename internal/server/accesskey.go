@@ -41,13 +41,22 @@ func accessKeyOf(r *http.Request) *accesskey.Key {
 // scopeOfKey 把接入 key 的账号白名单转成选号范围。
 //
 //   - key == nil（内部/管理面）→ nil = 不限；
-//   - AllAccounts → nil = 不限（与逐号列举等价，但新加入的号自动生效）；
+//   - AllAccounts → nil = 不限（realm 由 keyRealm + 选号时的模型域过滤）；
 //   - 否则返回 UIDSet：空列表得到空集合 = 全部拒绝（不是 nil！）。
 func scopeOfKey(k *accesskey.Key) pool.Scope {
 	if k == nil || k.AllAccounts {
 		return nil
 	}
 	return pool.NewUIDSet(k.Accounts)
+}
+
+// keyRealm 返回 key 的版本（cn/global）；加载期已把空值归一为 cn，
+// 这里再兜一层，避免测试零值/手写文件导致空串。
+func keyRealm(k *accesskey.Key) string {
+	if k != nil && k.Realm == "global" {
+		return "global"
+	}
+	return "cn"
 }
 
 // bearerToken 提取 Authorization: Bearer <token>；缺失/空返回 false。

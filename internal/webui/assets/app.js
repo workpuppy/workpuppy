@@ -1014,7 +1014,7 @@ function accessModal() {
 async function loadAccessKeys() {
   const body = $('#accessKeysBody');
   body.replaceChildren(el('tr', {}, [el('td', {
-    class: 'text-center text-body-secondary py-4', attrs: { colspan: '7' }, text: '加载中…',
+    class: 'text-center text-body-secondary py-4', attrs: { colspan: '8' }, text: '加载中…',
   })]));
   try {
     // 账号/模型选择器与列表并行拉取：账号页的元信息（昵称/状态）与模型清单分别来自
@@ -1034,15 +1034,44 @@ async function loadAccessKeys() {
     renderAccessKeyRows();
   } catch (e) {
     body.replaceChildren(el('tr', {}, [el('td', {
-      class: 'text-center text-danger py-4', attrs: { colspan: '7' }, text: String(e.message || e),
+      class: 'text-center text-danger py-4', attrs: { colspan: '8' }, text: String(e.message || e),
     })]));
     $('#accessKeysHint').textContent = '';
   }
 }
 
-function accessNickname(uid) {
+// realmLabel/modelRealm/accountRealm 三个小工具把「版本」口径收在一处：
+// 裸模型名 = cn；账号缺 realm 也按 cn（与后端 SplitModel / auth.Realm 一致）。
+function realmLabel(realm) {
+  return realm === 'global' ? '全球 (global)' : '中国 (cn)';
+}
+
+function modelRealm(id) {
+  const s = String(id || '');
+  const i = s.indexOf(':');
+  if (i > 0) {
+    const p = s.slice(0, i);
+    if (p === 'cn' || p === 'global') return p;
+  }
+  return 'cn';
+}
+
+function accountRealm(uid) {
   const a = state.accessAccounts.find((x) => x.uid === uid);
-  return (a && a.nickname) || uid;
+  return a ? (a.realm || 'cn') : '';
+}
+
+// pruneAccessDraftForRealm 去掉不属于当前版本的已选项；账号目录未加载时保留
+// （否则会把尚未拉到的 uid 误删），模型总能按前缀判断。
+function pruneAccessDraftForRealm(d) {
+  if (!d) return;
+  if (state.accessAccounts.length) {
+    d.accounts = new Set([...d.accounts].filter((uid) => {
+      const r = accountRealm(uid);
+      return !r || r === d.realm;
+    }));
+  }
+  d.models = new Set([...d.models].filter((id) => modelRealm(id) === d.realm));
 }
 
 // accessKeyMask 列表页只显示省略后的 key：完整 key 不直接铺在表格里，
@@ -1053,19 +1082,22 @@ function accessKeyMask(k) {
   return k.key.slice(0, 6) + '…' + k.key.slice(-4);
 }
 
+// accessAccountSummary 列表只描述数量（或「全部」），不再列出昵称。
 function accessAccountSummary(k) {
   if (k.all_accounts) return '全部';
-  const list = k.accounts || [];
-  if (list.length === 0) return '0 个（拒绝全部）';
-  const names = list.slice(0, 2).map(accessNickname).join('、');
-  return list.length + ' 个：' + names + (list.length > 2 ? '…' : '');
+  const realm = k.realm || 'cn';
+  const n = (k.accounts || []).filter((uid) => {
+    const r = accountRealm(uid);
+    return !r || r === realm;
+  }).length;
+  return n + ' 个';
 }
 
+// accessModelSummary 同上：只给数量或「全部」。
 function accessModelSummary(k) {
   if (k.all_models) return '全部';
-  const list = k.models || [];
-  if (list.length === 0) return '0 个（拒绝全部）';
-  return list.length + ' 个：' + list.slice(0, 2).join('、') + (list.length > 2 ? '…' : '');
+  const realm = k.realm || 'cn';
+  return (k.models || []).filter((id) => modelRealm(id) === realm).length + ' 个';
 }
 
 function accessActionBtn(label, kind, id, action) {
@@ -1080,7 +1112,7 @@ function renderAccessKeyRows() {
   const body = $('#accessKeysBody');
   if (state.accessKeys.length === 0) {
     body.replaceChildren(el('tr', {}, [el('td', {
-      class: 'text-center text-body-secondary py-4', attrs: { colspan: '7' },
+      class: 'text-center text-body-secondary py-4', attrs: { colspan: '8' },
       text: '还没有接入 key：下游现在无法调用 /v1；点「新建接入 Key」创建第一把',
     })]));
     return;
@@ -1096,15 +1128,10 @@ function renderAccessKeyRows() {
     })]);
     return el('tr', {}, [
       el('td', { text: k.name || '–', title: k.id }),
+      el('td', { class: 'small text-nowrap', text: realmLabel(k.realm) }),
       keyCell,
-      el('td', {
-        class: 'small', text: accessAccountSummary(k),
-        title: (k.accounts || []).join('\n'),
-      }),
-      el('td', {
-        class: 'small', text: accessModelSummary(k),
-        title: (k.models || []).join('\n'),
-      }),
+      el('td', { class: 'small', text: accessAccountSummary(k) }),
+      el('td', { class: 'small', text: accessModelSummary(k) }),
       el('td', {}, [el('span', {
         class: 'badge ' + (k.enabled ? 'text-bg-success' : 'text-bg-secondary'),
         text: k.enabled ? '启用' : '停用',
@@ -1186,17 +1213,19 @@ function openAccessKeyModal(k) {
   accessHideTimer = null;
   const draft = k
     ? {
-      id: k.id, key: k.key, enabled: !!k.enabled,
+      id: k.id, key: k.key, enabled: !!k.enabled, realm: k.realm || 'cn',
       all_accounts: !!k.all_accounts, all_models: !!k.all_models,
       accounts: new Set(k.accounts || []), models: new Set(k.models || []),
     }
     : {
-      id: '', key: '', enabled: true, all_accounts: false, all_models: false,
+      id: '', key: '', enabled: true, realm: 'cn',
+      all_accounts: false, all_models: false,
       accounts: new Set(), models: new Set(),
     };
   // 「全部」是二选一模式：打开时只保留全选标记，不把历史逐项选择一起回显。
   if (draft.all_accounts) draft.accounts.clear();
   if (draft.all_models) draft.models.clear();
+  pruneAccessDraftForRealm(draft);
   state.accessDraft = draft;
   $('#accessKeyModalTitle').textContent = k ? '编辑接入 Key' : '新建接入 Key';
   $('#accessKeyModalMeta').textContent = k
@@ -1204,6 +1233,7 @@ function openAccessKeyModal(k) {
       ' · Key 可直接编辑'
     : 'Key 已预生成，保存后生效；账号/模型留空不会放行，必须显式勾选（或勾「全部」）。';
   $('#akName').value = k ? (k.name || '') : '';
+  $('#akRealm').value = draft.realm;
   $('#akEnabled').checked = draft.enabled;
   $('#akAllAccounts').checked = draft.all_accounts;
   $('#akAllModels').checked = draft.all_models;
@@ -1256,13 +1286,16 @@ function accessPickRow(kind, value, label, sub, checked, muted) {
 function renderAccessPickers() {
   const d = state.accessDraft;
   if (!d) return;
-  // 过滤框留空 = 展示全部备选项；placeholder 里带总数，避免"只显示了一部分"的误解。
+  const realm = d.realm || 'cn';
+  const accAll = state.accessAccounts.filter((a) => (a.realm || 'cn') === realm);
+  const modAll = state.accessModels.filter((m) => modelRealm(m.id) === realm);
+  // 过滤框留空 = 展示该版本全部备选项；placeholder 带总数。
   $('#akAccountFilter').placeholder =
-    '过滤昵称 / UID（共 ' + state.accessAccounts.length + ' 个）';
+    '过滤昵称 / UID（' + realmLabel(realm) + ' 共 ' + accAll.length + ' 个）';
   $('#akModelFilter').placeholder =
-    '过滤模型 ID / 描述（共 ' + state.accessModels.length + ' 个）';
+    '过滤模型 ID / 描述（' + realmLabel(realm) + ' 共 ' + modAll.length + ' 个）';
   const accKw = ($('#akAccountFilter').value || '').trim().toLowerCase();
-  const accRows = state.accessAccounts
+  const accRows = accAll
     .filter((a) => !accKw ||
       (a.nickname || '').toLowerCase().includes(accKw) ||
       (a.uid || '').toLowerCase().includes(accKw))
@@ -1272,11 +1305,12 @@ function renderAccessPickers() {
       d.accounts.has(a.uid), a.disabled,
     ));
   $('#akAccountList').replaceChildren(...(accRows.length ? accRows : [el('div', {
-    class: 'small text-body-secondary py-2', text: '没有匹配的账号（先到「账号」页加号）',
+    class: 'small text-body-secondary py-2',
+    text: '该版本暂无账号（先到「账号」页加号）',
   })]));
 
   const modKw = ($('#akModelFilter').value || '').trim().toLowerCase();
-  const modRows = state.accessModels
+  const modRows = modAll
     .filter((m) => !modKw ||
       (m.id || '').toLowerCase().includes(modKw) ||
       (m.description || '').toLowerCase().includes(modKw))
@@ -1285,15 +1319,27 @@ function renderAccessPickers() {
       m.description || '', d.models.has(m.id), false,
     ));
   $('#akModelList').replaceChildren(...(modRows.length ? modRows : [el('div', {
-    class: 'small text-body-secondary py-2', text: '没有匹配的模型（先到「模型」页刷新清单）',
+    class: 'small text-body-secondary py-2',
+    text: '该版本暂无可用模型（先到「模型」页刷新清单）',
   })]));
 
+  syncAccessPickerDisabled();
   updateAccessSelectionHint();
 }
 
-// 注意：勾了「全部账号/全部模型」只改变保存语义，不再 disable 勾选清单。
-// 之前用 pointer-events/disabled 把清单锁死，导致用户看到的每一项都点不动；
-// 现在逐项勾选始终可操作（先勾好子集，再关闭「全部」即可按子集生效）。
+// 「全部账号/全部模型」启用后：候选项全部取消勾选并置灰不可选。
+// 注意只 disable 输入，不改 .form-check-input 的 position（Tabler 的勾选图标
+// ::before 依赖 relative，改 static 会出现铺满弹窗的巨勾）。
+function syncAccessPickerDisabled() {
+  const d = state.accessDraft;
+  if (!d) return;
+  [[$('#akAccountList'), $('#akAllAccounts').checked],
+    [$('#akModelList'), $('#akAllModels').checked]].forEach(([host, all]) => {
+    host.classList.toggle('is-disabled', !!all);
+    host.querySelectorAll('input[data-ak-kind]').forEach((cb) => { cb.disabled = !!all; });
+  });
+}
+
 function updateAccessSelectionHint() {
   const d = state.accessDraft;
   if (!d) return;
@@ -1416,8 +1462,12 @@ async function saveAccessKey() {
     }
     if (d.id && !confirm('修改 Key 后旧 key 立即失效，下游必须换成新 key。继续？')) return;
   }
+  // 版本以当前下拉框为准；保存前再按版本清理一次越界选择（防切版本后残留）。
+  d.realm = $('#akRealm').value || d.realm || 'cn';
+  pruneAccessDraftForRealm(d);
   const body = {
     name: ($('#akName').value || '').trim(),
+    realm: d.realm,
     enabled: $('#akEnabled').checked,
     all_accounts: $('#akAllAccounts').checked,
     all_models: $('#akAllModels').checked,
@@ -2501,6 +2551,23 @@ function bind() {
     $('#accessKeysBody').addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-ak-action]');
       if (btn) doAccessKeyAction(btn.dataset.akId, btn.dataset.akAction);
+    });
+  }
+  if ($('#akRealm')) {
+    $('#akRealm').addEventListener('change', () => {
+      const d = state.accessDraft;
+      if (!d) return;
+      const next = $('#akRealm').value === 'global' ? 'global' : 'cn';
+      if (next === d.realm) return;
+      // 切版本 = 换一套候选：清空逐项与「全部」标记，避免 cn 的选择残留到 global。
+      d.realm = next;
+      d.accounts.clear();
+      d.models.clear();
+      d.all_accounts = false;
+      d.all_models = false;
+      $('#akAllAccounts').checked = false;
+      $('#akAllModels').checked = false;
+      renderAccessPickers();
     });
   }
   const onAccessPickChange = (ev) => {

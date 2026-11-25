@@ -38,6 +38,9 @@ func TestCreateLookupPersist(t *testing.T) {
 	if k.ID == "" || k.Key == "" || !k.Enabled || !k.AllAccounts || !k.AllModels {
 		t.Fatalf("unexpected key: %+v", k)
 	}
+	if k.Realm != "cn" {
+		t.Errorf("默认版本应为 cn，实际 %q", k.Realm)
+	}
 	if len(k.Key) != len(secretPrefix)+secretBodyLen || !secretPattern.MatchString(k.Key) {
 		t.Errorf("生成的 key 形态异常（want sk- + 32 位字母数字）: %q", k.Key)
 	}
@@ -300,6 +303,9 @@ func TestUpdateLegacyKeyWithoutChangingSecret(t *testing.T) {
 	if upd.Key != "wp-legacy-key-0123456789" {
 		t.Fatalf("旧 key 被意外改写: %q", upd.Key)
 	}
+	if upd.Realm != "cn" {
+		t.Fatalf("旧 key 缺 realm 应归一为 cn，实际 %q", upd.Realm)
+	}
 	// 原样回传旧 secret（某些客户端会全量提交）也视为未改动。
 	if _, err := st.Update("ak_legacy", Input{Name: "renamed", Secret: "wp-legacy-key-0123456789", AllAccounts: true, AllModels: true}); err != nil {
 		t.Fatalf("原样回传旧 secret 应视为未改: %v", err)
@@ -307,6 +313,47 @@ func TestUpdateLegacyKeyWithoutChangingSecret(t *testing.T) {
 	// 真要换新值时才严格校验。
 	if _, err := st.Update("ak_legacy", Input{Name: "renamed", Secret: "sk-short", AllAccounts: true, AllModels: true}); err == nil {
 		t.Fatal("旧 key 改成非法新值仍应被拒")
+	}
+}
+
+// 版本约束：key 只能调同区域模型；AllModels 也不能跨区；模型白名单必须同区。
+func TestRealmValidationAndModelFilter(t *testing.T) {
+	st, _ := newTempStore(t)
+	if _, err := st.Create(Input{Name: "bad-realm", Realm: "mars", AllAccounts: true, AllModels: true}); err == nil {
+		t.Fatal("非法 realm 应被拒")
+	}
+	if _, err := st.Create(Input{Name: "cross", Realm: "cn", AllAccounts: true, Models: []string{"global:gpt-5.4"}}); err == nil {
+		t.Fatal("cn key 不应接受 global: 模型白名单")
+	}
+
+	globalKey, err := st.Create(Input{
+		Name: "g", Realm: "global", Accounts: []string{"g1"}, Models: []string{"global:gpt-5.4"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if globalKey.Realm != "global" {
+		t.Fatalf("realm=%q", globalKey.Realm)
+	}
+	if !globalKey.AllowsModel("global:gpt-5.4") {
+		t.Error("global key 应允许 global 模型")
+	}
+	if globalKey.AllowsModel("cn:glm-5.2") || globalKey.AllowsModel("glm-5.2") {
+		t.Error("global key 不应允许 cn 模型（裸名按 cn 解释）")
+	}
+
+	allGlobal := Key{Realm: "global", AllModels: true}
+	if allGlobal.AllowsModel("cn:glm-5.2") {
+		t.Error("AllModels 仍不能跨区域放行")
+	}
+	if !allGlobal.AllowsModel("global:any") {
+		t.Error("global AllModels 应允许 global 模型")
+	}
+
+	// 旧文件/零值 realm 的模型匹配保持宽松（真实加载会归一成 cn）。
+	legacy := Key{Models: []string{"cn:m", "global:g"}}
+	if !legacy.AllowsModel("global:g") {
+		t.Error("零值 realm 不应额外约束（测试/旧结构兼容）")
 	}
 }
 

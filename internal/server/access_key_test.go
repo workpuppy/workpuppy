@@ -280,6 +280,74 @@ func TestAccessKeyStickyIsolation(t *testing.T) {
 	}
 }
 
+// 版本约束：global key 的 /status 只看到 global 账号，cn key 只看到 cn 账号；
+// 跨版本模型在进入上游前直接 404。
+func TestAccessKeyRealmScopesStatusAndModels(t *testing.T) {
+	p := testPoolWith(
+		&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999},
+		auth.NewFromLogin("g1", "", "全球号", "at-g", "rt-g", "www.workbuddy.ai", "global", 4102444800),
+	)
+	secretCN := testSecret("realm-cn")
+	secretGL := testSecret("realm-global")
+	st := newAccessKeyStore(t,
+		accesskey.Input{Name: "cn", Secret: secretCN, Realm: "cn", AllAccounts: true, AllModels: true},
+		accesskey.Input{Name: "gl", Secret: secretGL, Realm: "global", AllAccounts: true, AllModels: true},
+	)
+	h := NewHandler(Config{Pool: p, Upstream: upstream.New(), AccessKeys: st})
+
+	checkStatus := func(secret, wantUID string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/status", nil)
+		req.Header.Set("Authorization", "Bearer "+secret)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status code=%d body=%s", rec.Code, rec.Body)
+		}
+		var data struct {
+			Accounts []struct {
+				UID string `json:"uid"`
+			} `json:"accounts"`
+			Total       int                       `json:"total"`
+			RealmTotals map[string]map[string]int `json:"realm_totals"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+			t.Fatal(err)
+		}
+		if data.Total != 1 || len(data.Accounts) != 1 || data.Accounts[0].UID != wantUID {
+			t.Errorf("secret=%s status=%+v，want 只有 %s", secret[:10], data, wantUID)
+		}
+		wantRealm := "cn"
+		if wantUID == "g1" {
+			wantRealm = "global"
+		}
+		other := "global"
+		if wantRealm == "global" {
+			other = "cn"
+		}
+		if data.RealmTotals[wantRealm]["total"] != 1 || data.RealmTotals[other]["total"] != 0 {
+			t.Errorf("realm_totals=%v，want %s=1 / %s=0", data.RealmTotals, wantRealm, other)
+		}
+	}
+	checkStatus(secretCN, "u1")
+	checkStatus(secretGL, "g1")
+
+	// 跨版本模型：cn key 调 global: / global key 调 cn:/裸名 都在上游前拒绝。
+	for _, tc := range []struct{ secret, model string }{
+		{secretCN, "global:gpt-5.4"},
+		{secretGL, "cn:glm-5.2"},
+		{secretGL, "glm-5.2"},
+	} {
+		rec := chatReq(h, tc.secret, `{"model":"`+tc.model+`","messages":[{"role":"user","content":"hi"}]}`)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("secret=%s model=%s code=%d want 404", tc.secret[:10], tc.model, rec.Code)
+		}
+		if !assertJSONErrorCode(t, rec.Body.String(), "model_not_found") {
+			return
+		}
+	}
+}
+
 // 管理面接入 key 的完整 CRUD + 校验错误映射。
 func TestAdminAccessKeysCRUD(t *testing.T) {
 	p := testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999})

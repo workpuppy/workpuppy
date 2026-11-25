@@ -42,6 +42,7 @@ func TestSoftCountersCoalesced(t *testing.T) {
 	withFlushCadence(t, 10*time.Millisecond, 250*time.Millisecond)
 	fp := filepath.Join(t.TempDir(), "state.json")
 	p := New(fp)
+	defer p.Close()
 	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt"})
 	p.Flush() // 基线（Add 后的初始状态）
 	base := p.saves.Load()
@@ -74,6 +75,7 @@ func TestSoftFlushWriteCountAt100Accounts(t *testing.T) {
 	withFlushCadence(t, 20*time.Millisecond, 200*time.Millisecond)
 	fp := filepath.Join(t.TempDir(), "state.json")
 	p := New(fp)
+	defer p.Close()
 	uids := make([]string, 0, 100)
 	for i := 0; i < 100; i++ {
 		uid := fmt.Sprintf("u%03d", i)
@@ -106,6 +108,7 @@ func TestCriticalStateFlushesWithinInterval(t *testing.T) {
 	withFlushCadence(t, 10*time.Millisecond, 10*time.Second)
 	fp := filepath.Join(t.TempDir(), "state.json")
 	p := New(fp)
+	defer p.Close()
 	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt"})
 	p.Flush()
 	base := p.saves.Load()
@@ -121,6 +124,7 @@ func TestNoChangeNoWrite(t *testing.T) {
 	withFlushCadence(t, 10*time.Millisecond, 250*time.Millisecond)
 	fp := filepath.Join(t.TempDir(), "state.json")
 	p := New(fp)
+	defer p.Close()
 	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt"})
 	p.Flush()
 	base := p.saves.Load()
@@ -136,6 +140,7 @@ func TestFlushWritesSoftDirty(t *testing.T) {
 	withFlushCadence(t, time.Hour, time.Hour) // 关掉后台写，只验证 Flush
 	fp := filepath.Join(t.TempDir(), "state.json")
 	p := New(fp)
+	defer p.Close()
 	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt"})
 	p.Flush()
 	base := p.saves.Load()

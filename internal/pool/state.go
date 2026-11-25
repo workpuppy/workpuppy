@@ -632,15 +632,24 @@ func (p *Pool) servableLocked(realm string) bool {
 }
 
 // List 返回所有账号状态（按 UID 排序，稳定输出）。
-func (p *Pool) List() []Status { return p.ListScoped(nil) }
+func (p *Pool) List() []Status { return p.ListScopedForRealm("", nil) }
 
 // ListScoped 同 List，但只返回 scope 范围内的账号（nil = 全池）。
 // /status 的数据面视图按接入 key 收缩到白名单，避免下游看到整池账号。
 func (p *Pool) ListScoped(scope Scope) []Status {
+	return p.ListScopedForRealm("", scope)
+}
+
+// ListScopedForRealm 在 ListScoped 之上叠加版本过滤（realm=="" 不限）。
+// 接入 key 选定了 cn/global 后，/status 只能看到同区域的账号。
+func (p *Pool) ListScopedForRealm(realm string, scope Scope) []Status {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	uids := make([]string, 0, len(p.byUID))
-	for uid := range p.byUID {
+	for uid, e := range p.byUID {
+		if realm != "" && e.a.Realm() != realm {
+			continue
+		}
 		if !scopeAllows(scope, uid) {
 			continue
 		}

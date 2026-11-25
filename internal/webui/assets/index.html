@@ -422,12 +422,12 @@
               <table class="table table-sm table-hover table-vcenter card-table align-middle mb-0">
                 <thead>
                   <tr>
-                    <th>名称</th><th>Key</th><th>可调用账号</th><th>可用模型</th>
+                    <th>名称</th><th>版本</th><th>Key</th><th>可调用账号</th><th>可用模型</th>
                     <th>状态</th><th>更新时间</th><th class="text-start">操作</th>
                   </tr>
                 </thead>
                 <tbody id="accessKeysBody">
-                  <tr><td colspan="7" class="text-center text-body-secondary py-4">加载中…</td></tr>
+                  <tr><td colspan="8" class="text-center text-body-secondary py-4">加载中…</td></tr>
                 </tbody>
               </table>
             </div>
@@ -673,11 +673,18 @@
       </div>
       <div class="modal-body">
         <div class="row g-3">
-          <div class="col-md-7">
+          <div class="col-md-5">
             <label class="form-label" for="akName">名称</label>
             <input class="form-control form-control-sm" id="akName" maxlength="64" placeholder="如：团队 A / 个人工具">
           </div>
-          <div class="col-md-5 d-flex align-items-end">
+          <div class="col-md-3">
+            <label class="form-label" for="akRealm">版本</label>
+            <select class="form-select form-select-sm" id="akRealm">
+              <option value="cn">中国 (cn)</option>
+              <option value="global">全球 (global)</option>
+            </select>
+          </div>
+          <div class="col-md-4 d-flex align-items-end">
             <div class="form-check form-switch mb-2">
               <input class="form-check-input" type="checkbox" id="akEnabled" checked>
               <label class="form-check-label small" for="akEnabled">启用（关闭后下游立即 401）</label>

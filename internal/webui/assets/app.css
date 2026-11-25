@@ -507,6 +507,16 @@ button[data-chart-uid]:focus-visible {
 
 /* 勾了「全部账号 / 全部模型」时只影响保存语义，不再把清单锁死；
  * 逐项勾选始终可操作（先勾子集，再关「全部」即可生效）。 */
+/* 勾了「全部」时候选项全部取消勾选并置灰不可选（清空/取消全选后恢复）。 */
+.access-picker.is-disabled {
+  opacity: 0.55;
+  background: var(--tblr-bg-surface-secondary, #f6f8fb);
+}
+
+.access-picker.is-disabled .access-pick {
+  pointer-events: none;
+}
+
 .access-pick {
   display: flex;
   align-items: flex-start;

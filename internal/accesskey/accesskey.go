@@ -133,6 +133,9 @@ type Key struct {
 	Key string `json:"key"`
 	// Enabled false = 立即失效（保留配置，便于临时停用而不是删除）。
 	Enabled bool `json:"enabled"`
+	// Realm 版本：cn（默认）/ global。key 只能调用该区域的账号与模型；
+	// 旧文件缺省该字段时按 cn 处理（与数据面「裸名=cn」口径一致）。
+	Realm string `json:"realm"`
 
 	// AllAccounts true = 允许所有账号（含以后新加入的号）；false 时只看 Accounts。
 	// 与「空列表 = 全部拒绝」配合：两个都为 false/空 → 该 key 一把账号都用不了。
@@ -170,10 +173,15 @@ func (k Key) AllowsAccount(uid string) bool {
 //   - 请求里的裸名等价于 cn: 前缀（老客户端不带前缀，不能因此被拒）；
 //   - 跨域仍需分别勾选：勾了 cn:xxx 不代表允许 global:xxx。
 func (k Key) AllowsModel(model string) bool {
+	realm, bare := SplitModel(model)
+	// 版本约束：global key 不能调 cn 模型，反之亦然（裸名按 cn 解释）。
+	// Realm 为空只可能来自旧文件/测试零值；加载时 normalizeStored 会补 cn。
+	if k.Realm != "" && realm != k.Realm {
+		return false
+	}
 	if k.AllModels {
 		return true
 	}
-	realm, bare := SplitModel(model)
 	if bare == "" {
 		return false
 	}
@@ -322,6 +330,7 @@ func (s *Store) Lookup(secret string) (Key, bool) {
 // 空/纯空白/与原值相同 = 保持原 key。换密钥也可以走 Regenerate（随机生成）。
 type Input struct {
 	Name        string   `json:"name"`
+	Realm       string   `json:"realm"` // 空 = cn
 	Secret      string   `json:"secret,omitempty"`
 	Enabled     *bool    `json:"enabled,omitempty"`
 	AllAccounts bool     `json:"all_accounts"`
@@ -332,7 +341,7 @@ type Input struct {
 
 // Create 新建一把 key（默认启用）。
 func (s *Store) Create(in Input) (Key, error) {
-	name, accounts, models, err := validateInput(in)
+	realm, name, accounts, models, err := validateInput(in)
 	if err != nil {
 		return Key{}, err
 	}
@@ -364,6 +373,7 @@ func (s *Store) Create(in Input) (Key, error) {
 		Name:        name,
 		Key:         secret,
 		Enabled:     enabled,
+		Realm:       realm,
 		AllAccounts: in.AllAccounts,
 		AllModels:   in.AllModels,
 		Accounts:    accounts,
@@ -385,7 +395,7 @@ func (s *Store) Create(in Input) (Key, error) {
 // 要改 key**；留空/纯空白 = 保持原 key 不变。改完旧 key 立即失效（下游必须换）。
 // 密钥冲突回 ErrConflict，由管理面映射成 409。
 func (s *Store) Update(id string, in Input) (Key, error) {
-	name, accounts, models, err := validateInput(in)
+	realm, name, accounts, models, err := validateInput(in)
 	if err != nil {
 		return Key{}, err
 	}
@@ -406,6 +416,7 @@ func (s *Store) Update(id string, in Input) (Key, error) {
 	}
 	prev := cur
 	cur.Name = name
+	cur.Realm = realm
 	cur.AllAccounts = in.AllAccounts
 	cur.AllModels = in.AllModels
 	cur.Accounts = accounts
@@ -566,39 +577,52 @@ func generateSecret() (string, error) {
 
 // validateInput 归一化并校验授权范围。空列表 + 未勾「全部」= 显式拒绝，
 // 直接报错而不是静默放行——这正是「漏配等于全权」的防线。
-func validateInput(in Input) (name string, accounts, models []string, err error) {
+//
+// Realm 为空 → cn（新界面默认中国）；非法值报错。模型白名单必须与 key 版本一致，
+// 避免 cn key 里塞 global:xxx 这种运行期永远不会生效的配置。
+func validateInput(in Input) (realm, name string, accounts, models []string, err error) {
+	realm = strings.ToLower(strings.TrimSpace(in.Realm))
+	if realm == "" {
+		realm = "cn"
+	}
+	if realm != "cn" && realm != "global" {
+		return "", "", nil, nil, invalid("版本只能是 cn 或 global")
+	}
 	name = strings.TrimSpace(in.Name)
 	if name == "" {
 		name = "未命名接入"
 	}
 	if utf8.RuneCountInString(name) > maxNameLen {
-		return "", nil, nil, invalid("名称最长 %d 个字符", maxNameLen)
+		return "", "", nil, nil, invalid("名称最长 %d 个字符", maxNameLen)
 	}
 	accounts = cleanList(in.Accounts)
 	models = cleanList(in.Models)
 	if len(accounts) > maxListLen {
-		return "", nil, nil, invalid("账号最多 %d 个", maxListLen)
+		return "", "", nil, nil, invalid("账号最多 %d 个", maxListLen)
 	}
 	if len(models) > maxListLen {
-		return "", nil, nil, invalid("模型最多 %d 个", maxListLen)
+		return "", "", nil, nil, invalid("模型最多 %d 个", maxListLen)
 	}
 	for _, uid := range accounts {
 		if len(uid) > maxUIDLen {
-			return "", nil, nil, invalid("账号 UID 过长（%d > %d）：%s", len(uid), maxUIDLen, uid)
+			return "", "", nil, nil, invalid("账号 UID 过长（%d > %d）：%s", len(uid), maxUIDLen, uid)
 		}
 	}
 	for _, m := range models {
 		if utf8.RuneCountInString(m) > maxModelLen {
-			return "", nil, nil, invalid("模型 ID 过长（%d > %d）：%s", utf8.RuneCountInString(m), maxModelLen, m)
+			return "", "", nil, nil, invalid("模型 ID 过长（%d > %d）：%s", utf8.RuneCountInString(m), maxModelLen, m)
+		}
+		if mr, _ := SplitModel(m); mr != realm {
+			return "", "", nil, nil, invalid("模型 %s 不属于版本 %s", m, realm)
 		}
 	}
 	if !in.AllAccounts && len(accounts) == 0 {
-		return "", nil, nil, invalid("至少选择一个账号（或勾选「全部账号」）")
+		return "", "", nil, nil, invalid("至少选择一个账号（或勾选「全部账号」）")
 	}
 	if !in.AllModels && len(models) == 0 {
-		return "", nil, nil, invalid("至少选择一个模型（或勾选「全部模型」）")
+		return "", "", nil, nil, invalid("至少选择一个模型（或勾选「全部模型」）")
 	}
-	return name, accounts, models, nil
+	return realm, name, accounts, models, nil
 }
 
 // cleanList 去空白、去空项、去重，保持原顺序（界面勾选顺序即落盘顺序）。
@@ -621,6 +645,10 @@ func cleanList(in []string) []string {
 func normalizeStored(k Key) Key {
 	k.Name = strings.TrimSpace(k.Name)
 	k.Key = strings.TrimSpace(k.Key)
+	k.Realm = strings.ToLower(strings.TrimSpace(k.Realm))
+	if k.Realm != "global" {
+		k.Realm = "cn" // cn / 空 / 脏值一律回落 cn（与裸名=cn 口径一致）
+	}
 	k.Accounts = cleanList(k.Accounts)
 	k.Models = cleanList(k.Models)
 	return k

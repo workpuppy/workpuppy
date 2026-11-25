@@ -370,17 +370,26 @@ func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, h.statusPayloadScoped(scopeOfKey(accessKeyOf(r))))
+	writeJSON(w, http.StatusOK, h.statusPayloadForKey(accessKeyOf(r)))
 }
 
 // statusPayload 组装全量 /status 响应体（管理面 /admin/status 使用）。
-func (h *Handler) statusPayload() map[string]any { return h.statusPayloadScoped(nil) }
+func (h *Handler) statusPayload() map[string]any { return h.statusPayloadScopedRealm("", nil) }
 
-// statusPayloadScoped 组装可选的账号范围视图：数据面按接入 key 的账号白名单收缩，
-// 管理面传 nil 看全池。账号列表与汇总数必须用**同一个 scope**——只缩列表不缩汇总，
-// 下游会看到「0 个账号却有 N 个 healthy」的自相矛盾快照。
-func (h *Handler) statusPayloadScoped(scope pool.Scope) map[string]any {
-	total, healthy, cooling, disabled, inFlightFull := h.cfg.Pool.CountsDetailedScoped(scope)
+// statusPayloadForKey 数据面 /status：按 key 的版本 + 账号白名单收缩。
+// key=nil（内部调用）退化为全量。
+func (h *Handler) statusPayloadForKey(k *accesskey.Key) map[string]any {
+	if k == nil {
+		return h.statusPayloadScopedRealm("", nil)
+	}
+	return h.statusPayloadScopedRealm(keyRealm(k), scopeOfKey(k))
+}
+
+// statusPayloadScopedRealm 组装可选的账号范围视图：realm 非空时只统计该区域；
+// scope 非 nil 时再按账号白名单过滤。账号列表与汇总数必须用**同一组**范围，
+// 否则下游会看到「0 个账号却有 N 个 healthy」的自相矛盾快照。
+func (h *Handler) statusPayloadScopedRealm(realm string, scope pool.Scope) map[string]any {
+	total, healthy, cooling, disabled, inFlightFull := h.cfg.Pool.CountsDetailedForRealmScoped(realm, scope)
 	sticky := 0
 	if h.cfg.StickyCount != nil {
 		sticky = h.cfg.StickyCount()
@@ -395,16 +404,25 @@ func (h *Handler) statusPayloadScoped(scope pool.Scope) map[string]any {
 	exploreEvents, exploreLast := h.cfg.Pool.CostExploreStatus()
 	// realm_totals 按域分组的计数汇总（双 realm 并存时运维一眼看到各域可用性）：
 	// 只新增字段，既有 total/healthy/cooling/disabled/in_flight_full 汇总键不变（零回归）。
+	// 数据面 key 指定了版本时，另一域必须归零——否则 global key 的 /status 会在
+	// realm_totals.cn 里看到它根本调不到的 cn 账号数量。
+	cnCounts := countsMapFrom(h.cfg.Pool.CountsDetailedForRealmScoped("cn", scope))
+	globalCounts := countsMapFrom(h.cfg.Pool.CountsDetailedForRealmScoped("global", scope))
+	if realm == "cn" {
+		globalCounts = countsMapFrom(0, 0, 0, 0, 0)
+	} else if realm == "global" {
+		cnCounts = countsMapFrom(0, 0, 0, 0, 0)
+	}
 	return map[string]any{
-		"accounts":       h.cfg.Pool.ListScoped(scope),
+		"accounts":       h.cfg.Pool.ListScopedForRealm(realm, scope),
 		"total":          total,
 		"healthy":        healthy,
 		"cooling":        cooling,
 		"disabled":       disabled,
 		"in_flight_full": inFlightFull,
 		"realm_totals": map[string]map[string]int{
-			"cn":     countsMapFrom(h.cfg.Pool.CountsDetailedForRealmScoped("cn", scope)),
-			"global": countsMapFrom(h.cfg.Pool.CountsDetailedForRealmScoped("global", scope)),
+			"cn":     cnCounts,
+			"global": globalCounts,
 		},
 		"sticky_sessions": sticky,
 		"redis_mode":      redisMode,

@@ -576,6 +576,8 @@ func TestAccessMappingWiring(t *testing.T) {
 		`id="akAllAccounts"`, `id="akAllModels"`, `id="akSecret"`, `id="btnSaveAccessKey"`,
 		`id="btnRegenerateAccessKey"`, `id="akSelectionHint"`,
 		`id="btnClearAccessAccounts"`, `id="btnClearAccessModels"`,
+		`id="akRealm"`, `<option value="cn">中国 (cn)</option>`, `<option value="global">全球 (global)</option>`,
+		`<th>版本</th>`,
 		// Key 规则：sk- + 32–61 位字母数字，编辑总长 ≤64。
 		`maxlength="64"`, `sk-`,
 	} {
@@ -600,6 +602,7 @@ func TestAccessMappingWiring(t *testing.T) {
 		"/admin/access-keys", "loadAccessKeys", "renderAccessKeyRows", "openAccessKeyModal",
 		"saveAccessKey", "randomizeAccessKeySecret", "generateClientSecret",
 		"clearAccessAccounts", "clearAccessModels",
+		"realmLabel", "modelRealm", "pruneAccessDraftForRealm", "syncAccessPickerDisabled",
 		"data-ak-kind", "accessKeyMask",
 		"copyText", "showAccessKeyModal", "hideAccessKeyModal", "refreshAccessOptions",
 		"点击复制完整 Key", "已复制完整 Key", `sk-[A-Za-z0-9]{32,61}`, "总长度不超过 64",
@@ -622,7 +625,7 @@ func TestAccessMappingWiring(t *testing.T) {
 		// position:relative 必须保留：Tabler 的勾选 ::before 以它为定位基准，
 		// 改成 static 会让勾选图标铺满弹窗（巨大的勾，F12 选不到）。
 		"float: none", "margin: 0.2rem 0 0 0", "width: 100%", "label.access-pick",
-		"position: relative",
+		"position: relative", ".access-picker.is-disabled", "pointer-events: none",
 	} {
 		if !strings.Contains(css.Body.String(), want) {
 			t.Errorf("app.css 缺少 %s（接入映射样式）", want)
