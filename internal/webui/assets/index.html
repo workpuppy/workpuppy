@@ -189,8 +189,8 @@
         <ul class="navbar-nav me-auto">
           <li class="nav-item"><button class="nav-link" data-view="overview">概览</button></li>
           <li class="nav-item"><button class="nav-link" data-view="accounts">账号</button></li>
-          <li class="nav-item"><button class="nav-link" data-view="access">接入映射</button></li>
           <li class="nav-item"><button class="nav-link" data-view="models">模型</button></li>
+          <li class="nav-item"><button class="nav-link" data-view="access">接入</button></li>
           <li class="nav-item"><button class="nav-link" data-view="playground">测试台</button></li>
           <li class="nav-item"><button class="nav-link" data-view="add">扫码加号</button></li>
           <li class="nav-item"><button class="nav-link" data-view="settings">设置</button></li>
@@ -700,9 +700,12 @@
           <div class="col-lg-6">
             <div class="d-flex align-items-center justify-content-between mb-2">
               <label class="form-label mb-0">可调用账号</label>
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="akAllAccounts">
-                <label class="form-check-label small" for="akAllAccounts">全部账号</label>
+              <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-ghost-secondary py-0 px-1" type="button" id="btnClearAccessAccounts">清空</button>
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" id="akAllAccounts">
+                  <label class="form-check-label small" for="akAllAccounts">全部账号</label>
+                </div>
               </div>
             </div>
             <input class="form-control form-control-sm mb-2" id="akAccountFilter" placeholder="过滤昵称 / UID">
@@ -711,9 +714,12 @@
           <div class="col-lg-6">
             <div class="d-flex align-items-center justify-content-between mb-2">
               <label class="form-label mb-0">可用模型</label>
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="akAllModels">
-                <label class="form-check-label small" for="akAllModels">全部模型</label>
+              <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-ghost-secondary py-0 px-1" type="button" id="btnClearAccessModels">清空</button>
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" id="akAllModels">
+                  <label class="form-check-label small" for="akAllModels">全部模型</label>
+                </div>
               </div>
             </div>
             <input class="form-control form-control-sm mb-2" id="akModelFilter" placeholder="过滤模型 ID / 描述">

@@ -232,7 +232,7 @@ async function api(path, opts = {}) {
 }
 
 // ── 视图切换（hash 路由，零框架）─────────────────────────────
-const VIEWS = ['overview', 'accounts', 'access', 'models', 'playground', 'add', 'settings'];
+const VIEWS = ['overview', 'accounts', 'models', 'access', 'playground', 'add', 'settings'];
 
 function currentView() {
   const raw = (location.hash || '').replace(/^#\/?/, '');
@@ -1113,7 +1113,6 @@ function renderAccessKeyRows() {
       el('td', { class: 'text-start text-nowrap' }, [
         accessActionBtn('编辑', 'primary', k.id, 'edit'),
         accessActionBtn(k.enabled ? '停用' : '启用', k.enabled ? 'secondary' : 'success', k.id, 'toggle'),
-        accessActionBtn('换 key', 'warning', k.id, 'regenerate'),
         accessActionBtn('删除', 'danger', k.id, 'delete'),
       ]),
     ]);
@@ -1143,10 +1142,9 @@ async function doAccessKeyAction(id, action) {
       return;
     }
     if (action === 'regenerate') {
-      if (!confirm('重新生成后旧 key 立即失效，下游必须换新 key。继续？')) return;
-      const r = await api('/admin/access-keys/' + encodeURIComponent(id) + '/regenerate', { method: 'POST', body: {} });
-      toast('已生成新 key：' + r.key.key + '（请立即复制）', 'success');
-      loadAccessKeys();
+      // 兼容旧页面残留的按钮：只把新值写进编辑表单，不直接改服务端 key。
+      openAccessKeyModal(k);
+      randomizeAccessKeySecret();
       return;
     }
     if (action === 'delete') {
@@ -1196,20 +1194,24 @@ function openAccessKeyModal(k) {
       id: '', key: '', enabled: true, all_accounts: false, all_models: false,
       accounts: new Set(), models: new Set(),
     };
+  // 「全部」是二选一模式：打开时只保留全选标记，不把历史逐项选择一起回显。
+  if (draft.all_accounts) draft.accounts.clear();
+  if (draft.all_models) draft.models.clear();
   state.accessDraft = draft;
   $('#accessKeyModalTitle').textContent = k ? '编辑接入 Key' : '新建接入 Key';
   $('#accessKeyModalMeta').textContent = k
     ? 'ID ' + k.id + ' · 创建于 ' + new Date(k.created_at).toLocaleString('zh-CN', { hour12: false }) +
       ' · Key 可直接编辑'
-    : '保存后自动生成 key；账号/模型留空不会放行，必须显式勾选（或勾「全部」）。';
+    : 'Key 已预生成，保存后生效；账号/模型留空不会放行，必须显式勾选（或勾「全部」）。';
   $('#akName').value = k ? (k.name || '') : '';
   $('#akEnabled').checked = draft.enabled;
   $('#akAllAccounts').checked = draft.all_accounts;
   $('#akAllModels').checked = draft.all_models;
-  $('#akSecretWrap').hidden = !k;
-  $('#akSecret').readOnly = !k;
-  $('#akSecret').value = k ? k.key : '';
-  $('#akSecret').placeholder = k ? '留空 = 保持原 key 不变' : '保存后自动生成';
+  // 新增与编辑都展示 Key：新增预生成一个（保存即用），编辑回显现有值。
+  $('#akSecretWrap').hidden = false;
+  $('#akSecret').readOnly = false;
+  $('#akSecret').value = k ? k.key : generateClientSecret();
+  $('#akSecret').placeholder = k ? '留空 = 保持原 key 不变' : '可随机生成，留空则由后端生成';
   $('#akAccountFilter').value = '';
   $('#akModelFilter').value = '';
   hideAccessKeyError();
@@ -1295,12 +1297,8 @@ function renderAccessPickers() {
 function updateAccessSelectionHint() {
   const d = state.accessDraft;
   if (!d) return;
-  const acc = $('#akAllAccounts').checked
-    ? '全部账号（逐项勾选暂不生效）'
-    : '已选 ' + d.accounts.size + ' 个账号';
-  const mod = $('#akAllModels').checked
-    ? '全部模型（逐项勾选暂不生效）'
-    : '已选 ' + d.models.size + ' 个模型';
+  const acc = $('#akAllAccounts').checked ? '全部账号' : '已选 ' + d.accounts.size + ' 个账号';
+  const mod = $('#akAllModels').checked ? '全部模型' : '已选 ' + d.models.size + ' 个模型';
   $('#akSelectionHint').textContent = acc + ' · ' + mod;
 }
 
@@ -1351,41 +1349,72 @@ function hideAccessKeyModal() {
   }, 400);
 }
 
-// regenerateAccessKeyFromModal 在编辑弹窗里换密钥：旧 key 立即失效，授权范围不变。
-async function regenerateAccessKeyFromModal() {
+// generateClientSecret 生成与后端同规则的 key：sk- + 32 位大小写字母/数字。
+// 用 crypto.getRandomValues + 拒绝采样（248 = 62×4），避免 %62 的取模偏差；
+// 旧浏览器没有 crypto 时退回 Math.random（仅影响随机质量，不影响格式）。
+function generateClientSecret() {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const out = ['s', 'k', '-'];
+  const c = globalThis.crypto;
+  if (c && typeof c.getRandomValues === 'function') {
+    while (out.length < 35) {
+      const buf = new Uint8Array(64);
+      c.getRandomValues(buf);
+      for (const b of buf) {
+        if (b >= 248) continue;
+        out.push(alphabet[b % alphabet.length]);
+        if (out.length === 35) break;
+      }
+    }
+  } else {
+    while (out.length < 35) out.push(alphabet[Math.floor(Math.random() * alphabet.length)]);
+  }
+  return out.join('');
+}
+
+// randomizeAccessKeySecret 「随机生成」只改表单里的值：不落盘、不调用换 key 接口，
+// 也不会弹「旧 key 立即失效」——用户还没点保存。真正生效发生在 saveAccessKey。
+function randomizeAccessKeySecret() {
+  const input = $('#akSecret');
+  input.value = generateClientSecret();
+  input.focus();
+  input.select();
+}
+
+// clearAccessAccounts / clearAccessModels 清空逐项勾选，并关掉对应「全部」开关
+// （否则「清空」看起来没有效果：全部仍然放行整池）。
+function clearAccessAccounts() {
   const d = state.accessDraft;
-  if (!d || !d.id) {
-    toast('先保存这把 key，再重新生成密钥', 'warning');
-    return;
-  }
-  if (!confirm('重新生成后旧 key 立即失效，下游必须换新 key。继续？')) return;
-  try {
-    const r = await api('/admin/access-keys/' + encodeURIComponent(d.id) + '/regenerate', {
-      method: 'POST', body: {},
-    });
-    d.key = r.key.key;
-    $('#akSecret').value = r.key.key;
-    $('#accessKeyModalMeta').textContent = '已换新 key：请立即复制给下游，旧 key 已失效';
-    toast('已生成新 key', 'success');
-    loadAccessKeys();
-  } catch (e) {
-    showAccessKeyError(String(e.message || e));
-  }
+  if (!d) return;
+  d.accounts.clear();
+  d.all_accounts = false;
+  $('#akAllAccounts').checked = false;
+  renderAccessPickers();
+}
+
+function clearAccessModels() {
+  const d = state.accessDraft;
+  if (!d) return;
+  d.models.clear();
+  d.all_models = false;
+  $('#akAllModels').checked = false;
+  renderAccessPickers();
 }
 
 async function saveAccessKey() {
   const d = state.accessDraft;
   if (!d) return;
-  // 编辑语义：Key 输入框填了非空值（trim 后）就视为要改 key；留空 = 保持原 key。
-  // 新增仍走自动生成（输入框在新建时是隐藏的），不受这条影响。
+  // 编辑语义：Key 输入框 trim 后非空且与原值不同 = 改 key；留空/原值 = 保持。
+  // 新增：表单里预生成了一个 sk- key，非空就随创建一起提交；清空则由后端生成。
   const secret = ($('#akSecret').value || '').trim();
-  if (d.id && secret && secret !== d.key) {
+  const secretChanged = !!secret && (!d.id || secret !== d.key);
+  if (secretChanged) {
     // 与后端同口径：sk- 前缀 + 32–61 位字母/数字，总长 ≤64。
     if (secret.length > 64 || !/^sk-[A-Za-z0-9]{32,61}$/.test(secret)) {
       showAccessKeyError('Key 必须是 sk- 开头，后接 32–61 位大小写字母或数字，总长度不超过 64。');
       return;
     }
-    if (!confirm('修改 Key 后旧 key 立即失效，下游必须换成新 key。继续？')) return;
+    if (d.id && !confirm('修改 Key 后旧 key 立即失效，下游必须换成新 key。继续？')) return;
   }
   const body = {
     name: ($('#akName').value || '').trim(),
@@ -1395,7 +1424,7 @@ async function saveAccessKey() {
     accounts: Array.from(d.accounts),
     models: Array.from(d.models),
   };
-  if (d.id && secret && secret !== d.key) body.secret = secret;
+  if (secretChanged) body.secret = secret;
   // 前端先拦一次：空白名单是「全部拒绝」，直接提交只会拿到 400；这里给出更具体的指引。
   if (!body.all_accounts && body.accounts.length === 0) {
     showAccessKeyError('至少选择一个账号（或勾选「全部账号」）——空列表等于全部拒绝。');
@@ -2478,9 +2507,22 @@ function bind() {
     const cb = ev.target.closest('input[data-ak-kind]');
     const d = state.accessDraft;
     if (!cb || !d) return;
-    const set = cb.dataset.akKind === 'account' ? d.accounts : d.models;
-    if (cb.checked) set.add(cb.value);
-    else set.delete(cb.value);
+    const isAccount = cb.dataset.akKind === 'account';
+    const set = isAccount ? d.accounts : d.models;
+    if (cb.checked) {
+      // 「全部」与逐项勾选互斥：勾了某一项就自动关掉「全部」，只保留这一项模式。
+      if (isAccount && $('#akAllAccounts').checked) {
+        $('#akAllAccounts').checked = false;
+        d.all_accounts = false;
+      }
+      if (!isAccount && $('#akAllModels').checked) {
+        $('#akAllModels').checked = false;
+        d.all_models = false;
+      }
+      set.add(cb.value);
+    } else {
+      set.delete(cb.value);
+    }
     updateAccessSelectionHint();
   };
   if ($('#akAccountList')) $('#akAccountList').addEventListener('change', onAccessPickChange);
@@ -2489,19 +2531,28 @@ function bind() {
   if ($('#akModelFilter')) $('#akModelFilter').addEventListener('input', renderAccessPickers);
   if ($('#akAllAccounts')) {
     $('#akAllAccounts').addEventListener('change', () => {
-      if (state.accessDraft) state.accessDraft.all_accounts = $('#akAllAccounts').checked;
-      updateAccessSelectionHint();
+      const d = state.accessDraft;
+      if (!d) return;
+      d.all_accounts = $('#akAllAccounts').checked;
+      // 全选启用 = 只保留「全部账号」标记：清空逐项勾选，避免表单里两套状态并存。
+      if (d.all_accounts) d.accounts.clear();
+      renderAccessPickers();
     });
   }
   if ($('#akAllModels')) {
     $('#akAllModels').addEventListener('change', () => {
-      if (state.accessDraft) state.accessDraft.all_models = $('#akAllModels').checked;
-      updateAccessSelectionHint();
+      const d = state.accessDraft;
+      if (!d) return;
+      d.all_models = $('#akAllModels').checked;
+      if (d.all_models) d.models.clear();
+      renderAccessPickers();
     });
   }
+  if ($('#btnClearAccessAccounts')) $('#btnClearAccessAccounts').addEventListener('click', clearAccessAccounts);
+  if ($('#btnClearAccessModels')) $('#btnClearAccessModels').addEventListener('click', clearAccessModels);
   if ($('#btnSaveAccessKey')) $('#btnSaveAccessKey').addEventListener('click', saveAccessKey);
   if ($('#btnCopyAccessKey')) $('#btnCopyAccessKey').addEventListener('click', () => copyText($('#akSecret').value));
-  if ($('#btnRegenerateAccessKey')) $('#btnRegenerateAccessKey').addEventListener('click', regenerateAccessKeyFromModal);
+  if ($('#btnRegenerateAccessKey')) $('#btnRegenerateAccessKey').addEventListener('click', randomizeAccessKeySecret);
 
   // 账号行操作走事件委托（行是动态生成的，逐个绑定会漏）。
   // 第一列 UID 是「打开积分曲线」，其余按钮是「动作」——同一委托里按目标分流。

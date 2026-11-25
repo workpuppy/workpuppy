@@ -575,12 +575,22 @@ func TestAccessMappingWiring(t *testing.T) {
 		`id="btnAccessKeyNew"`, `id="accessKeyModal"`, `id="akAccountList"`, `id="akModelList"`,
 		`id="akAllAccounts"`, `id="akAllModels"`, `id="akSecret"`, `id="btnSaveAccessKey"`,
 		`id="btnRegenerateAccessKey"`, `id="akSelectionHint"`,
+		`id="btnClearAccessAccounts"`, `id="btnClearAccessModels"`,
 		// Key 规则：sk- + 32–61 位字母数字，编辑总长 ≤64。
 		`maxlength="64"`, `sk-`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("入口页缺少 %s（接入映射页/编辑弹窗）", want)
+			t.Errorf("入口页缺少 %s（接入页/编辑弹窗）", want)
 		}
+	}
+	// 导航名是「接入」，且排在「模型」右侧。
+	if !strings.Contains(html, `data-view="access">接入</button>`) {
+		t.Error("导航应显示「接入」（不再是「接入映射」）")
+	}
+	modelsAt := strings.Index(html, `data-view="models"`)
+	accessAt := strings.Index(html, `data-view="access"`)
+	if modelsAt < 0 || accessAt < 0 || modelsAt > accessAt {
+		t.Errorf("导航顺序应为 模型 → 接入（models=%d access=%d）", modelsAt, accessAt)
 	}
 
 	js := httptest.NewRecorder()
@@ -588,13 +598,19 @@ func TestAccessMappingWiring(t *testing.T) {
 	body := js.Body.String()
 	for _, want := range []string{
 		"/admin/access-keys", "loadAccessKeys", "renderAccessKeyRows", "openAccessKeyModal",
-		"saveAccessKey", "regenerateAccessKeyFromModal", "data-ak-kind", "accessKeyMask",
+		"saveAccessKey", "randomizeAccessKeySecret", "generateClientSecret",
+		"clearAccessAccounts", "clearAccessModels",
+		"data-ak-kind", "accessKeyMask",
 		"copyText", "showAccessKeyModal", "hideAccessKeyModal", "refreshAccessOptions",
 		"点击复制完整 Key", "已复制完整 Key", `sk-[A-Za-z0-9]{32,61}`, "总长度不超过 64",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("app.js 缺少 %s（接入映射交互）", want)
+			t.Errorf("app.js 缺少 %s（接入交互）", want)
 		}
+	}
+	// 列表行不再有「改 key / 换 key」按钮（随机生成只在编辑弹窗里改表单值）。
+	if strings.Contains(body, `accessActionBtn('换 key'`) {
+		t.Error("列表行不应再有换 key 按钮")
 	}
 
 	css := httptest.NewRecorder()
