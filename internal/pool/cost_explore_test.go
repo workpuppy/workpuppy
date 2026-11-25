@@ -35,13 +35,21 @@ func exploreLastLen(p *Pool) int {
 	return len(p.exploreLast)
 }
 
-// T1（目标① 破垄断）：1 tier0 + 2 tier1（全部实际免费）、interval 极小
-// （每个窗口都探索）→ 逐号毕业，收敛后三号都被选中且 top 占比 < 70%
+// T1（目标① 破垄断）：1 tier0 + 2 tier1（全部实际免费）、每个窗口都探索
+// → 逐号毕业，收敛后三号都被选中且 top 占比 < 70%
 // （排除 100% 垄断，3 号近均匀时期望 ~33%）。
+//
+// 为什么用 passExploreWindow 逐轮"手动过窗"而不是把窗口设成 1ns：
+// 窗口判定是 `now.Sub(exploreLast[key]) >= interval`，`now` 取自 time.Now()。
+// 把 interval 压到纳秒级会把"探索是否触发"绑到系统时钟精度上——Windows 的
+// time.Now() 粒度约 0.5ms，300 次 pick 只落在几个 tick 里，探索可能整轮只触发
+// 一次，于是第二个未知号始终轮不到（本机约 1/3 概率红，CI 的 Linux 是 ns 级
+// 精度才恰好不复发）。显式过窗后触发时机与时钟精度无关，用例变成确定性的；
+// 顺带把"两个未知号各被探索一次"也断言死。
 func TestCostExploreSpreadsTrafficAcrossFreeAccounts(t *testing.T) {
 	withNoPickGap(t)
 	p := New("")
-	p.SetCostExploreInterval(time.Nanosecond) // 窗口极小：tier 1 存在即探索
+	p.SetCostExploreInterval(time.Hour) // 窗口靠 passExploreWindow 手动推过
 	p.Add(&auth.Auth{UID: "free1"})
 	p.Add(&auth.Auth{UID: "n1"})
 	p.Add(&auth.Auth{UID: "n2"})
@@ -49,6 +57,7 @@ func TestCostExploreSpreadsTrafficAcrossFreeAccounts(t *testing.T) {
 
 	counts := map[string]int{}
 	for i := 0; i < 300; i++ {
+		passExploreWindow(p, "", "m") // 本窗口可探索（等价于"每个窗口都探"）
 		a := p.PickExcludingForRealm(nil, "m", "")
 		if a == nil {
 			t.Fatalf("第 %d 次 pick 返回 nil", i)
@@ -70,6 +79,11 @@ func TestCostExploreSpreadsTrafficAcrossFreeAccounts(t *testing.T) {
 	}
 	if top >= 210 { // 300 × 70%
 		t.Errorf("最大单号占比 %d/300 ≥ 70%%（垄断残留）: %v", top, counts)
+	}
+	// 两个未知号各被探索一次即毕业（此后 tier 1 枯竭，不再探索）——确定性断言，
+	// 顺带守住"每个未知号都真的被给过机会"。
+	if got := exploreEvents(p); got != 2 {
+		t.Errorf("探索事件数=%d want 2（两个 tier 1 号各探一次后毕业）: %v", got, counts)
 	}
 }
 
