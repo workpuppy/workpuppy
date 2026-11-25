@@ -73,7 +73,7 @@ func (s *Scheduler) RunTravelNow() {
 // 定时触发时整批摊在 15 分钟窗口内（spread.go），手动/关闭时退回固定间隔
 // travelAccountDelay。
 func (s *Scheduler) runTravel(ctx context.Context) {
-	s.runTravelSubset(ctx, s.travelTargets())
+	s.runTravelSubset(ctx, s.travelTargets(), false)
 }
 
 // travelTargets 筛出本次巡检真正要跑的账号（禁用 / 风控暂停 / 无凭证 / global 跳过）。
@@ -97,11 +97,16 @@ func (s *Scheduler) travelTargets() []*auth.Auth {
 
 // runTravelSubset 对**给定账号集合**做一趟巡检（启动补跑按本地快照挑出子集后复用）。
 //
+// catchUp=true 表示这是重启后的补跑：领奖成功后如果今天还没派出过，就顺手把当日
+// 派出也补上（重启正好跨过「21:00 领奖」与「当日派出」两个步骤时，一趟巡检就能把
+// 两步都追平，而不是干等到明天）。定时/手动链路保持 false——它们后面还有时点兜着，
+// 不必在一次巡检里连做两个动作。
+//
 // travelMu 串行化：同一时刻只允许一趟巡检在跑。定时时点、手动「一键猫猫旅行」、
 // 启动补跑三条入口可能在启动瞬间撞在一起（例如恰好在 09:00 重启），两趟并发
 // 会对同一账号各查一次状态、然后各自 depart 一次（重复写操作）。撞车时后来的
 // 那趟直接放弃——前一趟做的是同样的事，不会漏。
-func (s *Scheduler) runTravelSubset(ctx context.Context, targets []*auth.Auth) {
+func (s *Scheduler) runTravelSubset(ctx context.Context, targets []*auth.Auth, catchUp bool) {
 	if !s.travelMu.TryLock() {
 		log.Printf("travel: 已有一趟巡检在跑，本轮跳过（%d 个账号交给那一趟）", len(targets))
 		return
@@ -116,7 +121,7 @@ func (s *Scheduler) runTravelSubset(ctx context.Context, targets []*auth.Auth) {
 		if !pacer.Wait(k) {
 			return // 优雅停机：剩余账号下轮再巡
 		}
-		if !s.travelOne(ctx, targets[idx]) {
+		if !s.travelOne(ctx, targets[idx], catchUp) {
 			return // ctx 取消：本号已打完在途请求，剩余账号下轮再巡
 		}
 	}
@@ -128,9 +133,11 @@ func (s *Scheduler) runTravelSubset(ctx context.Context, targets []*auth.Auth) {
 // 0.5~3s 的随机间隔（s.intraJitter）：同一账号同一秒连打多个请求本身就是机器特征。
 // 返回 false 表示 ctx 取消，调用方应停止本轮遍历。
 //
+// catchUp=true（启动补跑）时允许在领奖之后补一次当日派出，见 runTravelSubset。
+//
 // 顺带把"这次看到什么"记进池（pool.CatState）：账号页的猫猫列读这份快照，
 // 不额外打上游（上游没有批量查猫接口）。记录失败不影响巡检本身。
-func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
+func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth, catchUp bool) bool {
 	buddy, err := s.cfg.Upstream.BuddyInfo(a)
 	if err != nil {
 		log.Printf("travel %s: buddy-info: %v", logfmt.Label(a.UID, a.Nickname), err)
@@ -186,6 +193,23 @@ func (s *Scheduler) travelOne(ctx context.Context, a *auth.Auth) bool {
 			cat.Detail = "已领奖"
 			if reward > 0 {
 				cat.Detail = "已领奖 +" + strconv.FormatInt(reward, 10)
+			}
+			// 启动补跑：本次重启可能正好跨过了「领奖」和「当日派出」两个步骤
+			// （例如 21:00 的时点被升级吃掉，21:05 才起来）。领完奖猫已回到空闲，
+			// 若今天还没派出过（daily_limit_reached 按自然日重置，昨天的行程到这里是
+			// false），就顺手把今日派出也补上——一趟巡检把两步都追平，不用干等到明天。
+			// 定时/手动链路不做这件事（catchUp=false）：后面还有时点兜着，且一次
+			// 巡检连做两个动作会改变既有的节奏语义。
+			if catchUp && !ts.DailyLimitReached {
+				if !s.intraJitter(ctx) {
+					s.recordCat(a, cat)
+					return false // ctx 取消：本号已领奖，派出留给下轮
+				}
+				if s.travelDepart(a, ts) {
+					cat.State = travelStateTraveling
+					cat.DailyLimitReached = true
+					cat.Detail += "，已补派出"
+				}
 			}
 		} else {
 			// 领奖没完成：保持 arrived，界面继续显示「可领 N」，但说明原因。

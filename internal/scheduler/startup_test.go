@@ -252,7 +252,7 @@ func TestStartupCatchUpTravelSkipsWhenBusy(t *testing.T) {
 	}
 	s.travelMu.Lock() // 模拟另一趟（定时时点/手动）正在跑
 	defer s.travelMu.Unlock()
-	s.runTravelSubset(scheduledCtx(context.Background()), targets)
+	s.runTravelSubset(scheduledCtx(context.Background()), targets, true)
 
 	if n := stub.infoCalls.Load(); n != 0 {
 		t.Errorf("撞车时仍发起了 %d 次 buddy/info", n)
@@ -280,6 +280,64 @@ func TestStartupCatchUpRespectsDisabledSwitches(t *testing.T) {
 
 	if n := f.checkinCalls.Load(); n != 0 {
 		t.Errorf("签到已禁用却补跑了 %d 次", n)
+	}
+}
+
+// TestStartupCatchUpTravelClaimsThenDeparts 重启跨过「领奖」与「当日派出」两个步骤时，
+// 一趟补跑要把两步都追平：领完奖（今日还没派出）顺手把今日派出也补上。
+func TestStartupCatchUpTravelClaimsThenDeparts(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{
+		buddy: `{"id":1,"name":"档案喵"}`,
+		state: `{"state":"arrived","record_id":7,"reward_credit":50,"daily_limit_reached":false}`,
+	}
+	srv := billingAndGrowthServer(stub)
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 11, 21, 5, 0, 0, cstZone)
+	fixedNow(t, now)
+	s, p := newTravelCatchUpScheduler(t, srv, "u1")
+	p.SetCat("u1", pool.CatState{State: travelStateArrived, Reward: 50, UpdatedAt: now})
+
+	s.catchUpAt(context.Background(), now)
+
+	if n := stub.claimCalls.Load(); n != 1 {
+		t.Errorf("claim calls=%d want 1", n)
+	}
+	if n := stub.departCalls.Load(); n != 1 {
+		t.Errorf("depart calls=%d want 1（今日未派出，补跑应连着补）", n)
+	}
+	cat, ok := p.CatOf("u1")
+	if !ok || cat.State != travelStateTraveling {
+		t.Errorf("cat state=%v want traveling（补派出后在路上）", cat)
+	}
+	if ok && !cat.DailyLimitReached {
+		t.Errorf("补派出后快照应标记 DailyLimitReached: %+v", cat)
+	}
+}
+
+// TestRunTravelDoesNotDrainSteps 定时/手动链路保持原语义：领奖后不在同一趟里再派出
+// （后面还有时点兜着，一次巡检只做一个动作）。
+func TestRunTravelDoesNotDrainSteps(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{
+		buddy: `{"id":1,"name":"档案喵"}`,
+		state: `{"state":"arrived","record_id":7,"reward_credit":50,"daily_limit_reached":false}`,
+	}
+	srv := billingAndGrowthServer(stub)
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 11, 21, 5, 0, 0, cstZone)
+	fixedNow(t, now)
+	s, _ := newTravelCatchUpScheduler(t, srv, "u1")
+
+	s.runTravel(context.Background()) // 定时链路（catchUp=false）
+
+	if n := stub.claimCalls.Load(); n != 1 {
+		t.Errorf("claim calls=%d want 1", n)
+	}
+	if n := stub.departCalls.Load(); n != 0 {
+		t.Errorf("depart calls=%d want 0（定时链路不连做两个动作）", n)
 	}
 }
 

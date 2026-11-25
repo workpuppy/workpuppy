@@ -61,7 +61,7 @@ func (s *Scheduler) catchUpAt(ctx context.Context, now time.Time) {
 		if len(targets) > 0 {
 			log.Printf("startup catch-up: 旅行时点 %s 已过，%d 个账号的旅行进度可能没走完 → 立刻补跑（沿用定时节奏）",
 				config.FormatClock(travelSlot), len(targets))
-			s.runTravelSubset(scheduledCtx(ctx), targets)
+			s.runTravelSubset(scheduledCtx(ctx), targets, true)
 			didSomething = true
 		}
 	}
