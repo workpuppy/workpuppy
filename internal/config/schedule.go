@@ -121,12 +121,14 @@ type Schedule struct {
 	// 默认 5 条把 chat_5 刷满；0/缺省=1 兼容旧行为。
 	ActivityReportCount int `json:"activity_report_count"`
 
-	// StartupCatchup 启动补跑：进程启动时（容器升级 / 删了重建 / 崩溃重启）如果发现
-	// "今天已经过点、但签到或猫猫旅行还没做完"，立刻按正常节奏补一轮。
+	// StartupCatchup 补跑：进程启动时（容器升级 / 删了重建 / 崩溃重启）**以及运行期新
+	// 纳管账号时**（扫码加号 / 手工放凭证文件），如果发现"今天已经过点、但签到或猫猫
+	// 旅行还没做完"，立刻按正常节奏补一轮。
 	//
-	// 解决的是运维动作造成的空洞：升级通常几分钟，正好盖住 09:00 这种时点，而
-	// 签到 / 旅行都按上游自然日结算，错过当天补不回来（详见 internal/scheduler/startup.go）。
-	// 缺省 true；不想在启动瞬间产生上游流量时置 false。
+	// 解决的是两种空洞：升级通常几分钟，正好盖住 09:00 这种时点；新号若在当天最后一个
+	// 时点之后才入池，当天同样等于白给。而签到 / 旅行都按上游自然日结算，错过当天
+	// 补不回来（详见 internal/scheduler/startup.go）。
+	// 缺省 true；不想在启动/加号瞬间产生上游流量时置 false。
 	StartupCatchup bool `json:"startup_catchup"`
 }
 

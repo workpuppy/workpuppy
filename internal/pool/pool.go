@@ -71,6 +71,11 @@ type Pool struct {
 	// randInt64N 仅供测试注入确定性随机源；nil 时用 math/rand/v2 全局源。
 	// 生产代码不应设置此字段。
 	randInt64N func(n int64) int64
+	// onAccountsAdded 「新账号入池」回调（SetAccountsAddedHook 注入；nil = 不通知）。
+	// 运行期新增的凭证（扫码加号 / 手工放文件）由 auths 目录监听捡起来，调度器据此
+	// 给新号补当天的签到与猫猫旅行——注意回调**必须在池锁之外**触发，否则回调里
+	// 读池（scheduler 要 List/CheckedInToday）会自死锁。
+	onAccountsAdded func(uids []string)
 	// persistFails 本地 state.json 连续落盘失败计数（仅 saveLocked 在持锁下读写，无需 atomic）。
 	// 用于落盘失败的日志节流：首败/每 N 次提醒/恢复各打一条，避免磁盘满时刷屏。
 	persistFails int
@@ -315,20 +320,53 @@ func (p *Pool) SetRandomSource(fn func(n int64) int64) {
 }
 
 // Add 加入账号；已存在则保留原状态、更新凭证（upsert 单账号）。
+// 真正的新号会触发「新账号入池」回调（见 SetAccountsAddedHook）。
 func (p *Pool) Add(a *auth.Auth) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	_, existed := p.byUID[a.UID]
 	p.upsertLocked(a)
+	p.mu.Unlock()
+	if !existed {
+		p.fireAccountsAdded([]string{a.UID})
+	}
+}
+
+// SetAccountsAddedHook 注册「新账号入池」回调（uids 为本批新增的 UID）。
+//
+// 用途：运行期新纳管的账号（扫码加号 / 手工放凭证文件）交给调度器补当天的任务。
+// 回调在**池锁之外**由触发方 goroutine 同步调用，因此实现里不要做长耗时工作
+// （cmd/server 用 go 包了一层）；重复注册覆盖旧回调，传 nil 取消。
+func (p *Pool) SetAccountsAddedHook(fn func(uids []string)) {
+	p.mu.Lock()
+	p.onAccountsAdded = fn
+	p.mu.Unlock()
+}
+
+// fireAccountsAdded 在锁外触发新账号回调（空列表不触发）。
+func (p *Pool) fireAccountsAdded(uids []string) {
+	if len(uids) == 0 {
+		return
+	}
+	p.mu.RLock()
+	fn := p.onAccountsAdded
+	p.mu.RUnlock()
+	if fn != nil {
+		fn(uids)
+	}
 }
 
 // SyncToDir 用最新扫描结果对齐池：新账号加入、消失的账号剔除（状态保留）。
 // 剔除结果持久化回 state.json，避免已删账号在下次启动时被 load() 复活。
+// 新增的 UID 会触发「新账号入池」回调（见 SetAccountsAddedHook）。
 func (p *Pool) SyncToDir(auths []*auth.Auth) {
+	added := make([]string, 0, len(auths))
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	seen := make(map[string]bool, len(auths))
 	for _, a := range auths {
 		seen[a.UID] = true
+		if _, ok := p.byUID[a.UID]; !ok {
+			added = append(added, a.UID)
+		}
 		p.upsertLocked(a)
 	}
 	changed := false
@@ -341,6 +379,8 @@ func (p *Pool) SyncToDir(auths []*auth.Auth) {
 	if changed {
 		p.saveLocked()
 	}
+	p.mu.Unlock()
+	p.fireAccountsAdded(added)
 }
 
 // upsertLocked 更新或插入单个账号；已存在则只换凭证、保留 credits/cooling 状态。

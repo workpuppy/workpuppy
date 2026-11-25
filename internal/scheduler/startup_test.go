@@ -246,7 +246,7 @@ func TestStartupCatchUpTravelSkipsWhenBusy(t *testing.T) {
 	fixedNow(t, now)
 	s, _ := newTravelCatchUpScheduler(t, srv, "u1")
 
-	targets := s.travelCatchUpTargets(now)
+	targets := s.travelCatchUpTargets(now, nil)
 	if len(targets) != 1 {
 		t.Fatalf("targets=%d want 1（无快照 → 保守重查）", len(targets))
 	}
@@ -338,6 +338,115 @@ func TestRunTravelDoesNotDrainSteps(t *testing.T) {
 	}
 	if n := stub.departCalls.Load(); n != 0 {
 		t.Errorf("depart calls=%d want 0（定时链路不连做两个动作）", n)
+	}
+}
+
+// TestCatchUpAccountsOnlyTouchesNewOnes 新账号纳管补跑只动这一批 UID：
+// 老号即使今天还没签到，也不会因为别人入池被顺带重打一遍。
+func TestCatchUpAccountsOnlyTouchesNewOnes(t *testing.T) {
+	f := &fakeUpstream{resourceRemain: 500}
+	srv := f.server()
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 11, 9, 5, 0, 0, cstZone)
+	fixedNow(t, now)
+	s, p := newCheckinCatchUpScheduler(t, srv, now, "old", "new")
+	p.MarkCheckin("old", "ok", now) // 老号今天已签到
+
+	s.catchUpAccountsAt(context.Background(), []string{"new"}, now)
+	if n := f.checkinCalls.Load(); n != 1 {
+		t.Errorf("checkin calls=%d want 1（只补新号）", n)
+	}
+
+	// 即便把老号递进来：它今天已签到，仍然一次都不打。
+	s.catchUpAccountsAt(context.Background(), []string{"old"}, now)
+	if n := f.checkinCalls.Load(); n != 1 {
+		t.Errorf("已签到的老号被重打了：calls=%d", n)
+	}
+}
+
+// TestCatchUpAccountsSkipsBeforeSlot 今天时点还没到 → 新号也不补（不抢跑）。
+func TestCatchUpAccountsSkipsBeforeSlot(t *testing.T) {
+	f := &fakeUpstream{resourceRemain: 500}
+	srv := f.server()
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 11, 8, 0, 0, 0, cstZone)
+	fixedNow(t, now)
+	s, _ := newCheckinCatchUpScheduler(t, srv, now, "new")
+
+	s.catchUpAccountsAt(context.Background(), []string{"new"}, now)
+
+	if n := f.checkinCalls.Load(); n != 0 {
+		t.Errorf("时点未到却给新号签到了 %d 次", n)
+	}
+}
+
+// TestCatchUpAccountsEmptyAndUnknownUID 空列表 / 池里不存在的 UID：什么都不做、不 panic。
+func TestCatchUpAccountsEmptyAndUnknownUID(t *testing.T) {
+	f := &fakeUpstream{resourceRemain: 500}
+	srv := f.server()
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 11, 9, 5, 0, 0, cstZone)
+	fixedNow(t, now)
+	s, _ := newCheckinCatchUpScheduler(t, srv, now, "new")
+
+	s.catchUpAccountsAt(context.Background(), nil, now)
+	s.catchUpAccountsAt(context.Background(), []string{"ghost"}, now)
+
+	if n := f.checkinCalls.Load(); n != 0 {
+		t.Errorf("空/未知 UID 不该产生请求：calls=%d", n)
+	}
+}
+
+// TestCatchUpAccountsTravelOnlyNewOne 旅行同理：只补新号的旅行，不碰老号（即便老号也在待领奖）。
+func TestCatchUpAccountsTravelOnlyNewOne(t *testing.T) {
+	fastTravel(t)
+	stub := &travelStub{
+		buddy: `{"id":1,"name":"档案喵"}`,
+		state: `{"state":"arrived","record_id":5,"reward_credit":20}`,
+	}
+	srv := billingAndGrowthServer(stub)
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 11, 21, 5, 0, 0, cstZone)
+	fixedNow(t, now)
+	s, p := newTravelCatchUpScheduler(t, srv, "old", "new")
+	p.SetCat("old", pool.CatState{State: travelStateArrived, Reward: 20, UpdatedAt: now})
+	p.SetCat("new", pool.CatState{State: travelStateArrived, Reward: 20, UpdatedAt: now})
+
+	s.catchUpAccountsAt(context.Background(), []string{"new"}, now)
+
+	if n := stub.statusCalls.Load(); n != 1 {
+		t.Errorf("travel/status calls=%d want 1（只查新号）", n)
+	}
+	if n := stub.claimCalls.Load(); n != 1 {
+		t.Errorf("travel/claim calls=%d want 1（只领新号的奖）", n)
+	}
+}
+
+// TestCatchUpAccountsRespectsDisabledSwitches 两类任务都关掉时新号也不补。
+func TestCatchUpAccountsRespectsDisabledSwitches(t *testing.T) {
+	f := &fakeUpstream{resourceRemain: 500}
+	srv := f.server()
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 11, 21, 5, 0, 0, cstZone)
+	fixedNow(t, now)
+	p := pool.New("")
+	p.Add(&auth.Auth{UID: "new", AccessToken: "at", RefreshToken: "rt", ExpiresAt: 9999999999})
+	up := &upstream.Client{HTTP: srv.Client(), ChatBaseCN: srv.URL, BillingBaseCN: srv.URL}
+	s := New(Config{
+		Pool: p, Upstream: up, Location: cstZone,
+		CheckinAt: []int{9 * 60}, TravelAt: []int{9 * 60},
+		CheckinDisabled: true, TravelDisabled: true,
+	})
+
+	s.catchUpAccountsAt(context.Background(), []string{"new"}, now)
+
+	if n := f.checkinCalls.Load(); n != 0 {
+		t.Errorf("签到已禁用却补跑了 %d 次", n)
 	}
 }
 

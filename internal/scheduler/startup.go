@@ -11,6 +11,10 @@
 //	签到：今天已有到点时点 && 存在"今天还没签到成功"的账号 → 补跑一轮签到；
 //	旅行：今天已有到点时点 && 存在"旅行流程可能没走完"的账号 → 补跑一轮旅行巡检。
 //
+// 此外还有第二种入口 CatchUpAccounts：**运行期新纳管的账号**（扫码加号 / 手工放凭证
+// 文件）在当天时点已过时同样需要补——否则这个号要白等到明天。规则与启动补跑完全
+// 相同，只是范围限定在那批新 UID 上。
+//
 // 三条边界（都很重要）：
 //
 //  1. **不越权**：只补今天的。昨天的签到/旅行已经过期（上游自然日已翻篇），
@@ -36,6 +40,48 @@ import (
 // ctx 取消（优雅停机）时立即放弃剩余账号。
 func (s *Scheduler) StartupCatchUp(ctx context.Context) { s.catchUpAt(ctx, nowFunc()) }
 
+// CatchUpAccounts 新账号纳管补跑：账号是**运行期**加进来的（扫码加号 / 手工放凭证
+// 文件，由 auths 目录监听在 5s 内捡起），当天的时点很可能已经过去了——不补的话
+// 这个号今天就白等（签到按自然日结算，过了 CST 零点就追不回来）。
+//
+// 规则与启动补跑完全一致（今天已有到点时点 + 该号还没做完 + 沿用定时节奏），
+// 只是范围限定在 uids 这批新号上，不会把老账号再打一遍。
+func (s *Scheduler) CatchUpAccounts(ctx context.Context, uids []string) {
+	s.catchUpAccountsAt(ctx, uids, nowFunc())
+}
+
+// catchUpAccountsAt 可注入时刻的新账号补跑实现（测试直接调它）。
+func (s *Scheduler) catchUpAccountsAt(ctx context.Context, uids []string, now time.Time) {
+	if s == nil || s.cfg.Pool == nil || s.cfg.Upstream == nil || len(uids) == 0 {
+		return
+	}
+	only := make(map[string]bool, len(uids))
+	for _, uid := range uids {
+		only[uid] = true
+	}
+	loc := s.locFor(now)
+	checkinSlot, checkinDue := passedSlot(now, s.cfg.CheckinAt, loc)
+	travelSlot, travelDue := passedSlot(now, s.cfg.TravelAt, loc)
+
+	if !s.cfg.CheckinDisabled && checkinDue {
+		if pending, total := s.pendingCheckin(now, only); pending > 0 {
+			log.Printf("accounts catch-up: 新纳管 %d 个账号，签到时点 %s 已过且其中 %d 个还没签到 → 立刻补跑（沿用定时节奏）",
+				total, config.FormatClock(checkinSlot), pending)
+			if _, err := s.checkinAllScoped(scheduledCtx(ctx), only); err != nil {
+				// 撞上手动/定时的签到（ErrBusy）：新号交给下一个时点，不重复打上游。
+				log.Printf("accounts catch-up: 签到补跑跳过: %v", err)
+			}
+		}
+	}
+	if !s.cfg.TravelDisabled && travelDue {
+		if targets := s.travelCatchUpTargets(now, only); len(targets) > 0 {
+			log.Printf("accounts catch-up: 新纳管账号中 %d 个的旅行进度可能没走完（旅行时点 %s 已过）→ 立刻补跑（沿用定时节奏）",
+				len(targets), config.FormatClock(travelSlot))
+			s.runTravelSubset(scheduledCtx(ctx), targets, true)
+		}
+	}
+}
+
 // catchUpAt 可注入时刻的补跑实现（测试直接调它，避免依赖机器当前时间）。
 func (s *Scheduler) catchUpAt(ctx context.Context, now time.Time) {
 	if s == nil || s.cfg.Pool == nil || s.cfg.Upstream == nil {
@@ -48,7 +94,7 @@ func (s *Scheduler) catchUpAt(ctx context.Context, now time.Time) {
 
 	didSomething := false
 	if !s.cfg.CheckinDisabled && checkinDue {
-		pending, total := s.pendingCheckin(now)
+		pending, total := s.pendingCheckin(now, nil)
 		if pending > 0 {
 			log.Printf("startup catch-up: 签到时点 %s 已过，%d/%d 个账号今天还没签到 → 立刻补跑（沿用定时节奏）",
 				config.FormatClock(checkinSlot), pending, total)
@@ -57,7 +103,7 @@ func (s *Scheduler) catchUpAt(ctx context.Context, now time.Time) {
 		}
 	}
 	if !s.cfg.TravelDisabled && travelDue {
-		targets := s.travelCatchUpTargets(now)
+		targets := s.travelCatchUpTargets(now, nil)
 		if len(targets) > 0 {
 			log.Printf("startup catch-up: 旅行时点 %s 已过，%d 个账号的旅行进度可能没走完 → 立刻补跑（沿用定时节奏）",
 				config.FormatClock(travelSlot), len(targets))
@@ -91,8 +137,12 @@ func passedSlot(now time.Time, at []int, loc *time.Location) (minute int, ok boo
 // 过滤条件与 checkinAll 真正要跑的账号一致（禁用 / 风控暂停 / 无凭证 / global 跳过），
 // 所以日志里的 "pending/total" 对得上随后那一轮的实际规模。
 // 判定用传入的 now（而不是 time.Now()）：补跑与上层体检必须看同一个时刻。
-func (s *Scheduler) pendingCheckin(now time.Time) (pending, total int) {
+// only 非空时只统计这些 UID（新账号纳管补跑）。
+func (s *Scheduler) pendingCheckin(now time.Time, only map[string]bool) (pending, total int) {
 	for _, st := range s.cfg.Pool.List() {
+		if only != nil && !only[st.UID] {
+			continue
+		}
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
 			continue
 		}
@@ -113,10 +163,14 @@ func (s *Scheduler) pendingCheckin(now time.Time) (pending, total int) {
 // 为什么需要挑而不是整批重跑：旅行巡检每号要打 2~3 个上游请求（buddy-info +
 // travel/status + 动作），重启后把所有账号无条件重查一遍纯属浪费；而快照能明确
 // 证明"今天已经派出且已领奖"的那部分账号，直接跳过即可。
-func (s *Scheduler) travelCatchUpTargets(now time.Time) []*auth.Auth {
+// only 非空时只考虑这些 UID（新账号纳管补跑）。
+func (s *Scheduler) travelCatchUpTargets(now time.Time, only map[string]bool) []*auth.Auth {
 	today := travelDay(now)
 	var out []*auth.Auth
 	for _, st := range s.cfg.Pool.List() {
+		if only != nil && !only[st.UID] {
+			continue
+		}
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
 			continue
 		}

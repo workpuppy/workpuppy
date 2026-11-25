@@ -561,6 +561,13 @@ func (s *Scheduler) CheckinAll() ([]CheckinOutcome, error) {
 }
 
 func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
+	return s.checkinAllScoped(ctx, nil)
+}
+
+// checkinAllScoped 是全量签到的实现；only 非空时只处理这些 UID（新账号纳管补跑用，
+// 见 CatchUpAccounts）。除范围过滤外，其余逻辑（跳过判定、节奏、重试、余额解冻）
+// 与全量完全一致。
+func (s *Scheduler) checkinAllScoped(ctx context.Context, only map[string]bool) ([]CheckinOutcome, error) {
 	if !s.checkinMu.TryLock() {
 		return nil, ErrBusy
 	}
@@ -578,6 +585,9 @@ func (s *Scheduler) checkinAll(ctx context.Context) ([]CheckinOutcome, error) {
 	}
 	targets := make([]target, 0, len(statuses))
 	for _, st := range statuses {
+		if only != nil && !only[st.UID] {
+			continue
+		}
 		if st.Disabled || s.cfg.Pool.RiskPaused(st.UID) {
 			out = append(out, CheckinOutcome{UID: st.UID, Nickname: st.Nickname, Status: CheckinSkipped, Detail: "disabled"})
 			skipN++

@@ -209,8 +209,8 @@ var fields = []Field{
 	// ── 定时任务 ──────────────────────────────────────────────────
 	{Path: "schedule.timezone", Group: "schedule", Label: "排程时区", Kind: KindString, Restart: true,
 		Hint: "所有时刻按此时区解释（IANA 名，如 Asia/Shanghai；也可写 UTC+8 或 Local）。默认 Asia/Shanghai。"},
-	{Path: "schedule.startup_catchup", Group: "schedule", Label: "启动补跑", Kind: KindBool, Restart: true,
-		Hint: "启动时若发现今天已过时点的签到/旅行还没做完，立刻按正常节奏补一轮（默认开）。"},
+	{Path: "schedule.startup_catchup", Group: "schedule", Label: "补跑（启动/新账号）", Kind: KindBool, Restart: true,
+		Hint: "启动时、以及运行期新纳管账号时，若今天已过时点的签到/旅行还没做完，立刻按正常节奏补一轮（默认开）。"},
 	{Path: "schedule.checkin_time", Group: "schedule", Label: "签到时刻", Kind: KindTimeList, Restart: true},
 	{Path: "schedule.travel_time", Group: "schedule", Label: "猫猫旅行时刻", Kind: KindTimeList, Restart: true},
 	{Path: "schedule.activity_time", Group: "schedule", Label: "活跃上报时刻", Kind: KindTimeList, Restart: true},
